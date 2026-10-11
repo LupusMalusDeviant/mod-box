@@ -394,7 +394,7 @@ export const register: Register = (on, options) => {
     else body = drawMods($, ui, rows, await drawNotes($, ui), await read($, usage), await read($, expanded), columns, { ...(await here($, e.surface)), trusted, fresh: await read($, fresh) }, drawNativeCard($, ui, await read($, natives), await read($, nativeInfo), await read($, expanded), (await $.session.usage().catch(() => null))?.startedAt ?? 0))
 
     const storedId = await activeProfileId($)
-    const matches = (p: (typeof PROFILES)[number]) => profileSet(p, trusted).every(([k, v]) => (rows.get(k)?.value === true) === v)
+    const matches = (p: (typeof PROFILES)[number]) => profileSet(p, trusted, rows).every(([k, v]) => (rows.get(k)?.value === true) === v)
     const stored = PROFILES.find(p => p.id === storedId)
     // The stored profile while it still fits; else the profile the switches match exactly; else
     // the stored one marked "(changed)".
@@ -853,7 +853,7 @@ async function applyProfile($: EngineInterface, id: string) {
   if (!p) return
   await $.store.set(STORE_ACTIVE, p.id)
   if ((await read($, natives))?.some(n => n.managed && n.trusted)) await nativeRun($, ['profile', p.id], t('Profil für native Plugins …', 'Profile for native plugins …'))
-  const values = profileSet(p, await trustedList($))
+  const values = profileSet(p, await trustedList($), await configRows($))
   if (SYNTHETIC || (await configRows($), SYNTHETIC)) return writeOptions($, Object.fromEntries(values))
   await $.store.set(STORE_PENDING, values.map(([k, v]) => [k, v]))
   $.ui.toast(t(`Profil „${tx(p.label)}“ wird gesetzt …`, `Applying profile "${tx(p.label)}" …`))
@@ -884,8 +884,17 @@ async function continueProfile($: EngineInterface) {
 // ---------------------------------------------------------------- Profiles for new mods, trust, compatibility
 
 /** A profile's switches, with imported mods nobody trusted yet kept off. */
-function profileSet(p: (typeof PROFILES)[number], trusted: string[]): Array<[string, boolean]> {
-  return p.set.map(([k, v]) => [k, v && (!CATALOG.find(m => m.toggle === k)?.imported || trusted.includes(k))])
+// What a profile sets: its rule, but foreign mods only once trusted, and no mod while one of its
+// required options is still empty (it would start without what it needs).
+function profileSet(p: (typeof PROFILES)[number], trusted: string[], rows?: Map<string, { value: unknown }>): Array<[string, boolean]> {
+  const unset = (k: string) => {
+    const v = rows?.get(k)?.value
+    return rows !== undefined && (v === undefined || v === null || v === '')
+  }
+  return p.set.map(([k, v]) => {
+    const m = CATALOG.find(x => x.toggle === k)
+    return [k, v && (!m?.imported || trusted.includes(k)) && !(m?.needs ?? []).some(unset)]
+  })
 }
 
 /** The profile applied last; "default" until one is applied in the window. */
@@ -954,7 +963,7 @@ async function adoptNewMods($: EngineInterface) {
   const p = PROFILES.find(x => x.id === activeId)
   if (!p) return
   const rows = await configRows($)
-  const want = profileSet(p, await trustedList($)).filter(([k, v]) => added.includes(k) && (rows.get(k)?.value === true) !== v)
+  const want = profileSet(p, await trustedList($), rows).filter(([k, v]) => added.includes(k) && (rows.get(k)?.value === true) !== v)
   if (!want.length) return
   $.ui.toast(t(`Neu in der Mod Box: ${added.length}. Profil „${tx(p.label)}“ angewandt.`, `New in the Mod Box: ${added.length}. Profile "${tx(p.label)}" applied.`))
   await setMany($, Object.fromEntries(want))

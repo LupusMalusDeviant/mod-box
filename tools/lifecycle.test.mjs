@@ -101,6 +101,35 @@ describe('import into the box', () => {
     assert.deepEqual(r.lost ?? [], [])
   })
 
+  test('a mod added later is part of every profile, by the rule of each profile', () => {
+    const cat = read('mods/settings/hooks/catalog.ts')
+    const start = cat.indexOf('= [', cat.indexOf('export const PROFILES')) + 2
+    const profiles = JSON.parse(cat.slice(start, cat.indexOf('\n]', start) + 2))
+    const toggle = modOf('fx-plain').toggle
+    const setOf = id => Object.fromEntries(profiles.find(p => p.id === id).set)
+    assert.equal(setOf('default')[toggle], false) // imported mods default to off
+    assert.equal(setOf('lean')[toggle], true) // tokens: none
+    assert.equal(setOf('guards')[toggle], false) // not a guard
+    assert.equal(setOf('all')[toggle], true)
+  })
+
+  test('a folder with spaces and umlauts in its path', () => {
+    const dir = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'mbx ')), 'Mein Ordner ü', 'fx-required')
+    fs.cpSync(path.join(FIX, 'fx-required'), dir, { recursive: true })
+    const r = run('inspect', '--dir', dir)
+    assert.equal(r.ok, true, r.error)
+    assert.equal(r.plugins[0].verdict, 'integrate')
+  })
+
+  test('Windows paths: a backslash folder path imports like a forward-slash one', { skip: process.platform !== 'win32' && 'Windows only' }, () => {
+    const back = path.join(FIX, 'fx-required').split('/').join('\\')
+    const forward = back.split('\\').join('/')
+    assert.equal(run('inspect', '--dir', forward).plugins[0].verdict, 'integrate')
+    const r = run('inspect', '--dir', back)
+    assert.equal(r.ok, true, r.error)
+    assert.equal(r.plugins[0].verdict, 'integrate')
+  })
+
   test('every hook module is registered, options keep their types', () => {
     const r = run('import', '--dir', path.join(FIX, 'fx-multi'))
     assert.equal(r.ok, true, r.error)
