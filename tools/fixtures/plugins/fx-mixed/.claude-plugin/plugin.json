@@ -1,0 +1,6 @@
+{
+  "name": "fx-mixed",
+  "version": "1.0.0",
+  "description": "Function hooks plus skills, commands, agents and an MCP server.",
+  "license": "MIT"
+}

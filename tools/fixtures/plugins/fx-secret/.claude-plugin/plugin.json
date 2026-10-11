@@ -1,0 +1,14 @@
+{
+  "name": "fx-secret",
+  "version": "1.0.0",
+  "description": "A mod with a sensitive option.",
+  "license": "MIT",
+  "userConfig": {
+    "apiKey": {
+      "type": "string",
+      "title": "API key",
+      "description": "Secret",
+      "sensitive": true
+    }
+  }
+}

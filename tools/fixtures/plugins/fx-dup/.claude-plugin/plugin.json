@@ -1,0 +1,6 @@
+{
+  "name": "fx-dup",
+  "version": "1.0.0",
+  "description": "Registers /ci, which CI Watch already has.",
+  "license": "MIT"
+}

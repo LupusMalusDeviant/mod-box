@@ -1,0 +1,20 @@
+{
+  "name": "fx-multi",
+  "version": "1.0.0",
+  "description": "Two hook modules and a number option.",
+  "license": "MIT",
+  "userConfig": {
+    "count": {
+      "type": "number",
+      "title": "Count",
+      "description": "A number",
+      "default": 3
+    },
+    "loud": {
+      "type": "boolean",
+      "title": "Loud",
+      "description": "A flag",
+      "default": false
+    }
+  }
+}
