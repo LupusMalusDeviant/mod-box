@@ -1435,7 +1435,7 @@ async function drawSources($: EngineInterface, ui: any, columns: number) {
             <Box flexDirection="row">
               <Button key={`src-t-${key}`} label={isOpen ? '▾' : '▸'} plain onPress={() => void update($, open, o => (o.includes(key) ? o.filter(x => x !== key) : [...o, key]))} />
               <Text bold>{` ${src.name}`}</Text>
-              <Text dimColor>{`  ${src.kind === 'claude' ? t('Claude-Marketplace', 'Claude marketplace') : t('Git-Link', 'git link')} · ${src.plugins.length} Plugins · ${mods} ${t('in die Box', 'into the box')} · ${nativeCount} ${t('nativ', 'native')}`}</Text>
+              <Text dimColor>{`  ${src.kind === 'claude' ? t('Claude-Marketplace', 'Claude marketplace') : t('Git-Link', 'git link')} · ${src.plugins.length} Plugins · ${mods} ${t('integrierbar', 'can be integrated')} · ${nativeCount} ${t('nativ', 'native')}`}</Text>
               {src.kind === 'link' ? <Text>{'  '}</Text> : null}
               {src.kind === 'link' ? <Button key={`src-rm-${key}`} label={t('Entfernen', 'Remove')} plain onPress={() => void removeLink($, src.link)} /> : null}
             </Box>
@@ -1504,11 +1504,11 @@ async function drawSources($: EngineInterface, ui: any, columns: number) {
             <Text key={`leg-${k}`} color="inactive">
               <Text color={VERDICT[k]!.color}>{`  ${VERDICT[k]!.mark} `}</Text>
               {k === 'integrate'
-                ? t('in die Box: reine Hook-Mods, schaltbar mit Band und Profilen', 'into the box: plain hook mods, switchable, with band and profiles')
+                ? t('integriert: in die Box kopiert, schaltbar mit Band und Profilen (nur reine Hook-Mods, ohne Verlust)', 'integrated: copied into the box, switchable, with band and profiles (plain hook mods only, nothing lost)')
                 : k === 'native'
-                  ? t('nativ: als eigenes Plugin installiert, von hier geschaltet, konfiguriert, aktualisiert', 'native: installed as a plugin of its own, switched, configured and updated from here')
+                  ? t('nativ verwaltet: bleibt ein eigenes Plugin, hier geschaltet, konfiguriert, aktualisiert, entfernt', 'managed natively: stays a plugin of its own, switched, configured, updated and removed from here')
                   : k === 'blocked'
-                    ? t('blockiert: erst klären (doppelter Befehl, keine Lizenz …)', 'blocked: settle first (clashing command, no license …)')
+                    ? t('blockiert: integrieren erst nach Klärung (doppelter Befehl, keine Lizenz …); nativ geht oft trotzdem', 'blocked: integrate only once settled (clashing command, no license …); native often still works')
                     : k === 'unsupported'
                       ? t('nicht unterstützt: die Box kann damit nichts anfangen', 'not supported: nothing the box can do with it')
                       : t('noch nicht geprüft: liegt entfernt, wird beim Übernehmen oder Installieren geprüft', 'not checked yet: remote, checked on import or install')}
@@ -1526,7 +1526,7 @@ function rank(p: SourcePlugin): number {
 
 // How a plugin of a source can be taken, as a mark, a colour and a word.
 const VERDICT: Record<string, { mark: string; color: string; label: [string, string] }> = {
-  integrate: { mark: '◆', color: 'suggestion', label: ['in die Box', 'into the box'] },
+  integrate: { mark: '◆', color: 'suggestion', label: ['integriert', 'integrated'] },
   native: { mark: '🔌', color: 'claude', label: ['nativ verwaltet', 'managed natively'] },
   blocked: { mark: '⛔', color: 'error', label: ['blockiert', 'blocked'] },
   unsupported: { mark: '✗', color: 'inactive', label: ['nicht unterstützt', 'not supported'] },

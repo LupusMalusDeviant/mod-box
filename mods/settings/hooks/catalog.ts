@@ -111,8 +111,8 @@ export const SETTINGS: CatalogField[] = [
       "de": "Import-Strategie"
     },
     "description": {
-      "en": "auto: plain function-hook mods go into the box (switchable, band, profiles); everything else is managed as a plugin of its own. native: every plugin is managed as a plugin of its own; the box only switches, configures and updates it.",
-      "de": "auto: reine Function-Hook-Mods kommen in die Box (schaltbar, Band, Profile); alles andere wird als eigenes Plugin verwaltet. nativ: jedes Plugin wird als eigenes Plugin verwaltet; die Box schaltet, konfiguriert und aktualisiert es nur."
+      "en": "automatic: plain function-hook mods are integrated into the box (switch, band, profiles); everything else is managed natively, as a plugin of its own. always native: every plugin is managed natively; the box switches, configures, updates and removes it.",
+      "de": "automatisch: reine Function-Hook-Mods werden in die Box integriert (Schalter, Band, Profile); alles andere wird nativ verwaltet, als eigenes Plugin. immer nativ: jedes Plugin wird nativ verwaltet; die Box schaltet, konfiguriert, aktualisiert und entfernt es."
     },
     "labels": {
       "de": {
