@@ -1,0 +1,13 @@
+{
+  "name": "mod-box",
+  "owner": {
+    "name": "Lupus Malus Deviant"
+  },
+  "plugins": [
+    {
+      "name": "mod-box",
+      "source": "./"
+    }
+  ],
+  "description": "Mod Box: thirteen Claude Code mods in one plugin, each switchable, with a window to manage and import mods."
+}

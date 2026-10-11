@@ -1,0 +1,14 @@
+{
+  "name": "mod-box",
+  "private": true,
+  "description": "Thirteen Claude Code mods in one plugin, each switchable, with a window to manage and import mods.",
+  "license": "MIT",
+  "engines": {
+    "node": ">=26"
+  },
+  "scripts": {
+    "build": "node tools/box.mjs build",
+    "validate": "node tools/box.mjs validate",
+    "test": "node --test tools/box.test.mjs"
+  }
+}

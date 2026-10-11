@@ -1,0 +1,391 @@
+{
+  "name": "mod-box",
+  "version": "0.2.0",
+  "description": "13 Claude Code mods in one plugin, each switchable on its own; /mod-box opens the window to switch, configure and import mods.",
+  "author": {
+    "name": "Lupus Malus Deviant"
+  },
+  "license": "MIT AND Apache-2.0",
+  "types": "./types/index.d.ts",
+  "userConfig": {
+    "language": {
+      "type": "string",
+      "title": "Language",
+      "description": "Language of the Mod Box window and of the texts its mods write (Next Steps, Catch Me Up, Heads-up, handoff note).",
+      "default": "en",
+      "options": [
+        "de",
+        "en"
+      ]
+    },
+    "bandLayout": {
+      "type": "string",
+      "title": "Band layout",
+      "description": "compact: calm displays share one line; urgent ones (CI red, heads-up, sign offer) always get their own line. lines: one line per display.",
+      "default": "compact",
+      "options": [
+        "compact",
+        "lines"
+      ]
+    },
+    "bandOrder": {
+      "type": "string",
+      "title": "Band order",
+      "description": "Order of the displays above the prompt (switch keys, comma separated). The window sets it with arrows.",
+      "default": "ciWatch,signGuard,headsUp,handoff,cacheMeter"
+    },
+    "diagnose": {
+      "type": "string",
+      "title": "Diagnosis: watch hooks",
+      "description": "on: the box notes every one of its hooks that fails (Diagnosis tab). Costs a little time per event; off switches it off.",
+      "default": "on",
+      "options": [
+        "on",
+        "off"
+      ]
+    },
+    "blastRadius": {
+      "type": "boolean",
+      "title": "Blast Radius",
+      "description": "Holds risky shell commands (rm -rf, git reset --hard, git clean, force push, migrations) and shows what they would hit.",
+      "default": true
+    },
+    "secretGuard": {
+      "type": "boolean",
+      "title": "Secret Guard",
+      "description": "Stops before Claude writes API keys, tokens, private keys or a non-ignored .env into files, git add or commits. Exceptions for test keys and example files: /secret-allow.",
+      "default": true
+    },
+    "ciWatch": {
+      "type": "boolean",
+      "title": "CI Watch",
+      "description": "After every git push, follows the GitHub Actions runs (via gh) until they finish; with an open pull request (also after gh pr create, or /ci pr <nr>) all its checks, other CI included, and whether it is ready to merge. On red it shows the failed step log.",
+      "default": true
+    },
+    "signGuard": {
+      "type": "boolean",
+      "title": "Sign Guard",
+      "description": "Spots Windows builds (cargo --release, dotnet publish, go build, pyinstaller, tauri, electron-builder, msbuild) and signs the new .exe/.msi/.msix with your own signing script.",
+      "default": false
+    },
+    "savvyProgress": {
+      "type": "boolean",
+      "title": "Savvy Progress",
+      "description": "Progress bar above the prompt and an agents panel (/agents-info) for subagents.",
+      "default": true
+    },
+    "filetree": {
+      "type": "boolean",
+      "title": "Filetree",
+      "description": "File tree side pane (/filetree); files light up when Claude reads or writes them.",
+      "default": true
+    },
+    "replayTheater": {
+      "type": "boolean",
+      "title": "Replay Theater",
+      "description": "Step through the last turn's file edits one diff at a time (/replay).",
+      "default": true
+    },
+    "nextSteps": {
+      "type": "boolean",
+      "title": "Next Steps",
+      "description": "After each answer, 2-3 likely next prompts (1-3 drafts one, 0 dismisses). Costs tokens: a small Haiku call per answer.",
+      "default": false
+    },
+    "cacheMeter": {
+      "type": "boolean",
+      "title": "Cache Meter",
+      "description": "Band: time left on the warm cache, hit rate, context as weather, plan limits, compact and keep-warm buttons; stops one send to a cold cache and names its cost (Cache Tax runs inside). Costs tokens: keep-warm requests, only when switched on.",
+      "default": true
+    },
+    "handoff": {
+      "type": "boolean",
+      "title": "Handoff Note",
+      "description": "/handoff writes a handoff note to .claude/handoff.local.md; a new session offers to continue from it. Costs tokens: one request over the warm cache per note.",
+      "default": true
+    },
+    "visibleCompact": {
+      "type": "boolean",
+      "title": "Visible Compact",
+      "description": "Shows before and after of /compact side by side; /show-last-compact reopens it.",
+      "default": true
+    },
+    "headsUp": {
+      "type": "boolean",
+      "title": "Heads-up (You Should Know)",
+      "description": "A second model reads longer answers and raises one easily missed but important point. Costs tokens: a small Haiku call per longer answer.",
+      "default": false
+    },
+    "catchMeUp": {
+      "type": "boolean",
+      "title": "Catch Me Up",
+      "description": "Side pane with a live summary of the session (/catch-me-up). Costs tokens: Haiku calls after turns that used tools.",
+      "default": false
+    },
+    "secretMode": {
+      "type": "string",
+      "default": "block",
+      "options": [
+        "block",
+        "warn"
+      ],
+      "title": "Secret Guard: mode",
+      "description": "block: refuse the action. warn: only warn and let it through."
+    },
+    "secretPlaceholders": {
+      "type": "string",
+      "default": "on",
+      "options": [
+        "on",
+        "off"
+      ],
+      "title": "Secret Guard: let placeholders pass",
+      "description": "on: values with EXAMPLE, DUMMY, FAKE, PLACEHOLDER, REDACTED, SAMPLE, xxxxxx … are no secret (this covers the AWS documentation keys)."
+    },
+    "ciInterval": {
+      "type": "string",
+      "default": "20",
+      "options": [
+        "10",
+        "20",
+        "30",
+        "60"
+      ],
+      "title": "CI Watch: poll every … seconds",
+      "description": "How often gh is asked for the state of the runs."
+    },
+    "ciOnRed": {
+      "type": "string",
+      "default": "both",
+      "options": [
+        "pane",
+        "prompt",
+        "both"
+      ],
+      "title": "CI Watch: on red",
+      "description": "pane: open the log pane. prompt: put an analysis request into the prompt (not sent). both."
+    },
+    "ciSound": {
+      "type": "string",
+      "default": "off",
+      "options": [
+        "off",
+        "on"
+      ],
+      "title": "CI Watch: sound",
+      "description": "on: a short sound when the runs are green or red (Windows: system sounds)."
+    },
+    "ciWatchShow": {
+      "type": "string",
+      "default": "band",
+      "options": [
+        "band",
+        "status",
+        "off"
+      ],
+      "title": "CI Watch: display",
+      "description": "band: above the prompt. status: in the status line. off: not shown (the mod keeps working)."
+    },
+    "signMode": {
+      "type": "string",
+      "default": "ask",
+      "options": [
+        "ask",
+        "auto"
+      ],
+      "title": "Sign Guard: mode",
+      "description": "ask: offer a sign button. auto: sign right away."
+    },
+    "signScript": {
+      "type": "string",
+      "default": "",
+      "title": "Sign Guard: script",
+      "description": "PowerShell script called as <script> -Exe <file>. Empty: ~/.claude/skills/sign-binary/sign.ps1"
+    },
+    "signSubject": {
+      "type": "string",
+      "default": "",
+      "title": "Sign Guard: certificate",
+      "description": "Files already signed by a certificate whose subject contains this are skipped. Empty: any validly signed file is skipped."
+    },
+    "signGuardShow": {
+      "type": "string",
+      "default": "band",
+      "options": [
+        "band",
+        "status",
+        "off"
+      ],
+      "title": "Sign Guard: display",
+      "description": "band: above the prompt. status: in the status line. off: not shown (the mod keeps working)."
+    },
+    "savvyLanguage": {
+      "type": "string",
+      "default": "auto",
+      "options": [
+        "auto",
+        "en",
+        "ru"
+      ],
+      "title": "Savvy Progress: language",
+      "description": "auto follows Claude Code's language setting."
+    },
+    "filetreeActivity": {
+      "type": "string",
+      "default": "reads and writes",
+      "options": [
+        "reads and writes",
+        "writes",
+        "reads",
+        "none"
+      ],
+      "title": "Filetree: Claude activity",
+      "description": "Which of Claude's file accesses light up in the tree."
+    },
+    "filetreeGlyphs": {
+      "type": "string",
+      "default": "auto",
+      "options": [
+        "auto",
+        "nerd",
+        "plain"
+      ],
+      "title": "Filetree: glyphs",
+      "description": "auto uses Nerd Font icons when installed (not in the desktop app); plain is Unicode only."
+    },
+    "filetreeFollow": {
+      "type": "string",
+      "default": "on",
+      "options": [
+        "on",
+        "off"
+      ],
+      "title": "Filetree: follow Claude",
+      "description": "on: the tree scrolls to what Claude touches."
+    },
+    "filetreeColumn": {
+      "type": "string",
+      "default": "date",
+      "options": [
+        "date",
+        "size"
+      ],
+      "title": "Filetree: right column",
+      "description": "Last modified date or size."
+    },
+    "filetreeOpen": {
+      "type": "string",
+      "default": "",
+      "title": "Filetree: open with",
+      "description": "Empty: default app. preview: show in the pane. Anything else is a command; {path} is the file, {dir} its folder."
+    },
+    "cacheMeterTtl": {
+      "type": "string",
+      "default": "60",
+      "options": [
+        "60",
+        "5"
+      ],
+      "title": "Cache Meter: cache lifetime (minutes)",
+      "description": "60 on a subscription (Pro/Max), 5 for the API's default cache."
+    },
+    "cacheMeterLimits": {
+      "type": "string",
+      "default": "on",
+      "options": [
+        "on",
+        "off"
+      ],
+      "title": "Cache Meter: show plan limits",
+      "description": "Usage of the 5-hour and the weekly window."
+    },
+    "cacheMeterGuard": {
+      "type": "string",
+      "default": "refuse",
+      "options": [
+        "refuse",
+        "warn",
+        "off"
+      ],
+      "title": "Cache Meter: cold-cache guard",
+      "description": "refuse: stop one send to a cold cache with a large context and name the cost (send again to pay). warn: only show the cost. off."
+    },
+    "cacheMeterKeepWarm": {
+      "type": "string",
+      "default": "3",
+      "options": [
+        "1",
+        "2",
+        "3",
+        "6"
+      ],
+      "title": "Cache Meter: keep warm for … hours",
+      "description": "How long the keep-warm button keeps the cache warm (one small request over the cache about every 50 minutes of idle)."
+    },
+    "cacheMeterAutoWarm": {
+      "type": "string",
+      "default": "off",
+      "options": [
+        "off",
+        "on"
+      ],
+      "title": "Cache Meter: keep warm after a cold write",
+      "description": "on: after a paid cold write, keep the cache warm for 3 hours by itself (costs tokens)."
+    },
+    "cacheMeterShow": {
+      "type": "string",
+      "default": "band",
+      "options": [
+        "band",
+        "status",
+        "off"
+      ],
+      "title": "Cache Meter: display",
+      "description": "band: above the prompt. status: in the status line. off: not shown (the mod keeps working)."
+    },
+    "handoffAuto": {
+      "type": "string",
+      "default": "off",
+      "options": [
+        "off",
+        "on"
+      ],
+      "title": "Handoff Note: automatic",
+      "description": "on: written by itself shortly before the cache goes cold (when the context is large)."
+    },
+    "handoffShow": {
+      "type": "string",
+      "default": "band",
+      "options": [
+        "band",
+        "status",
+        "off"
+      ],
+      "title": "Handoff Note: display",
+      "description": "band: above the prompt. status: in the status line. off: not shown (the mod keeps working)."
+    },
+    "compactStorage": {
+      "type": "string",
+      "default": "temp",
+      "options": [
+        "temp",
+        "home"
+      ],
+      "title": "Visible Compact: storage",
+      "description": "temp: the OS temp folder. home: ~/.claude/visible-compact, kept."
+    },
+    "headsUpShow": {
+      "type": "string",
+      "default": "band",
+      "options": [
+        "band",
+        "status",
+        "off"
+      ],
+      "title": "Heads-up (You Should Know): display",
+      "description": "band: above the prompt. status: in the status line. off: not shown (the mod keeps working)."
+    }
+  },
+  "homepage": "https://github.com/LupusMalusDeviant/mod-box",
+  "repository": "https://github.com/LupusMalusDeviant/mod-box"
+}

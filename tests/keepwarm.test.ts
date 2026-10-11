@@ -1,0 +1,21 @@
+import { describe, expect, mock, test } from 'claude-code/testing'
+describe('Keep warm', () => {
+  test('/keepwarm 3h answers from the embedded Cache Tax', async ($: any, on: any) => {
+    mock.clock(on); mock.store(on)
+    on('session.start', (_$: any, e: any) => ({ sessionId: 's', cwd: e.cwd }))
+    on('command.register', (_$: any, e: any) => ({ value: { command: e.name } }))
+    on('config.list', () => ({ value: [] }))
+    on('env.get', () => ({ value: undefined }))
+    on('ui.status', () => ({ value: undefined }))
+    on('ui.open', () => ({ value: { isPlaced: false } }))
+    on('ui.toast', () => ({ value: undefined }))
+    on('session.cwd', () => ({ value: '/w' }))
+    on('fs.read', () => ({ deny: 'none' }))
+    on('fs.list', () => ({ value: [] }))
+    on('process.run', () => ({ value: { exitCode: 1, stdout: '', stderr: '' } }))
+    on('command.run', () => ({ text: 'NOBODY' }))
+    await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/w' })
+    const r = await $.command.run({ command: 'keepwarm', args: '3h' })
+    expect(r.text).toMatch(/keepwarm on for 3h/)
+  })
+})

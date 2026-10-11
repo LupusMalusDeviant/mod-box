@@ -1,0 +1,907 @@
+{
+  "plugin": "mod-box",
+  "settings": [
+    {
+      "key": "language",
+      "type": "string",
+      "title": "Language",
+      "title_de": "Sprache",
+      "description": "Language of the Mod Box window and of the texts its mods write (Next Steps, Catch Me Up, Heads-up, handoff note).",
+      "description_de": "Sprache des Mod-Box-Fensters und der Texte, die seine Mods schreiben (Next Steps, Catch Me Up, Heads-up, Übergabe-Notiz).",
+      "default": "en",
+      "options": [
+        "de",
+        "en"
+      ],
+      "labels": {
+        "de": {
+          "de": "Deutsch",
+          "en": "Englisch"
+        },
+        "en": {
+          "de": "German",
+          "en": "English"
+        }
+      }
+    },
+    {
+      "key": "bandLayout",
+      "type": "string",
+      "title": "Band layout",
+      "title_de": "Band-Anordnung",
+      "description": "compact: calm displays share one line; urgent ones (CI red, heads-up, sign offer) always get their own line. lines: one line per display.",
+      "description_de": "kompakt: ruhige Anzeigen teilen sich eine Zeile; dringende (CI rot, Heads-up, Signier-Angebot) bekommen immer eine eigene. Zeilen: jede Anzeige in eigener Zeile.",
+      "default": "compact",
+      "options": [
+        "compact",
+        "lines"
+      ],
+      "labels": {
+        "de": {
+          "compact": "kompakt",
+          "lines": "Zeilen"
+        },
+        "en": {
+          "compact": "compact",
+          "lines": "lines"
+        }
+      }
+    },
+    {
+      "key": "bandOrder",
+      "type": "string",
+      "title": "Band order",
+      "title_de": "Band-Reihenfolge",
+      "description": "Order of the displays above the prompt (switch keys, comma separated). The window sets it with arrows.",
+      "description_de": "Reihenfolge der Anzeigen über dem Prompt (Schalter-Namen, mit Komma getrennt). Das Fenster setzt sie mit Pfeilen.",
+      "default": "ciWatch,signGuard,headsUp,handoff,cacheMeter"
+    },
+    {
+      "key": "diagnose",
+      "type": "string",
+      "title": "Diagnosis: watch hooks",
+      "title_de": "Diagnose: Hooks beobachten",
+      "description": "on: the box notes every one of its hooks that fails (Diagnosis tab). Costs a little time per event; off switches it off.",
+      "description_de": "an: die Box notiert jeden ihrer Hooks, der scheitert (Reiter Diagnose). Kostet pro Ereignis etwas Zeit; aus schaltet es ab.",
+      "default": "on",
+      "options": [
+        "on",
+        "off"
+      ],
+      "labels": {
+        "de": {
+          "on": "an",
+          "off": "aus"
+        }
+      }
+    }
+  ],
+  "groups": {
+    "guards": {
+      "en": "Guards",
+      "de": "Wächter"
+    },
+    "display": {
+      "en": "Display",
+      "de": "Anzeigen"
+    },
+    "context": {
+      "en": "Context & cache",
+      "de": "Kontext & Cache"
+    },
+    "watchers": {
+      "en": "Watchers",
+      "de": "Aufpasser"
+    },
+    "imported": {
+      "en": "Imported",
+      "de": "Übernommen"
+    }
+  },
+  "profiles": {
+    "default": {
+      "en": "Default",
+      "de": "Standard",
+      "set": "defaults"
+    },
+    "lean": {
+      "en": "Lean",
+      "de": "Sparsam",
+      "set": {
+        "all": false,
+        "on": [
+          "blastRadius",
+          "secretGuard",
+          "cacheMeter",
+          "replayTheater",
+          "visibleCompact",
+          "ciWatch",
+          "signGuard"
+        ]
+      }
+    },
+    "guards": {
+      "en": "Guards only",
+      "de": "Nur Wächter",
+      "set": {
+        "all": false,
+        "on": [
+          "blastRadius",
+          "secretGuard",
+          "ciWatch",
+          "signGuard"
+        ]
+      }
+    },
+    "all": {
+      "en": "Everything on",
+      "de": "Alles an",
+      "set": {
+        "all": true
+      }
+    }
+  },
+  "mods": [
+    {
+      "id": "settings",
+      "core": true,
+      "title": "Settings window",
+      "entry": "mods/settings/hooks/register.tsx",
+      "pass": {
+        "language": "language"
+      },
+      "state": {
+        "from": "settings",
+        "prefix": "mb",
+        "contract": "mods/settings/types/contract.d.ts"
+      },
+      "commands": [
+        {
+          "name": "/mod-box",
+          "en": "open the window (also: profiles, sources, diag)",
+          "de": "Fenster öffnen (auch: profiles, sources, diag)"
+        }
+      ]
+    },
+    {
+      "id": "blast-radius",
+      "toggle": "blastRadius",
+      "title": "Blast Radius",
+      "group": "guards",
+      "description": "Holds risky shell commands (rm -rf, git reset --hard, git clean, force push, migrations) and shows what they would hit.",
+      "description_de": "Hält riskante Shell-Befehle (rm -rf, git reset --hard, git clean, force push, Migrationen) an und zeigt, was sie treffen würden.",
+      "default": true,
+      "entry": "mods/blast-radius/hooks/blast-radius.mjs",
+      "source": {
+        "url": "https://github.com/anthropics/claude-code-playground",
+        "path": "claude-code/mods/blast-radius",
+        "license": "Apache-2.0"
+      }
+    },
+    {
+      "id": "secret-guard",
+      "toggle": "secretGuard",
+      "title": "Secret Guard",
+      "title_de": "Secret-Wächter",
+      "group": "guards",
+      "description": "Stops before Claude writes API keys, tokens, private keys or a non-ignored .env into files, git add or commits. Exceptions for test keys and example files: /secret-allow.",
+      "description_de": "Hält an, bevor Claude API-Keys, Tokens, private Schlüssel oder eine nicht ignorierte .env in Dateien, git add oder Commits bringt. Ausnahmen für Test-Schlüssel und Beispieldateien: /secret-allow.",
+      "default": true,
+      "entry": "mods/secret-guard/hooks/register.tsx",
+      "pass": {
+        "language": "language"
+      },
+      "options": [
+        {
+          "key": "secretMode",
+          "field": "mode",
+          "type": "string",
+          "default": "block",
+          "options": [
+            "block",
+            "warn"
+          ],
+          "title": "Secret Guard: mode",
+          "title_de": "Secret-Wächter: Modus",
+          "description": "block: refuse the action. warn: only warn and let it through.",
+          "description_de": "block: Aktion abweisen. warn: nur warnen und durchlassen.",
+          "labels": {
+            "de": {
+              "block": "abweisen",
+              "warn": "nur warnen"
+            },
+            "en": {
+              "block": "block",
+              "warn": "warn only"
+            }
+          }
+        },
+        {
+          "key": "secretPlaceholders",
+          "field": "placeholders",
+          "type": "string",
+          "default": "on",
+          "options": [
+            "on",
+            "off"
+          ],
+          "title": "Secret Guard: let placeholders pass",
+          "title_de": "Secret-Wächter: Platzhalter durchlassen",
+          "description": "on: values with EXAMPLE, DUMMY, FAKE, PLACEHOLDER, REDACTED, SAMPLE, xxxxxx … are no secret (this covers the AWS documentation keys).",
+          "description_de": "an: Werte mit EXAMPLE, DUMMY, FAKE, PLACEHOLDER, REDACTED, SAMPLE, xxxxxx … gelten nicht als Geheimnis (das deckt auch die AWS-Doku-Schlüssel).",
+          "labels": {
+            "de": {
+              "on": "an",
+              "off": "aus"
+            }
+          }
+        }
+      ],
+      "state": {
+        "from": "secret-guard",
+        "prefix": "sw",
+        "contract": "mods/secret-guard/types/contract.d.ts"
+      },
+      "commands": [
+        {
+          "name": "/secret-allow",
+          "en": "exceptions: last finds and both allow lists",
+          "de": "Ausnahmen: letzte Funde und beide Listen"
+        }
+      ]
+    },
+    {
+      "id": "ci-watch",
+      "toggle": "ciWatch",
+      "title": "CI Watch",
+      "title_de": "CI-Wächter",
+      "group": "guards",
+      "description": "After every git push, follows the GitHub Actions runs (via gh) until they finish; with an open pull request (also after gh pr create, or /ci pr <nr>) all its checks, other CI included, and whether it is ready to merge. On red it shows the failed step log.",
+      "description_de": "Beobachtet nach jedem git push die GitHub-Actions-Läufe (über gh) bis zum Ende; bei einem offenen Pull Request (auch nach gh pr create oder mit /ci pr <Nr>) alle seine Checks, auch fremde CI, und ob er bereit zum Mergen ist. Bei Rot zeigt er das Log des fehlgeschlagenen Schritts.",
+      "default": true,
+      "entry": "mods/ci-watch/hooks/register.tsx",
+      "pass": {
+        "language": "language"
+      },
+      "options": [
+        {
+          "key": "ciInterval",
+          "field": "intervalSec",
+          "type": "string",
+          "default": "20",
+          "options": [
+            "10",
+            "20",
+            "30",
+            "60"
+          ],
+          "title": "CI Watch: poll every … seconds",
+          "title_de": "CI-Wächter: Abfrage alle … Sekunden",
+          "description": "How often gh is asked for the state of the runs.",
+          "description_de": "Wie oft gh nach dem Stand der Läufe gefragt wird."
+        },
+        {
+          "key": "ciOnRed",
+          "field": "onRed",
+          "type": "string",
+          "default": "both",
+          "options": [
+            "pane",
+            "prompt",
+            "both"
+          ],
+          "title": "CI Watch: on red",
+          "title_de": "CI-Wächter: bei Rot",
+          "description": "pane: open the log pane. prompt: put an analysis request into the prompt (not sent). both.",
+          "description_de": "Fenster: Log-Fenster öffnen. Prompt: Analyse-Auftrag in den Prompt legen (nicht senden). Beides.",
+          "labels": {
+            "de": {
+              "pane": "Fenster",
+              "prompt": "Prompt",
+              "both": "beides"
+            },
+            "en": {
+              "pane": "pane",
+              "prompt": "prompt",
+              "both": "both"
+            }
+          }
+        },
+        {
+          "key": "ciSound",
+          "field": "sound",
+          "type": "string",
+          "default": "off",
+          "options": [
+            "off",
+            "on"
+          ],
+          "title": "CI Watch: sound",
+          "title_de": "CI-Wächter: Ton",
+          "description": "on: a short sound when the runs are green or red (Windows: system sounds).",
+          "description_de": "an: ein kurzer Ton, wenn die Läufe grün oder rot sind (Windows: Systemklänge).",
+          "labels": {
+            "de": {
+              "on": "an",
+              "off": "aus"
+            }
+          }
+        }
+      ],
+      "state": {
+        "from": "ci-watch",
+        "prefix": "ci",
+        "contract": "mods/ci-watch/types/contract.d.ts"
+      },
+      "band": true,
+      "commands": [
+        {
+          "name": "/ci",
+          "en": "state of the watched runs",
+          "de": "Stand der beobachteten Läufe"
+        },
+        {
+          "name": "/ci pr <nr|url>",
+          "en": "watch a pull request",
+          "de": "einen Pull Request beobachten"
+        },
+        {
+          "name": "/ci stop",
+          "en": "stop watching",
+          "de": "Beobachten beenden"
+        }
+      ]
+    },
+    {
+      "id": "sign-guard",
+      "toggle": "signGuard",
+      "title": "Sign Guard",
+      "title_de": "Signier-Wächter",
+      "group": "guards",
+      "description": "Spots Windows builds (cargo --release, dotnet publish, go build, pyinstaller, tauri, electron-builder, msbuild) and signs the new .exe/.msi/.msix with your own signing script.",
+      "description_de": "Erkennt Windows-Builds (cargo --release, dotnet publish, go build, pyinstaller, tauri, electron-builder, msbuild) und signiert die neuen .exe/.msi/.msix mit deinem eigenen Signierskript.",
+      "default": false,
+      "entry": "mods/sign-guard/hooks/register.tsx",
+      "pass": {
+        "language": "language"
+      },
+      "options": [
+        {
+          "key": "signMode",
+          "field": "mode",
+          "type": "string",
+          "default": "ask",
+          "options": [
+            "ask",
+            "auto"
+          ],
+          "title": "Sign Guard: mode",
+          "title_de": "Signier-Wächter: Modus",
+          "description": "ask: offer a sign button. auto: sign right away.",
+          "description_de": "fragen: Knopf zum Signieren anbieten. auto: sofort signieren.",
+          "labels": {
+            "de": {
+              "ask": "fragen",
+              "auto": "automatisch"
+            },
+            "en": {
+              "ask": "ask",
+              "auto": "automatic"
+            }
+          }
+        },
+        {
+          "key": "signScript",
+          "field": "script",
+          "type": "string",
+          "default": "",
+          "title": "Sign Guard: script",
+          "title_de": "Signier-Wächter: Skript",
+          "description": "PowerShell script called as <script> -Exe <file>. Empty: ~/.claude/skills/sign-binary/sign.ps1",
+          "description_de": "PowerShell-Skript, aufgerufen als <Skript> -Exe <Datei>. Leer: ~/.claude/skills/sign-binary/sign.ps1"
+        },
+        {
+          "key": "signSubject",
+          "field": "subject",
+          "type": "string",
+          "default": "",
+          "title": "Sign Guard: certificate",
+          "title_de": "Signier-Wächter: Zertifikat",
+          "description": "Files already signed by a certificate whose subject contains this are skipped. Empty: any validly signed file is skipped.",
+          "description_de": "Dateien, die schon mit einem Zertifikat mit diesem Namen signiert sind, werden übersprungen. Leer: jede gültig signierte Datei."
+        }
+      ],
+      "state": {
+        "from": "sign-guard",
+        "prefix": "sg",
+        "contract": "mods/sign-guard/types/contract.d.ts"
+      },
+      "band": true
+    },
+    {
+      "id": "savvy-progress",
+      "toggle": "savvyProgress",
+      "title": "Savvy Progress",
+      "group": "display",
+      "description": "Progress bar above the prompt and an agents panel (/agents-info) for subagents.",
+      "description_de": "Fortschrittsbalken über dem Prompt und Agenten-Panel (/agents-info) für Subagenten.",
+      "default": true,
+      "entry": "mods/savvy-progress/hooks/register.tsx",
+      "options": [
+        {
+          "key": "savvyLanguage",
+          "field": "language",
+          "type": "string",
+          "default": "auto",
+          "options": [
+            "auto",
+            "en",
+            "ru"
+          ],
+          "title": "Savvy Progress: language",
+          "title_de": "Savvy Progress: Sprache",
+          "description": "auto follows Claude Code's language setting.",
+          "description_de": "auto folgt der Sprache von Claude Code."
+        }
+      ],
+      "state": {
+        "from": "savvy-progress",
+        "prefix": "sp",
+        "contract": "mods/savvy-progress/types/contract.d.ts"
+      },
+      "source": {
+        "url": "https://github.com/JohnnyVizz/claude-kit",
+        "path": "plugins/savvy-progress",
+        "license": "MIT"
+      },
+      "commands": [
+        {
+          "name": "/agents-info",
+          "en": "agents panel",
+          "de": "Agenten-Panel"
+        }
+      ]
+    },
+    {
+      "id": "filetree",
+      "toggle": "filetree",
+      "title": "Filetree",
+      "group": "display",
+      "description": "File tree side pane (/filetree); files light up when Claude reads or writes them.",
+      "description_de": "Dateibaum-Seitenleiste (/filetree); Dateien leuchten auf, wenn Claude sie liest oder schreibt.",
+      "default": true,
+      "entry": "mods/filetree/hooks/register.tsx",
+      "options": [
+        {
+          "key": "filetreeActivity",
+          "field": "activity",
+          "type": "string",
+          "default": "reads and writes",
+          "options": [
+            "reads and writes",
+            "writes",
+            "reads",
+            "none"
+          ],
+          "title": "Filetree: Claude activity",
+          "title_de": "Filetree: Claude-Aktivität",
+          "description": "Which of Claude's file accesses light up in the tree.",
+          "description_de": "Welche Zugriffe im Baum aufleuchten.",
+          "labels": {
+            "de": {
+              "reads and writes": "Lesen und Schreiben",
+              "writes": "nur Schreiben",
+              "reads": "nur Lesen",
+              "none": "nichts"
+            }
+          }
+        },
+        {
+          "key": "filetreeGlyphs",
+          "field": "glyphs",
+          "type": "string",
+          "default": "auto",
+          "options": [
+            "auto",
+            "nerd",
+            "plain"
+          ],
+          "title": "Filetree: glyphs",
+          "title_de": "Filetree: Symbole",
+          "description": "auto uses Nerd Font icons when installed (not in the desktop app); plain is Unicode only.",
+          "description_de": "auto nimmt Nerd-Font-Symbole, wenn installiert (nicht in der Desktop-App); plain nur Unicode."
+        },
+        {
+          "key": "filetreeFollow",
+          "field": "follow",
+          "type": "string",
+          "default": "on",
+          "options": [
+            "on",
+            "off"
+          ],
+          "title": "Filetree: follow Claude",
+          "title_de": "Filetree: Claude folgen",
+          "description": "on: the tree scrolls to what Claude touches.",
+          "description_de": "an: der Baum scrollt zu dem, was Claude anfasst.",
+          "labels": {
+            "de": {
+              "on": "an",
+              "off": "aus"
+            }
+          }
+        },
+        {
+          "key": "filetreeColumn",
+          "field": "column",
+          "type": "string",
+          "default": "date",
+          "options": [
+            "date",
+            "size"
+          ],
+          "title": "Filetree: right column",
+          "title_de": "Filetree: rechte Spalte",
+          "description": "Last modified date or size.",
+          "description_de": "Änderungsdatum oder Größe.",
+          "labels": {
+            "de": {
+              "date": "Datum",
+              "size": "Größe"
+            }
+          }
+        },
+        {
+          "key": "filetreeOpen",
+          "field": "open",
+          "type": "string",
+          "default": "",
+          "title": "Filetree: open with",
+          "title_de": "Filetree: Öffnen mit",
+          "description": "Empty: default app. preview: show in the pane. Anything else is a command; {path} is the file, {dir} its folder.",
+          "description_de": "Leer: Standard-App. preview: in der Leiste anzeigen. Sonst ein Befehl; {path} ist die Datei, {dir} ihr Ordner."
+        }
+      ],
+      "state": {
+        "from": "filetree",
+        "prefix": "ft",
+        "contract": "mods/filetree/types/contract.d.ts"
+      },
+      "source": {
+        "url": "https://github.com/data-goblin/claude-code-filetree",
+        "license": "MIT"
+      },
+      "commands": [
+        {
+          "name": "/filetree",
+          "en": "open the file tree",
+          "de": "Dateibaum öffnen"
+        }
+      ]
+    },
+    {
+      "id": "replay-theater",
+      "toggle": "replayTheater",
+      "title": "Replay Theater",
+      "group": "display",
+      "description": "Step through the last turn's file edits one diff at a time (/replay).",
+      "description_de": "Die Dateiänderungen der letzten Runde einzeln als Diff durchblättern (/replay).",
+      "default": true,
+      "entry": "mods/replay-theater/hooks/replay-theater.mjs",
+      "source": {
+        "url": "https://github.com/anthropics/claude-code-playground",
+        "path": "claude-code/mods/replay-theater",
+        "license": "Apache-2.0"
+      },
+      "commands": [
+        {
+          "name": "/replay",
+          "en": "step through the last turn's edits",
+          "de": "Änderungen der letzten Runde durchblättern"
+        }
+      ]
+    },
+    {
+      "id": "next-steps",
+      "toggle": "nextSteps",
+      "title": "Next Steps",
+      "group": "display",
+      "description": "After each answer, 2-3 likely next prompts (1-3 drafts one, 0 dismisses).",
+      "description_de": "Nach jeder Antwort 2-3 Vorschläge für den nächsten Prompt (1-3 übernimmt, 0 schließt).",
+      "costs": "a small Haiku call per answer",
+      "costs_de": "ein kleiner Haiku-Aufruf je Antwort",
+      "default": false,
+      "entry": "mods/next-steps/hooks/register.tsx",
+      "pass": {
+        "language": "language"
+      },
+      "state": {
+        "from": "next-steps",
+        "prefix": "ns",
+        "contract": "mods/next-steps/types/contract.d.ts"
+      },
+      "source": {
+        "url": "https://github.com/hamzafer/claude-code-mods",
+        "path": "mods/next-steps",
+        "license": "MIT"
+      }
+    },
+    {
+      "id": "cache-meter",
+      "toggle": "cacheMeter",
+      "title": "Cache Meter",
+      "title_de": "Cache-Meter",
+      "group": "context",
+      "description": "Band: time left on the warm cache, hit rate, context as weather, plan limits, compact and keep-warm buttons; stops one send to a cold cache and names its cost (Cache Tax runs inside).",
+      "description_de": "Band: Restzeit des warmen Caches, Trefferquote, Kontext als Wetter, Abo-Limits, Knöpfe für Compact und Warmhalten; hält eine Nachricht an einen kalten Cache einmal an und nennt die Kosten (Cache Tax läuft darin).",
+      "default": true,
+      "entry": "mods/cache-meter/hooks/register.tsx",
+      "pass": {
+        "language": "language"
+      },
+      "options": [
+        {
+          "key": "cacheMeterTtl",
+          "field": "ttlMinutes",
+          "type": "string",
+          "default": "60",
+          "options": [
+            "60",
+            "5"
+          ],
+          "title": "Cache Meter: cache lifetime (minutes)",
+          "title_de": "Cache-Meter: Cache-Dauer (Minuten)",
+          "description": "60 on a subscription (Pro/Max), 5 for the API's default cache.",
+          "description_de": "60 im Abo (Pro/Max), 5 für den Standard-Cache der API."
+        },
+        {
+          "key": "cacheMeterLimits",
+          "field": "limits",
+          "type": "string",
+          "default": "on",
+          "options": [
+            "on",
+            "off"
+          ],
+          "title": "Cache Meter: show plan limits",
+          "title_de": "Cache-Meter: Abo-Limits zeigen",
+          "description": "Usage of the 5-hour and the weekly window.",
+          "description_de": "Verbrauch im 5-Stunden- und im Wochen-Fenster.",
+          "labels": {
+            "de": {
+              "on": "an",
+              "off": "aus"
+            }
+          }
+        },
+        {
+          "key": "cacheMeterGuard",
+          "field": "guard",
+          "type": "string",
+          "default": "refuse",
+          "options": [
+            "refuse",
+            "warn",
+            "off"
+          ],
+          "title": "Cache Meter: cold-cache guard",
+          "title_de": "Cache-Meter: Sperre bei kaltem Cache",
+          "description": "refuse: stop one send to a cold cache with a large context and name the cost (send again to pay). warn: only show the cost. off.",
+          "description_de": "anhalten: eine Nachricht an einen kalten Cache mit großem Kontext einmal anhalten und die Kosten nennen (nochmal senden zahlt). warnen: nur die Kosten zeigen. aus.",
+          "labels": {
+            "de": {
+              "refuse": "anhalten",
+              "warn": "warnen",
+              "off": "aus"
+            }
+          }
+        },
+        {
+          "key": "cacheMeterKeepWarm",
+          "field": "keepWarmHours",
+          "type": "string",
+          "default": "3",
+          "options": [
+            "1",
+            "2",
+            "3",
+            "6"
+          ],
+          "title": "Cache Meter: keep warm for … hours",
+          "title_de": "Cache-Meter: warm halten für … Stunden",
+          "description": "How long the keep-warm button keeps the cache warm (one small request over the cache about every 50 minutes of idle).",
+          "description_de": "Wie lange der Knopf Warmhalten den Cache warm hält (etwa alle 50 Minuten Pause eine kleine Anfrage über den Cache)."
+        },
+        {
+          "key": "cacheMeterAutoWarm",
+          "field": "autoWarm",
+          "type": "string",
+          "default": "off",
+          "options": [
+            "off",
+            "on"
+          ],
+          "title": "Cache Meter: keep warm after a cold write",
+          "title_de": "Cache-Meter: nach kaltem Schreiben warm halten",
+          "description": "on: after a paid cold write, keep the cache warm for 3 hours by itself (costs tokens).",
+          "description_de": "an: nach einem bezahlten kalten Schreiben den Cache von selbst 3 Stunden warm halten (kostet Token).",
+          "labels": {
+            "de": {
+              "on": "an",
+              "off": "aus"
+            }
+          }
+        }
+      ],
+      "state": {
+        "from": "cache-meter",
+        "prefix": "cm",
+        "contract": "mods/cache-meter/types/contract.d.ts"
+      },
+      "band": true,
+      "costs": "keep-warm requests, only when switched on",
+      "costs_de": "Warmhalte-Anfragen, nur wenn eingeschaltet",
+      "source": {
+        "url": "https://github.com/karanb192/cache-tax",
+        "license": "MIT",
+        "note": "Cache Tax embedded"
+      },
+      "extraDirs": [
+        "mods/cache-tax/hooks"
+      ],
+      "commands": [
+        {
+          "name": "/keepwarm <6h|90m|always|off|status>",
+          "en": "keep the cache warm",
+          "de": "Cache warm halten"
+        },
+        {
+          "name": "/cache-tax",
+          "en": "cache costs of this session",
+          "de": "Cache-Kosten dieser Sitzung"
+        }
+      ]
+    },
+    {
+      "id": "handoff",
+      "toggle": "handoff",
+      "title": "Handoff Note",
+      "title_de": "Übergabe-Notiz",
+      "group": "context",
+      "description": "/handoff writes a handoff note to .claude/handoff.local.md; a new session offers to continue from it.",
+      "description_de": "/handoff schreibt eine Übergabe-Notiz nach .claude/handoff.local.md; eine neue Sitzung bietet an, dort weiterzumachen.",
+      "costs": "one request over the warm cache per note",
+      "costs_de": "eine Anfrage über den warmen Cache je Notiz",
+      "default": true,
+      "entry": "mods/handoff/hooks/register.tsx",
+      "pass": {
+        "language": "language",
+        "ttlMinutes": "cacheMeterTtl"
+      },
+      "options": [
+        {
+          "key": "handoffAuto",
+          "field": "auto",
+          "type": "string",
+          "default": "off",
+          "options": [
+            "off",
+            "on"
+          ],
+          "title": "Handoff Note: automatic",
+          "title_de": "Übergabe-Notiz: automatisch",
+          "description": "on: written by itself shortly before the cache goes cold (when the context is large).",
+          "description_de": "an: kurz bevor der Cache kalt wird (und der Kontext groß ist), wird die Notiz von selbst geschrieben.",
+          "labels": {
+            "de": {
+              "on": "an",
+              "off": "aus"
+            }
+          }
+        }
+      ],
+      "state": {
+        "from": "handoff",
+        "prefix": "ho",
+        "contract": "mods/handoff/types/contract.d.ts"
+      },
+      "band": true,
+      "commands": [
+        {
+          "name": "/handoff",
+          "en": "write the handoff note",
+          "de": "Übergabe-Notiz schreiben"
+        }
+      ]
+    },
+    {
+      "id": "visible-compact",
+      "toggle": "visibleCompact",
+      "title": "Visible Compact",
+      "group": "context",
+      "description": "Shows before and after of /compact side by side; /show-last-compact reopens it.",
+      "description_de": "Zeigt nach /compact Vorher und Nachher nebeneinander; /show-last-compact öffnet es wieder.",
+      "default": true,
+      "entry": "mods/visible-compact/hooks/register.tsx",
+      "options": [
+        {
+          "key": "compactStorage",
+          "field": "storage",
+          "type": "string",
+          "default": "temp",
+          "options": [
+            "temp",
+            "home"
+          ],
+          "title": "Visible Compact: storage",
+          "title_de": "Visible Compact: Ablage",
+          "description": "temp: the OS temp folder. home: ~/.claude/visible-compact, kept.",
+          "description_de": "temp: OS-Temp-Ordner. home: ~/.claude/visible-compact, bleibt erhalten."
+        }
+      ],
+      "state": {
+        "from": "visible-compact",
+        "prefix": "vc",
+        "contract": "mods/visible-compact/types/contract.d.ts"
+      },
+      "source": {
+        "url": "https://github.com/nvsravank/visible-compact",
+        "license": "MIT"
+      },
+      "commands": [
+        {
+          "name": "/show-last-compact",
+          "en": "before/after of the last /compact",
+          "de": "Vorher/Nachher des letzten /compact"
+        }
+      ]
+    },
+    {
+      "id": "heads-up",
+      "toggle": "headsUp",
+      "title": "Heads-up (You Should Know)",
+      "group": "watchers",
+      "description": "A second model reads longer answers and raises one easily missed but important point.",
+      "description_de": "Ein zweites Modell liest längere Antworten und hebt einen leicht überlesenen, wichtigen Hinweis hervor.",
+      "costs": "a small Haiku call per longer answer",
+      "costs_de": "ein kleiner Haiku-Aufruf je längerer Antwort",
+      "default": false,
+      "entry": "mods/heads-up/hooks/register.tsx",
+      "pass": {
+        "language": "language"
+      },
+      "state": {
+        "from": "heads-up",
+        "prefix": "hu",
+        "contract": "mods/heads-up/types/contract.d.ts"
+      },
+      "band": true
+    },
+    {
+      "id": "catch-me-up",
+      "toggle": "catchMeUp",
+      "title": "Catch Me Up",
+      "group": "watchers",
+      "description": "Side pane with a live summary of the session (/catch-me-up).",
+      "description_de": "Seitenleiste mit laufender Zusammenfassung der Sitzung (/catch-me-up).",
+      "costs": "Haiku calls after turns that used tools",
+      "costs_de": "Haiku-Aufrufe nach Runden mit Werkzeugen",
+      "default": false,
+      "entry": "mods/catch-me-up/hooks/register.js",
+      "pass": {
+        "language": "language"
+      },
+      "source": {
+        "url": "https://github.com/oliverow/catch-me-up",
+        "license": "MIT"
+      },
+      "commands": [
+        {
+          "name": "/catch-me-up",
+          "en": "live summary pane",
+          "de": "Seitenleiste mit Zusammenfassung"
+        }
+      ]
+    }
+  ]
+}

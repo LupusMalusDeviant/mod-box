@@ -1,0 +1,6 @@
+# written by Claude Code when it loads the plugin (types of this machine's API and MCP servers)
+.claude-plugin/types/
+node_modules/
+.mod-box-test/
+hooks/reload.stamp
+*.log
