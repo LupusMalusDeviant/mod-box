@@ -292,7 +292,7 @@ function build() {
     label: { en: p.en ?? id, de: p.de ?? p.en ?? id },
     set: toggles.map(m => [m.toggle, ruleSays(p.rule ?? p.set, m)]),
   }))
-  const field = o => ({ key: o.key, title: both(o, 'title'), description: both(o, 'description'), labels: o.labels ?? {}, options: Array.isArray(o.options) ? o.options.map(String) : null, default: o.default ?? '' })
+  const field = o => ({ key: o.key, type: o.type ?? (typeof o.default === 'boolean' ? 'boolean' : 'string'), multiple: o.multiple === true, title: both(o, 'title'), description: both(o, 'description'), labels: o.labels ?? {}, options: Array.isArray(o.options) ? o.options.map(String) : null, default: o.default ?? '' })
   const katalog = toggles.map(m => ({
     id: m.id,
     toggle: m.toggle,
@@ -308,6 +308,7 @@ function build() {
     source: m.source?.url ?? null,
     commands: (m.commands ?? []).map(c => ({ name: c.name, text: { en: c.en ?? c.name, de: c.de ?? c.en ?? c.name } })),
     tokens: m.tokens ?? (m.costs ? 'always' : 'none'),
+    needs: m.needs ?? [],
     compat: { surfaces: m.compat?.surfaces ?? ['terminal', 'desktop', 'vscode', 'mobile'], os: m.compat?.os ?? ['windows', 'mac', 'linux'], needs: m.compat?.needs ?? [] },
   }))
   const groups = { imported: { en: 'Imported', de: 'Übernommen' }, ...(box.groups ?? {}) }
@@ -315,8 +316,8 @@ function build() {
     path.join(ROOT, 'mods', 'settings', 'hooks', 'catalog.ts'),
     GENERATED +
       `export type Text = { en: string; de: string }\n` +
-      `export type CatalogField = { key: string; title: Text; description: Text; labels: Record<string, Record<string, string>>; options: string[] | null; default: string | boolean }\n` +
-      `export type CatalogMod = { id: string; toggle: string; default: boolean; band: boolean; title: Text; description: Text; group: string; costs: Text | null; params: CatalogField[]; imported: boolean; upstream: string; source: string | null; commands: Array<{ name: string; text: Text }>; tokens: 'none' | 'optional' | 'always'; compat: { surfaces: string[]; os: string[]; needs: string[] } }\n` +
+      `export type CatalogField = { key: string; title: Text; description: Text; labels: Record<string, Record<string, string>>; options: string[] | null; type: string; multiple: boolean; default: string | boolean | number | string[] }\n` +
+      `export type CatalogMod = { id: string; toggle: string; default: boolean; band: boolean; title: Text; description: Text; group: string; costs: Text | null; params: CatalogField[]; imported: boolean; upstream: string; source: string | null; commands: Array<{ name: string; text: Text }>; tokens: 'none' | 'optional' | 'always'; needs: string[]; compat: { surfaces: string[]; os: string[]; needs: string[] } }\n` +
       `export type CatalogProfile = { id: string; label: Text; set: Array<[string, boolean]> }\n\n` +
       `export const PLUGIN = ${JSON.stringify(box.plugin)}\n` +
       `export const SETTINGS: CatalogField[] = ${JSON.stringify((box.settings ?? []).map(field), null, 2)}\n` +
@@ -484,7 +485,7 @@ function catalog(a) {
       const dir = m.installLocation
       const link = m.source?.repo ? `https://github.com/${m.source.repo}` : m.source?.url ?? m.source?.path ?? ''
       try {
-        sources.push({ kind: 'claude', name, link, dir, ...decorate(scan(dir), imported, ctx, name) })
+        sources.push({ kind: 'claude', name, link, dir, ...decorate(scan(dir), imported, { ...ctx, root: dir }, name) })
       } catch (err) {
         sources.push({ kind: 'claude', name, link, dir, plugins: [], error: String(err.message ?? err) })
       }
@@ -494,7 +495,7 @@ function catalog(a) {
     try {
       const dir = fetchLink(link, a.refresh === true)
       const s = scan(dir)
-      sources.push({ kind: 'link', link, dir, ...decorate(s, imported, ctx, null) })
+      sources.push({ kind: 'link', link, dir, ...decorate(s, imported, { ...ctx, root: dir }, null) })
     } catch (err) {
       sources.push({ kind: 'link', link, name: link, dir: null, plugins: [], error: String(err.message ?? err).split('\n')[0] })
     }
@@ -511,7 +512,7 @@ function decorate(s, imported, ctx = null, marketplace = null) {
       const out = { ...p, imported: imported[p.name] ?? null, nativeId: marketplace ? `${p.name}@${marketplace}` : null }
       if (!ctx || !p.dir) return { ...out, verdict: null, reasons: [], components: null }
       try {
-        const inv = inventory(p.dir)
+        const inv = inventory(p.dir, { root: ctx.root ?? null })
         const v = verdictOf(inv, { taken: ctx.taken, self: imported[p.name] ?? null, strategy: ctx.strategy, t })
         return { ...out, verdict: v.verdict, reasons: v.reasons, components: componentsOf(inv), license: inv.license }
       } catch (err) {
@@ -753,7 +754,7 @@ function importMod(a) {
 
   // First what it is: nothing of the plugin runs for this.
   const box = readJson(BOX)
-  const inv = inventory(pluginDir)
+  const inv = inventory(pluginDir, { root: dir })
   const upstream = inv.name
   const existing = a.as ? box.mods.find(m => m.id === a.as) : box.mods.find(m => (m.upstream ?? m.id) === upstream)
   if (existing && !existing.imported) throw new Error(t(`${existing.id} ist schon fest in der Box`, `${existing.id} is already built into the box`))
@@ -776,6 +777,7 @@ function importMod(a) {
     const sourceCode = walk(pluginDir).filter(p => CODE_EXT.test(p) && !/[\\/]node_modules[\\/]/.test(p)).map(p => fs.readFileSync(p, 'utf8')).join('\n')
     copyTree(pluginDir, target, report, lost, sourceCode)
     fs.rmSync(path.join(target, 'hooks', 'hooks.json'), { force: true })
+    if (inv.licenseFile && !fs.existsSync(path.join(target, path.basename(inv.licenseFile)))) fs.copyFileSync(inv.licenseFile, path.join(target, path.basename(inv.licenseFile)))
     const entries = modules.map(m => path.resolve(target, 'hooks', m))
     for (const e of entries) if (!fs.existsSync(e)) lost.push(t(`Hooks-Modul ${path.basename(e)}`, `hooks module ${path.basename(e)}`))
     if (lost.length) throw new Error(t(`Beim Übernehmen ginge etwas verloren: ${lost.join(', ')}. Nichts geändert.`, `Something would be lost on import: ${lost.join(', ')}. Nothing changed.`))
@@ -834,7 +836,7 @@ function importMod(a) {
       upstream,
       ...(options.length ? { options } : {}),
       ...(state ? { state } : {}),
-      source: { url: a.url[0] ?? null, dir: pluginDir, license: manifest.license ?? null, version: manifest.version ?? null },
+      source: { url: a.url[0] ?? null, dir: pluginDir, license: inv.license ?? null, version: manifest.version ?? null },
     }
     if (existing) box.mods[box.mods.indexOf(existing)] = entry
     else box.mods.push(entry)
@@ -1001,7 +1003,7 @@ function inspectCmd(a) {
   const plugins = found
     .filter(p => !a.plugin || inventory(p).name === a.plugin)
     .map(p => {
-      const inv = inventory(p)
+      const inv = inventory(p, { root: dir })
       const existing = box.mods.find(m => (m.upstream ?? m.id) === inv.name)
       const v = verdictOf(inv, { taken, self: existing?.id ?? null, acceptUnlicensed: a['accept-unlicensed'] === true, strategy: String(a.strategy ?? importStrategy(box)), t })
       return { name: inv.name, version: inv.version, description: inv.description, license: inv.license, dir: p, verdict: v.verdict, reasons: v.reasons, components: componentsOf(inv) }

@@ -34,8 +34,29 @@ const asList = v => (v == null ? [] : Array.isArray(v) ? v : [v])
 const listDir = (dir, filter) => (fs.existsSync(dir) ? fs.readdirSync(dir).filter(filter) : [])
 const keysOf = v => (v && typeof v === 'object' && !Array.isArray(v) ? Object.keys(v) : [])
 
+/**
+ * The license of a plugin: its manifest, a LICENSE file in its folder, or one further up as far as
+ * `root` (a collection repo usually has one license at its top for all its plugins).
+ */
+function licenseOf(dir, manifest, root) {
+  if (manifest?.license) return { license: manifest.license, licenseFile: null }
+  let d = path.resolve(dir)
+  const stop = root ? path.resolve(root) : d
+  for (let i = 0; i < 6; i++) {
+    const lf = listDir(d, n => /^(licen[cs]e|copying)(\.(md|txt))?$/i.test(n))[0]
+    if (lf) {
+      const text = fs.readFileSync(path.join(d, lf), 'utf8')
+      const id = (text.match(/\b(MIT|Apache-2\.0|Apache License|BSD|ISC|MPL|LGPL|AGPL|GPL|Unlicense)\b/i) ?? [null, 'see ' + lf])[1]
+      return { license: /^Apache License$/i.test(id) ? 'Apache-2.0' : id, licenseFile: path.join(d, lf) }
+    }
+    if (d === stop || path.dirname(d) === d) break
+    d = path.dirname(d)
+  }
+  return { license: null, licenseFile: null }
+}
+
 /** Everything a plugin folder declares or ships, read without running anything. */
-export function inventory(dir) {
+export function inventory(dir, { root = null } = {}) {
   const pj = path.join(dir, '.claude-plugin', 'plugin.json')
   const manifest = fs.existsSync(pj) ? readJson(pj) : null
   const hjPath = path.join(dir, 'hooks', 'hooks.json')
@@ -111,17 +132,14 @@ export function inventory(dir) {
   const tools = [...new Set([...code.matchAll(/tool\.register\(\s*\{[^}]*?name:\s*['"`]([\w:-]+)/g)].map(m => m[1]))]
   const usesPluginEnv = /CLAUDE_PLUGIN_(ROOT|DATA)/.test(code)
 
-  let license = manifest?.license ?? null
-  if (!license) {
-    const lf = listDir(dir, n => /^(licen[cs]e|copying)(\.(md|txt))?$/i.test(n))[0]
-    if (lf) license = (fs.readFileSync(path.join(dir, lf), 'utf8').match(/\b(MIT|Apache-2\.0|Apache License|BSD|ISC|MPL|LGPL|AGPL|GPL|Unlicense)\b/i) ?? [null, 'see ' + lf])[1]
-  }
+  const { license, licenseFile } = licenseOf(dir, manifest, root)
 
   return {
     name: manifest?.name ?? path.basename(dir),
     version: manifest?.version ?? '',
     description: manifest?.description ?? '',
     license,
+    licenseFile,
     hasManifest: !!manifest,
     hooksJsonError: hooksJson?.__error ?? null,
     modules,

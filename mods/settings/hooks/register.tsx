@@ -463,7 +463,7 @@ export function syntheticRows(): ConfigRow[] {
     const labelled = Object.keys(f.labels?.de ?? f.labels?.en ?? {})
     const choices = labelled.length ? labelled : (f.options ?? [])
     const value = opts[f.key] ?? f.default
-    const kind = typeof f.default === 'boolean' ? 'boolean' : choices.length ? 'choice' : 'text'
+    const kind = f.type === 'number' ? 'number' : f.type === 'boolean' || typeof f.default === 'boolean' ? 'boolean' : choices.length ? 'choice' : 'text'
     return { key: PREFIX + f.key, label: tx(f.title), kind, value: value as any, ...(choices.length ? { options: choices } : {}), provider, isLocked: false } as ConfigRow
   }
   const out = SETTINGS.map(field)
@@ -692,7 +692,7 @@ function drawMods($: EngineInterface, ui: any, rows: Map<string, ConfigRow>, not
         'card-rest',
         'subtle',
         <Text bold>{t('Weitere', 'More')}</Text>,
-        <Box flexDirection="column">{rest.map(k => drawParam($, ui, rows, { key: k, title: { en: rows.get(k)?.label ?? k, de: rows.get(k)?.label ?? k }, description: { en: '', de: '' }, labels: {}, options: null, default: '' }, true, 0))}</Box>,
+        <Box flexDirection="column">{rest.map(k => drawParam($, ui, rows, { key: k, title: { en: rows.get(k)?.label ?? k, de: rows.get(k)?.label ?? k }, description: { en: '', de: '' }, labels: {}, options: null, type: 'string', multiple: false, default: '' }, true, 0))}</Box>,
       )
     : null
 
@@ -912,6 +912,18 @@ async function trustMod($: EngineInterface, toggle: string) {
 
 /** Switching an imported mod on by hand counts as trusting it. */
 async function switchMod($: EngineInterface, toggle: string, key: string, value: boolean) {
+  const m = CATALOG.find(x => x.toggle === toggle)
+  if (value && m?.needs.length) {
+    const rows = await configRows($)
+    const unset = m.needs.filter(k => {
+      const v = rows.get(k)?.value
+      return v === undefined || v === null || v === ''
+    })
+    if (unset.length) {
+      $.ui.toast(t(`Erst setzen: ${unset.join(', ')} (⚙ beim Mod).`, `Set these first: ${unset.join(', ')} (⚙ at the mod).`))
+      return
+    }
+  }
   if (value && CATALOG.find(m => m.toggle === toggle)?.imported) {
     const list = await trustedList($)
     if (!list.includes(toggle)) await $.store.set(STORE_TRUSTED, [...list, toggle])
