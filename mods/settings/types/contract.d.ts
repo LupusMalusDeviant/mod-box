@@ -9,6 +9,51 @@ export type SourcePlugin = {
   extras: string[]
   /** The box id when already imported. */
   imported: string | null
+  /** integrate | native | blocked | unsupported, or null while the plugin is remote. */
+  verdict: string | null
+  reasons: string[]
+  /** Its parts as short lines. */
+  parts: string[]
+  /** name@marketplace for a native install from a Claude marketplace. */
+  nativeId: string | null
+  /** Its local folder, when the source has it. */
+  dir: string | null
+}
+
+/** A plugin installed as itself, as `box.mjs native list` reports it. */
+export type NativePlugin = {
+  id: string
+  version: string
+  enabled: boolean
+  managed: boolean
+  trusted: boolean
+  group: string
+  tokens: string
+  hasUserConfig: boolean
+  errors: string[]
+  changedAt: string | null
+  missing: boolean
+}
+
+/** One option of a native plugin. The value of a sensitive one is never read. */
+export type NativeField = {
+  key: string
+  type: string
+  title: string
+  description: string
+  sensitive: boolean
+  required: boolean
+  options: string[] | null
+  default: unknown
+  set: boolean
+  value: unknown
+}
+
+export type NativeInfo = {
+  components: Record<string, { count: number; names: string[] }> | null
+  alwaysOn: string | null
+  fields: NativeField[] | null
+  error?: string
 }
 
 export type Source = {
@@ -78,6 +123,8 @@ declare module 'claude-code' {
       open: string[]
       report: ImportReport | null
       expanded: string[]
+      natives: NativePlugin[] | null
+      nativeInfo: Record<string, NativeInfo>
       fresh: string[]
       updates: UpdateInfo[] | null
       usage: Record<string, ModUsage>

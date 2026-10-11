@@ -15,7 +15,7 @@ import { BAND_IDS } from './bands'
 import { HOOKS } from './hooks-table'
 import { CATALOG, GROUPS, PLUGIN, PROFILES, SETTINGS } from './catalog'
 import type { CatalogField, CatalogMod, Text as I18n } from './catalog'
-import type { EnvCheck, HookError, ImportReport, Source, Tab, UpdateInfo } from '../types'
+import type { NativeField, NativeInfo, NativePlugin, SourcePlugin, EnvCheck, HookError, ImportReport, Source, Tab, UpdateInfo } from '../types'
 
 const PANE = 'mod-box-settings'
 // How Claude Code names this plugin's /config rows: <plugin>.<field>, for an installed plugin often
@@ -37,6 +37,9 @@ const busy = atom({ plugin: 'mod-box', key: 'mb_busy' } as const, null as string
 const filter = atom({ plugin: 'mod-box', key: 'mb_filter' } as const, '')
 const open = atom({ plugin: 'mod-box', key: 'mb_open' } as const, [] as string[])
 const report = atom({ plugin: 'mod-box', key: 'mb_report' } as const, null as ImportReport | null)
+// Natively managed plugins (tools/native.mjs) and their details, read when a row opens.
+const natives = atom({ plugin: 'mod-box', key: 'mb_natives' } as const, null as NativePlugin[] | null)
+const nativeInfo = atom({ plugin: 'mod-box', key: 'mb_nativeInfo' } as const, {} as Record<string, NativeInfo>)
 const expanded = atom({ plugin: 'mod-box', key: 'mb_expanded' } as const, [] as string[])
 // Mods that came in since the last session: marked "new" in the window for this session.
 const fresh = atom({ plugin: 'mod-box', key: 'mb_fresh' } as const, [] as string[])
@@ -351,6 +354,7 @@ export const register: Register = (on, options) => {
     const now = await read($, tab)
     if (now === 'sources' && (await read($, sources)) === null) void loadCatalog($, false)
     if ((await read($, envChecks)) === null) void runEnvChecks($).catch(() => {})
+    if ((await read($, natives)) === null) void loadNatives($).catch(() => {})
     return { text: t('Mod-Box geöffnet (Esc schließt).', 'Mod Box opened (Esc closes).') }
   })
 
@@ -387,7 +391,7 @@ export const register: Register = (on, options) => {
     if (current === 'profiles') body = drawProfiles($, ui, rows, columns)
     else if (current === 'sources') body = <Box flexDirection="column">{await drawUpdates($, ui)}{await drawSources($, ui, columns)}</Box>
     else if (current === 'diag') body = <Box flexDirection="column">{await drawUsage($, ui)}{await drawDiagnosis($, ui)}</Box>
-    else body = drawMods($, ui, rows, await drawNotes($, ui), await read($, usage), await read($, expanded), columns, { ...(await here($, e.surface)), trusted, fresh: await read($, fresh) })
+    else body = drawMods($, ui, rows, await drawNotes($, ui), await read($, usage), await read($, expanded), columns, { ...(await here($, e.surface)), trusted, fresh: await read($, fresh) }, drawNativeCard($, ui, await read($, natives), await read($, nativeInfo), await read($, expanded), (await $.session.usage().catch(() => null))?.startedAt ?? 0))
 
     const storedId = await activeProfileId($)
     const matches = (p: (typeof PROFILES)[number]) => profileSet(p, trusted).every(([k, v]) => (rows.get(k)?.value === true) === v)
@@ -559,7 +563,7 @@ function card(ui: any, key: string, accent: string, head: unknown, children: unk
   )
 }
 
-function drawMods($: EngineInterface, ui: any, rows: Map<string, ConfigRow>, notes: unknown, used: Record<string, ModUsage>, open: string[], columns: number, env: Here & { trusted: string[]; fresh: string[] }) {
+function drawMods($: EngineInterface, ui: any, rows: Map<string, ConfigRow>, notes: unknown, used: Record<string, ModUsage>, open: string[], columns: number, env: Here & { trusted: string[]; fresh: string[] }, nativeCard: unknown = null) {
   const { Box, Text, Button } = ui
   if (rows.size === 0) return <Text dimColor>{t('Keine Einstellungen gefunden. Ist die Mod Box aktiviert?', 'No settings found. Is the Mod Box enabled?')}</Text>
 
@@ -695,6 +699,7 @@ function drawMods($: EngineInterface, ui: any, rows: Map<string, ConfigRow>, not
   // Wide windows get two columns; the groups are spread so both columns end about level.
   const cards = [...groups.map(g => ({ el: groupCard(g), size: 2 + CATALOG.filter(m => m.group === g).length * 2 + (open.some(k => CATALOG.find(m => m.toggle === k)?.group === g) ? 6 : 0) })), { el: general, size: 6 }]
   if (extra) cards.push({ el: extra, size: 2 + rest.length })
+  if (nativeCard) cards.push({ el: nativeCard as any, size: 6 })
   let body
   if (columns >= 110) {
     const cols: Array<{ els: unknown[]; size: number }> = [{ els: [], size: 0 }, { els: [], size: 0 }]
@@ -847,6 +852,7 @@ async function applyProfile($: EngineInterface, id: string) {
   const p = PROFILES.find(x => x.id === id)
   if (!p) return
   await $.store.set(STORE_ACTIVE, p.id)
+  if ((await read($, natives))?.some(n => n.managed && n.trusted)) await nativeRun($, ['profile', p.id], t('Profil für native Plugins …', 'Profile for native plugins …'))
   const values = profileSet(p, await trustedList($))
   if (SYNTHETIC || (await configRows($), SYNTHETIC)) return writeOptions($, Object.fromEntries(values))
   await $.store.set(STORE_PENDING, values.map(([k, v]) => [k, v]))
@@ -1001,11 +1007,221 @@ export function compatIssues(c: CatalogMod['compat'], h: Here): Array<{ de: stri
   return out
 }
 
+// ---------------------------------------------------------------- Native plugins
+
+// Plugins the box does not carry inside itself: installed as plugins of their own and driven
+// through `claude plugin ...` (tools/native.mjs). Switching, options and updates take effect when
+// Claude Code loads plugins again (a new session; in the desktop app a restart).
+
+async function loadNatives($: EngineInterface) {
+  const res = await box($, ['native', 'list'])
+  if (!res.ok) {
+    await update($, natives, () => [])
+    await update($, report, () => ({ ok: false, title: t('Installierte Plugins lesen', 'Reading installed plugins'), error: String(res.error ?? '?'), notes: [] }))
+    return
+  }
+  const list: NativePlugin[] = ((res.plugins ?? []) as any[]).map(p => ({
+    id: String(p.id),
+    version: String(p.version ?? ''),
+    enabled: p.enabled === true,
+    managed: p.managed === true,
+    trusted: p.trusted === true,
+    group: String(p.group ?? 'native'),
+    tokens: String(p.tokens ?? 'none'),
+    hasUserConfig: p.hasUserConfig === true,
+    errors: Array.isArray(p.errors) ? p.errors.map(String) : [],
+    changedAt: p.changedAt ? String(p.changedAt) : null,
+    missing: p.missing === true,
+  }))
+  await update($, natives, () => list)
+}
+
+/** Runs `box.mjs native <args>`; a failure becomes the report, the list is read again afterwards. */
+async function nativeRun($: EngineInterface, args: string[], busyText: string, stdin?: string): Promise<any> {
+  if (await read($, busy)) return null
+  await update($, busy, () => busyText)
+  let res: any = null
+  try {
+    res = await box($, ['native', ...args], 600_000, stdin)
+    if (!res.ok) await update($, report, () => ({ ok: false, title: busyText.replace(/\s*…$/, ''), error: String(res.error ?? res.message ?? '?').slice(0, 1500), notes: [] }))
+    else if (res.restart) $.ui.toast(t('Wirkt, sobald Claude Code die Plugins neu lädt (neue Sitzung; in der Desktop-App: neu starten).', 'Takes effect when Claude Code loads plugins again (a new session; in the desktop app: restart).'), { timeoutMs: 8000 })
+  } finally {
+    await update($, busy, () => null)
+  }
+  await loadNatives($)
+  return res
+}
+
+async function nativeInfoOf($: EngineInterface, id: string) {
+  const [d, o] = await Promise.all([box($, ['native', 'details', id]), box($, ['native', 'options', id])])
+  const info: NativeInfo = {
+    components: d.ok ? (d.components as NativeInfo['components']) : null,
+    alwaysOn: d.ok ? (d.tokens?.alwaysOn ?? null) : null,
+    fields: o.ok ? ((o.fields ?? []) as NativeField[]) : null,
+    ...(d.ok ? {} : { error: String(d.error ?? '') }),
+  }
+  await update($, nativeInfo, m => ({ ...m, [id]: info }))
+}
+
+async function toggleNative($: EngineInterface, id: string) {
+  const key = 'n:' + id
+  const isOpening = !(await read($, expanded)).includes(key)
+  toggleExpanded($, key)
+  if (isOpening && !(await read($, nativeInfo))[id]) await nativeInfoOf($, id)
+}
+
+async function switchNative($: EngineInterface, p: NativePlugin) {
+  if (!p.enabled && p.managed && !p.trusted) {
+    $.ui.toast(t('Erst vertrauen: das ist fremder Code (⚙ → Vertrauen).', 'Trust it first: it is foreign code (⚙ → Trust).'))
+    return
+  }
+  await nativeRun($, [p.enabled ? 'disable' : 'enable', p.id], p.enabled ? t(`${p.id} wird ausgeschaltet …`, `Switching ${p.id} off …`) : t(`${p.id} wird eingeschaltet …`, `Switching ${p.id} on …`))
+}
+
+async function trustNative($: EngineInterface, id: string, trusted: boolean) {
+  const res = await nativeRun($, [trusted ? 'trust' : 'untrust', id], t('Vertrauen wird gesetzt …', 'Setting trust …'))
+  // From now on the active profile decides about it, as about every other mod.
+  if (res?.ok && trusted) await nativeRun($, ['profile', await activeProfileId($)], t('Profil wird angewandt …', 'Applying the profile …'))
+}
+
+async function setNativeOption($: EngineInterface, id: string, key: string, value: string) {
+  const res = await nativeRun($, ['set', id], t('Option wird gespeichert …', 'Saving the option …'), JSON.stringify({ [key]: value }))
+  if (res?.ok) {
+    $.ui.toast(t(`${key} gespeichert. Wirkt nach dem Neuladen der Plugins.`, `${key} saved. Takes effect when plugins load again.`))
+    await nativeInfoOf($, id)
+  }
+}
+
+async function updateNative($: EngineInterface, id: string) {
+  const res = await nativeRun($, ['update', id], t(`${id} wird aktualisiert …`, `Updating ${id} …`))
+  if (!res?.ok) return
+  const text = res.diffFile ? String(await $.fs.read(String(res.diffFile)).catch(() => '')) : ''
+  await update($, report, () => ({
+    ok: true,
+    title: t(`${id} aktualisiert`, `${id} updated`),
+    notes: [
+      `${res.from || '?'} → ${res.to || '?'}`,
+      t(`neu: ${res.added?.length ?? 0} · entfernt: ${res.removed?.length ?? 0} · geändert: ${res.changed?.length ?? 0}`, `added: ${res.added?.length ?? 0} · removed: ${res.removed?.length ?? 0} · changed: ${res.changed?.length ?? 0}`),
+    ],
+  }))
+  if (text) {
+    await update($, diff, () => ({ id, from: String(res.from ?? ''), to: String(res.to ?? ''), text }))
+    await $.ui.open({ id: DIFF_PANE, title: `Diff ${id}` }).catch(() => {})
+  }
+}
+
+async function installNative($: EngineInterface, src: Source, p: SourcePlugin) {
+  const args = src.kind === 'claude' && p.nativeId ? ['install', p.nativeId] : p.dir ? ['install', p.name, '--dir', p.dir] : ['install', p.name, '--source', src.link]
+  const res = await nativeRun($, args, t(`${p.name} wird installiert …`, `Installing ${p.name} …`))
+  if (res?.confirm) {
+    await update($, report, () => ({ ok: false, title: t(`${p.name}: Befehl bestätigen`, `${p.name}: confirm a command`), error: t(`Der Marketplace will bei der Installation diesen Befehl ausführen: ${res.confirm.command}\nDie Box bestätigt das nicht selbst. Wenn du ihm traust: claude plugin install ${p.nativeId ?? p.name} --accept-command ${res.confirm.sha256}`, `The marketplace wants to run this command on install: ${res.confirm.command}\nThe box does not confirm it itself. If you trust it: claude plugin install ${p.nativeId ?? p.name} --accept-command ${res.confirm.sha256}`), notes: [] }))
+    return
+  }
+  if (res?.ok) await update($, report, () => ({ ok: true, title: t(`${p.name} installiert`, `${p.name} installed`), notes: [t('Nativ installiert und ausgeschaltet, bis du ihm vertraust (Mods → Nativ verwaltet).', 'Installed natively and switched off until you trust it (Mods → Managed natively).')] }))
+}
+
+const PART_LABEL: Record<string, [string, string]> = { Skills: ['Skills', 'skills'], Agents: ['Agents', 'agents'], Hooks: ['Hooks', 'hooks'], 'MCP servers': ['MCP-Server', 'MCP servers'], 'LSP servers': ['LSP-Server', 'LSP servers'] }
+
+function drawNativeCard($: EngineInterface, ui: any, list: NativePlugin[] | null, info: Record<string, NativeInfo>, open: string[], startedAt: number) {
+  const { Box, Text, Button, Select, Input } = ui
+  const managed = (list ?? []).filter(p => p.managed)
+  const others = (list ?? []).filter(p => !p.managed)
+  const on = managed.filter(p => p.enabled).length
+  const row = (p: NativePlugin) => {
+    const isOpen = open.includes('n:' + p.id)
+    const [name, market] = p.id.split('@')
+    const pending = !!p.changedAt && Date.parse(p.changedAt) > startedAt
+    const inf = info[p.id]
+    return (
+      <Box key={`nat-${p.id}`} flexDirection="column" marginTop={isOpen ? 1 : 0} marginBottom={isOpen ? 1 : 0}>
+        <Box flexDirection="row" alignItems="center" justifyContent="space-between">
+          <Box flexDirection="row" alignItems="center" flexShrink={1}>
+            <Button key={`nt-${p.id}`} plain onPress={() => void switchNative($, p)}>
+              <Text color={p.enabled ? 'success' : 'inactive'}>{p.enabled ? '●' : '○'}</Text>
+              {' '}
+              <Text bold={p.enabled} color={p.enabled ? 'text' : 'inactive'}>{name}</Text>
+            </Button>
+            <Text color="inactive">{`@${market}${p.version ? ' ' + p.version : ''}`}</Text>
+            {!p.trusted ? <Text>{' 🔒'}</Text> : null}
+            {p.tokens !== 'none' ? <Text color="warning">{' 💰'}</Text> : null}
+            {pending ? <Text color="suggestion">{t('  ↻ nach Neustart', '  ↻ after restart')}</Text> : null}
+            {p.errors.length ? <Text color="error">{`  ⚠ ${p.errors[0]}`}</Text> : null}
+          </Box>
+          <Button key={`nx-${p.id}`} label={isOpen ? '▾' : '⚙'} plain onPress={() => void toggleNative($, p.id)} />
+        </Box>
+        {isOpen ? (
+          <Box flexDirection="column" paddingLeft={2}>
+            {!inf ? <Text color="inactive">{t('Lese Details …', 'Reading details …')}</Text> : null}
+            {inf?.error ? <Text color="error" wrap="wrap">{inf.error}</Text> : null}
+            {inf?.components
+              ? Object.entries(inf.components)
+                  .filter(([, c]) => c.count > 0)
+                  .map(([k, c]) => (
+                    <Text key={`np-${p.id}-${k}`} color="inactive" wrap="wrap">{`${PART_LABEL[k] ? t(PART_LABEL[k]![0], PART_LABEL[k]![1]) : k} (${c.count}): ${c.names.join(', ')}`}</Text>
+                  ))
+              : null}
+            {inf?.alwaysOn ? <Text color="warning">{t(`💰 immer im Kontext: ~${inf.alwaysOn} Token je Sitzung`, `💰 always in context: ~${inf.alwaysOn} tokens per session`)}</Text> : null}
+            {(inf?.fields ?? []).map(f => (
+              <Box key={`nf-${p.id}-${f.key}`} flexDirection="row" alignItems="center">
+                <Box width={22} flexShrink={0}>
+                  <Text color="inactive" wrap="truncate-end">{f.title}</Text>
+                </Box>
+                {f.sensitive ? (
+                  <Box flexDirection="row" columnGap={2}>
+                    <Text color={f.set ? 'success' : 'warning'}>{f.set ? t('🔑 gesetzt', '🔑 set') : t('🔑 nicht gesetzt', '🔑 not set')}</Text>
+                    <Button key={`ns-${p.id}-${f.key}`} label={t('Sicher setzen: /plugin configure kopieren', 'Set securely: copy /plugin configure')} plain onPress={(press: { surface?: string }) => void $.ui.copy({ text: `/plugin configure ${p.id}`, surface: press.surface as any })} />
+                  </Box>
+                ) : f.options && Select ? (
+                  <Select key={`nsel-${p.id}-${f.key}`} options={f.options.map(o => ({ value: o, label: o }))} value={String(f.value ?? f.default ?? '')} onSelect={(v: string) => void setNativeOption($, p.id, f.key, v)} />
+                ) : f.type === 'boolean' ? (
+                  <Button key={`nb-${p.id}-${f.key}`} plain label={String(f.value) === 'true' ? t('an', 'on') : t('aus', 'off')} onPress={() => void setNativeOption($, p.id, f.key, String(f.value) === 'true' ? 'false' : 'true')} />
+                ) : Input ? (
+                  <Input key={`nin-${p.id}-${f.key}`} value={f.value == null ? '' : String(f.value)} placeholder={f.required ? t('Pflicht', 'required') : t('leer = Standard', 'empty = default')} submitLabel={t('Übernehmen', 'Apply')} onSubmit={(v: string) => void setNativeOption($, p.id, f.key, v)} />
+                ) : null}
+              </Box>
+            ))}
+            <Box flexDirection="row" columnGap={2} marginTop={1}>
+              <Button key={`ntr-${p.id}`} label={p.trusted ? t('Vertrauen entziehen', 'Untrust') : t('Vertrauen', 'Trust')} plain onPress={() => void trustNative($, p.id, !p.trusted)} />
+              <Button key={`nup-${p.id}`} label={t('Aktualisieren', 'Update')} plain onPress={() => void updateNative($, p.id)} />
+              <Button key={`nrm-${p.id}`} label={t('Deinstallieren', 'Uninstall')} plain onPress={() => void nativeRun($, ['uninstall', p.id], t(`${p.id} wird deinstalliert …`, `Uninstalling ${p.id} …`))} />
+              <Button key={`nrp-${p.id}`} label={t('… samt nicht mehr gebrauchter Abhängigkeiten', '… with dependencies nobody needs')} plain onPress={() => void nativeRun($, ['uninstall', p.id, '--prune'], t(`${p.id} wird deinstalliert …`, `Uninstalling ${p.id} …`))} />
+            </Box>
+            {!p.trusted ? <Text color="warning" wrap="wrap">{t('🔒 Fremder Code, noch nicht vertraut: bleibt aus, Profile schalten ihn nicht ein. Vertrauen ist eine bewusste Entscheidung, keine Sandbox.', '🔒 Foreign code, not trusted yet: stays off, profiles do not switch it on. Trust is a deliberate decision, not a sandbox.')}</Text> : null}
+          </Box>
+        ) : null}
+      </Box>
+    )
+  }
+  return (
+    <Box key="card-native" flexDirection="column" borderStyle="round" borderColor="claude" paddingX={1} marginBottom={1}>
+      <Box flexDirection="row" justifyContent="space-between">
+        <Text bold color="claude">{t('🔌 Nativ verwaltet', '🔌 Managed natively')}</Text>
+        <Text color={on ? 'success' : 'inactive'}>{list ? `${on}/${managed.length}` : '…'}</Text>
+      </Box>
+      <Text color="inactive" wrap="wrap">{t('Eigenständig installierte Plugins (Skills, Agents, MCP/LSP, Settings-Hooks …). Die Box schaltet, konfiguriert, aktualisiert und entfernt sie über Claude Code.', 'Plugins installed as themselves (skills, agents, MCP/LSP, settings hooks …). The box switches, configures, updates and removes them through Claude Code.')}</Text>
+      {list === null ? <Text color="inactive">{t('Lese installierte Plugins …', 'Reading installed plugins …')}</Text> : null}
+      {list && managed.length === 0 ? <Text color="inactive">{t('Noch keine. Unter Quellen „Nativ installieren“, oder unten ein installiertes Plugin übernehmen.', 'None yet. Sources → "Install natively", or take over an installed plugin below.')}</Text> : null}
+      {managed.map(row)}
+      {others.length ? (
+        <Box flexDirection="column" marginTop={1}>
+          <Text color="inactive">{t('Weitere installierte Plugins (nicht von der Box verwaltet):', 'Other installed plugins (not managed by the box):')}</Text>
+          {others.map(p => (
+            <Box key={`no-${p.id}`} flexDirection="row" columnGap={2}>
+              <Text color={p.enabled ? 'text' : 'inactive'}>{`${p.enabled ? '●' : '○'} ${p.id}`}</Text>
+              <Button key={`nad-${p.id}`} label={t('Verwalten', 'Manage')} plain onPress={() => void nativeRun($, ['adopt', p.id], t('Wird übernommen …', 'Taking it over …'))} />
+            </Box>
+          ))}
+        </Box>
+      ) : null}
+    </Box>
+  )
+}
+
 // ---------------------------------------------------------------- Sources
 
-async function box($: EngineInterface, args: string[], timeoutMs = 300_000): Promise<any> {
+async function box($: EngineInterface, args: string[], timeoutMs = 300_000, stdin?: string): Promise<any> {
   const script = `${$.plugin.root}/tools/box.mjs`
-  const r = await $.process.run(['node', script, ...args, '--lang', lang], { timeoutMs, cwd: $.plugin.root }).catch((err: unknown) => ({
+  const r = await $.process.run(['node', script, ...args, '--lang', lang], { timeoutMs, cwd: $.plugin.root, ...(stdin !== undefined ? { stdin } : {}) }).catch((err: unknown) => ({
     exitCode: -1,
     stdout: '',
     stderr: String(err),
@@ -1040,6 +1256,11 @@ async function loadCatalog($: EngineInterface, refresh: boolean) {
         isMod: p.isMod === true ? true : p.isMod === false ? false : null,
         extras: Array.isArray(p.extras) ? p.extras : [],
         imported: p.imported ?? null,
+        verdict: p.verdict ?? null,
+        reasons: Array.isArray(p.reasons) ? p.reasons.map(String) : [],
+        parts: partsOf(p.components),
+        nativeId: p.nativeId ?? null,
+        dir: p.dir ?? null,
       })),
     }))
     await update($, sources, () => list)
@@ -1072,14 +1293,15 @@ async function importFrom($: EngineInterface, src: Source, plugin: string) {
   if (await read($, busy)) return
   await update($, busy, () => t(`${plugin} wird übernommen und geprüft …`, `Importing and checking ${plugin} …`))
   try {
-    const args = src.kind === 'link' ? ['import', '--url', src.link, '--plugin', plugin] : ['import', '--dir', src.dir ?? '', '--plugin', plugin]
+    const strategy = ['--strategy', setting('importStrategy') || 'auto']
+    const args = src.kind === 'link' ? ['import', '--url', src.link, '--plugin', plugin, ...strategy] : ['import', '--dir', src.dir ?? '', '--plugin', plugin, ...strategy]
     const res = await box($, args, 600_000)
     await update($, report, () => ({
       ok: res.ok === true,
       title: t(`${plugin} übernehmen`, `Import ${plugin}`),
       ...(res.id ? { id: String(res.id) } : {}),
       ...(res.error ? { error: String(res.error).slice(0, 1500) } : {}),
-      notes: Array.isArray(res.notes) ? res.notes.map(String) : [],
+      notes: [...(Array.isArray(res.reasons) ? res.reasons.slice(1).map(String) : []), ...(res.native ? [String(res.native)] : []), ...(Array.isArray(res.notes) ? res.notes.map(String) : [])],
     }))
     if (res.ok) await afterChange($, t(`${plugin} ist in der Mod-Box (Schalter „${res.toggle}“, zunächst aus).`, `${plugin} is in the Mod Box (switch "${res.toggle}", off for now).`))
   } finally {
@@ -1135,6 +1357,7 @@ async function drawSources($: EngineInterface, ui: any, columns: number) {
   const opened = await read($, open)
   const isBusy = await read($, busy)
   const at = await read($, loadedAt)
+  const nativeIds = ((await read($, natives)) ?? []).map(n => n.id)
 
   const header = (
     <Box flexDirection="column" marginBottom={1} borderStyle="round" borderColor="subtle" paddingX={1}>
@@ -1183,14 +1406,15 @@ async function drawSources($: EngineInterface, ui: any, columns: number) {
       {list.map(src => {
         const key = src.kind === 'link' ? src.link : `claude:${src.name}`
         const isOpen = opened.includes(key) || !!f
-        const mods = src.plugins.filter(p => p.isMod === true).length
-        const shown = src.plugins.filter(match).sort((a, b) => rank(a) - rank(b))
+        const mods = src.plugins.filter(p => p.verdict === 'integrate').length
+        const nativeCount = src.plugins.filter(p => p.verdict === 'native').length
+        const shown = src.plugins.filter(match).sort((x, y) => rank(x) - rank(y))
         return (
           <Box key={`src-${key}`} flexDirection="column" marginBottom={1} borderStyle="round" borderColor={src.error ? 'error' : mods ? 'suggestion' : 'subtle'} paddingX={1}>
             <Box flexDirection="row">
               <Button key={`src-t-${key}`} label={isOpen ? '▾' : '▸'} plain onPress={() => void update($, open, o => (o.includes(key) ? o.filter(x => x !== key) : [...o, key]))} />
               <Text bold>{` ${src.name}`}</Text>
-              <Text dimColor>{`  ${src.kind === 'claude' ? t('Claude-Marketplace', 'Claude marketplace') : t('Git-Link', 'git link')} · ${src.plugins.length} Plugins · ${mods} ${t('übernehmbar', 'importable')}`}</Text>
+              <Text dimColor>{`  ${src.kind === 'claude' ? t('Claude-Marketplace', 'Claude marketplace') : t('Git-Link', 'git link')} · ${src.plugins.length} Plugins · ${mods} ${t('in die Box', 'into the box')} · ${nativeCount} ${t('nativ', 'native')}`}</Text>
               {src.kind === 'link' ? <Text>{'  '}</Text> : null}
               {src.kind === 'link' ? <Button key={`src-rm-${key}`} label={t('Entfernen', 'Remove')} plain onPress={() => void removeLink($, src.link)} /> : null}
             </Box>
@@ -1205,23 +1429,44 @@ async function drawSources($: EngineInterface, ui: any, columns: number) {
               </Box>
             ) : null}
             {isOpen
-              ? shown.slice(0, ROWS_PER_SOURCE).map(p => (
-                  <Box key={`pl-${key}-${p.name}`} flexDirection="row" paddingLeft={3}>
-                    <Text color={p.isMod === true ? 'suggestion' : undefined} dimColor={p.isMod === false}>{p.isMod === true ? '◆ ' : p.isMod === false ? '· ' : '? '}</Text>
-                    <Text bold={p.isMod === true}>{p.name}</Text>
-                    <Text dimColor wrap="truncate-end">{`  ${trim(p.description, width)}`}</Text>
-                    <Text>{'  '}</Text>
-                    {p.imported ? (
-                      <Text color="success">{`✓ ${t('in der Mod-Box', 'in the Mod Box')}`}</Text>
-                    ) : p.isMod === false ? (
-                      <Text dimColor>{p.extras.length ? `${t('kein Mod', 'not a mod')} (${p.extras.join(', ')})` : t('kein Mod', 'not a mod')}</Text>
-                    ) : null}
-                    {p.isMod !== false ? <Text>{'  '}</Text> : null}
-                    {p.isMod !== false && !isBusy ? (
-                      <Button key={`imp-${key}-${p.name}`} label={p.imported ? t('Aktualisieren', 'Update') : t('Übernehmen', 'Import')} plain onPress={() => void importFrom($, src, p.name)} />
-                    ) : null}
-                  </Box>
-                ))
+              ? shown.slice(0, ROWS_PER_SOURCE).map(p => {
+                  const rk = `p:${key}:${p.name}`
+                  const rowOpen = opened.includes(rk)
+                  const v = VERDICT[p.verdict ?? 'remote'] ?? VERDICT.remote!
+                  const installed = !!p.nativeId && nativeIds.includes(p.nativeId)
+                  const canImport = !p.imported && (p.verdict === 'integrate' || p.verdict === null)
+                  const canNative = !installed && !p.imported && (p.verdict === 'native' || p.verdict === 'integrate' || p.verdict === null)
+                  const actions: unknown[] = []
+                  if (!isBusy && canImport) actions.push(<Button key={`imp-${key}-${p.name}`} label={t('Übernehmen', 'Import')} plain onPress={() => void importFrom($, src, p.name)} />)
+                  if (!isBusy && p.imported) actions.push(<Button key={`imp-${key}-${p.name}`} label={t('Aktualisieren', 'Update')} plain onPress={() => void importFrom($, src, p.name)} />)
+                  if (!isBusy && canNative) actions.push(<Button key={`nat-${key}-${p.name}`} label={p.verdict === 'integrate' ? t('nativ statt Box', 'native instead') : t('Nativ installieren', 'Install natively')} plain onPress={() => void installNative($, src, p)} />)
+                  return (
+                    <Box key={`pl-${key}-${p.name}`} flexDirection="column" paddingLeft={3}>
+                      <Box flexDirection="row">
+                        <Button key={`pv-${key}-${p.name}`} plain onPress={() => void update($, open, o => (o.includes(rk) ? o.filter(x => x !== rk) : [...o, rk]))}>
+                          <Text color={v.color}>{`${v.mark} `}</Text>
+                          <Text bold={p.verdict === 'integrate' || p.verdict === 'native'}>{p.name}</Text>
+                        </Button>
+                        <Text color={v.color}>{`  ${t(v.label[0], v.label[1])}`}</Text>
+                        <Text dimColor wrap="truncate-end">{`  ${trim(p.description, width)}`}</Text>
+                        <Text>{'  '}</Text>
+                        {p.imported ? <Text color="success">{`✓ ${t('in der Box', 'in the box')}  `}</Text> : installed ? <Text color="success">{`✓ ${t('installiert', 'installed')}  `}</Text> : null}
+                        {actions.flatMap((x, i) => (i ? [<Text key={`ag-${key}-${p.name}-${i}`}>{'  '}</Text>, x] : [x])) as any}
+                      </Box>
+                      {rowOpen ? (
+                        <Box flexDirection="column" paddingLeft={4}>
+                          {p.reasons.map((r, i) => (
+                            <Text key={`rr-${key}-${p.name}-${i}`} color={p.verdict === 'blocked' ? 'error' : 'inactive'} wrap="wrap">{`• ${r}`}</Text>
+                          ))}
+                          {p.parts.map((x, i) => (
+                            <Text key={`rp-${key}-${p.name}-${i}`} color="inactive" wrap="wrap">{`  ${x}`}</Text>
+                          ))}
+                          {p.verdict === null ? <Text color="inactive">{t('Liegt entfernt: wird beim Übernehmen oder Installieren geholt und geprüft.', 'Remote: fetched and checked on import or install.')}</Text> : null}
+                        </Box>
+                      ) : null}
+                    </Box>
+                  )
+                })
               : null}
             {isOpen && shown.length > ROWS_PER_SOURCE ? (
               <Box paddingLeft={3}>
@@ -1233,21 +1478,60 @@ async function drawSources($: EngineInterface, ui: any, columns: number) {
       })}
       {opened.length ? (
         <Box flexDirection="column" marginTop={1}>
-          <Text color="inactive">{t('Zeichen in der Liste:', 'Marks in the list:')}</Text>
-          <Text color="inactive">
-            <Text color="suggestion">{'  ◆ '}</Text>
-            {t('Mod – lässt sich in die Mod Box übernehmen', 'mod – can be imported into the Mod Box')}
-          </Text>
-          <Text color="inactive">{t('  ? noch nicht heruntergeladen – wird beim Übernehmen geprüft', '  ? not downloaded yet – checked when you import it')}</Text>
-          <Text color="inactive">{t('  · normales Plugin – nicht hier, sondern mit /plugin installieren', '  · ordinary plugin – install it with /plugin instead')}</Text>
+          <Text color="inactive">{t('Zeichen in der Liste (Klick auf den Namen zeigt Gründe und Bestandteile):', 'Marks in the list (click a name for reasons and parts):')}</Text>
+          {(['integrate', 'native', 'blocked', 'unsupported', 'remote'] as const).map(k => (
+            <Text key={`leg-${k}`} color="inactive">
+              <Text color={VERDICT[k]!.color}>{`  ${VERDICT[k]!.mark} `}</Text>
+              {k === 'integrate'
+                ? t('in die Box: reine Hook-Mods, schaltbar mit Band und Profilen', 'into the box: plain hook mods, switchable, with band and profiles')
+                : k === 'native'
+                  ? t('nativ: als eigenes Plugin installiert, von hier geschaltet, konfiguriert, aktualisiert', 'native: installed as a plugin of its own, switched, configured and updated from here')
+                  : k === 'blocked'
+                    ? t('blockiert: erst klären (doppelter Befehl, keine Lizenz …)', 'blocked: settle first (clashing command, no license …)')
+                    : k === 'unsupported'
+                      ? t('nicht unterstützt: die Box kann damit nichts anfangen', 'not supported: nothing the box can do with it')
+                      : t('noch nicht geprüft: liegt entfernt, wird beim Übernehmen oder Installieren geprüft', 'not checked yet: remote, checked on import or install')}
+            </Text>
+          ))}
         </Box>
       ) : null}
     </Box>
   )
 }
 
-function rank(p: { isMod: boolean | null; imported: string | null }): number {
-  return p.isMod === true ? (p.imported ? 1 : 0) : p.isMod === null ? 2 : 3
+function rank(p: SourcePlugin): number {
+  return { integrate: 0, native: 1, null: 2, blocked: 3, unsupported: 4 }[String(p.verdict) as 'integrate'] ?? 2
+}
+
+// How a plugin of a source can be taken, as a mark, a colour and a word.
+const VERDICT: Record<string, { mark: string; color: string; label: [string, string] }> = {
+  integrate: { mark: '◆', color: 'suggestion', label: ['in die Box', 'into the box'] },
+  native: { mark: '🔌', color: 'claude', label: ['nativ verwaltet', 'managed natively'] },
+  blocked: { mark: '⛔', color: 'error', label: ['blockiert', 'blocked'] },
+  unsupported: { mark: '✗', color: 'inactive', label: ['nicht unterstützt', 'not supported'] },
+  remote: { mark: '?', color: 'inactive', label: ['noch nicht geprüft', 'not checked yet'] },
+}
+
+/** The parts of a plugin as short lines for the window. */
+function partsOf(c: any): string[] {
+  if (!c) return []
+  const out: string[] = []
+  const add = (list: unknown, de: string, en: string) => {
+    if (Array.isArray(list) && list.length) out.push(`${t(de, en)}: ${list.map(x => (typeof x === 'string' ? x : (x as any).key)).join(', ')}`)
+  }
+  add(c.modules, 'Hook-Module', 'hook modules')
+  add(c.commands, 'Befehle', 'commands')
+  add(c.tools, 'Werkzeuge', 'tools')
+  add(c.skills, 'Skills', 'skills')
+  add(c.commandFiles, 'Befehlsdateien', 'command files')
+  add(c.agents, 'Agents', 'agents')
+  add(c.mcp, 'MCP-Server', 'MCP servers')
+  add(c.lsp, 'LSP-Server', 'LSP servers')
+  add(c.classicHooks, 'Settings-Hooks', 'settings hooks')
+  add(c.other, 'Weiteres', 'other')
+  add(c.options, 'Optionen', 'options')
+  add(c.dependencies, 'Abhängigkeiten', 'dependencies')
+  return out
 }
 
 function trim(s: string, n: number): string {
