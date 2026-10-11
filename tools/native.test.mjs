@@ -129,12 +129,25 @@ describe('native management', () => {
     assert.equal(p.trusted, true)
   })
 
+  test('a plugin folder without a marketplace goes through the box\'s local marketplace', () => {
+    const src = path.join(tmp, 'folder-plugin')
+    fs.cpSync(path.join(REPO, 'tools', 'fixtures', 'plugins', 'fx-lsp'), src, { recursive: true })
+    const pj = path.join(src, '.claude-plugin', 'plugin.json')
+    fs.writeFileSync(pj, fs.readFileSync(pj, 'utf8').replace(/fx-lsp/g, 'fx-folder'))
+    const r = box(['native', 'install', 'fx-folder', '--dir', src])
+    assert.equal(r.ok, true, r.error)
+    assert.equal(r.id, 'fx-folder@mod-box-local')
+    const p = box(['native', 'list']).plugins.find(x => x.id === 'fx-folder@mod-box-local')
+    assert.equal(p.enabled, false)
+    assert.equal(p.trusted, false)
+  })
+
   test('uninstall: gone from Claude Code and from the registry', () => {
-    for (const id of ['fx-mixed@modbox-fixtures', 'fx-secret@modbox-fixtures', 'fx-classic@modbox-fixtures']) {
+    for (const id of ['fx-mixed@modbox-fixtures', 'fx-secret@modbox-fixtures', 'fx-classic@modbox-fixtures', 'fx-folder@mod-box-local']) {
       const r = box(['native', 'uninstall', id])
       assert.equal(r.ok, true, r.error)
     }
-    const left = box(['native', 'list']).plugins.filter(p => p.id.endsWith('@modbox-fixtures'))
+    const left = box(['native', 'list']).plugins.filter(p => p.id.endsWith('@modbox-fixtures') || p.id.endsWith('@mod-box-local'))
     assert.deepEqual(left, [])
   })
 })

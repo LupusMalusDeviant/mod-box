@@ -473,6 +473,8 @@ function importedIds() {
 
 function catalog(a) {
   const imported = importedIds()
+  const box = readJson(BOX)
+  const ctx = { taken: takenNames(box), strategy: String(a.strategy ?? importStrategy(box)) }
   const sources = []
   const known = path.join(os.homedir(), '.claude', 'plugins', 'known_marketplaces.json')
   if (fs.existsSync(known)) {
@@ -481,7 +483,7 @@ function catalog(a) {
       const dir = m.installLocation
       const link = m.source?.repo ? `https://github.com/${m.source.repo}` : m.source?.url ?? m.source?.path ?? ''
       try {
-        sources.push({ kind: 'claude', name, link, dir, ...decorate(scan(dir), imported) })
+        sources.push({ kind: 'claude', name, link, dir, ...decorate(scan(dir), imported, ctx, name) })
       } catch (err) {
         sources.push({ kind: 'claude', name, link, dir, plugins: [], error: String(err.message ?? err) })
       }
@@ -491,7 +493,7 @@ function catalog(a) {
     try {
       const dir = fetchLink(link, a.refresh === true)
       const s = scan(dir)
-      sources.push({ kind: 'link', link, dir, ...decorate(s, imported) })
+      sources.push({ kind: 'link', link, dir, ...decorate(s, imported, ctx, null) })
     } catch (err) {
       sources.push({ kind: 'link', link, name: link, dir: null, plugins: [], error: String(err.message ?? err).split('\n')[0] })
     }
@@ -499,8 +501,23 @@ function catalog(a) {
   return { ok: true, sources }
 }
 
-function decorate(s, imported) {
-  return { name: s.name, plugins: s.plugins.map(p => ({ ...p, imported: imported[p.name] ?? null })) }
+// Adds what the box can do with each plugin. A plugin whose files are not here yet (remote source)
+// gets its verdict when it is fetched for import or install.
+function decorate(s, imported, ctx = null, marketplace = null) {
+  return {
+    name: s.name,
+    plugins: s.plugins.map(p => {
+      const out = { ...p, imported: imported[p.name] ?? null, nativeId: marketplace ? `${p.name}@${marketplace}` : null }
+      if (!ctx || !p.dir) return { ...out, verdict: null, reasons: [], components: null }
+      try {
+        const inv = inventory(p.dir)
+        const v = verdictOf(inv, { taken: ctx.taken, self: imported[p.name] ?? null, strategy: ctx.strategy, t })
+        return { ...out, verdict: v.verdict, reasons: v.reasons, components: componentsOf(inv), license: inv.license }
+      } catch (err) {
+        return { ...out, verdict: 'unsupported', reasons: [String(err.message ?? err)], components: null }
+      }
+    }),
+  }
 }
 
 // ---------------------------------------------------------------- import
@@ -919,7 +936,15 @@ function nativeCmd(a) {
       return { ok: true, ...native.setOptions(exe, id, JSON.parse(raw || '{}')) }
     }
     case 'install': {
-      const r = native.install(exe, id, { source: a.source ? String(a.source) : null, acceptCommand: a['accept-command'] ? String(a['accept-command']) : null })
+      // A plugin without a marketplace (--dir folder, or --url repo): through the box's local marketplace.
+      let target = id
+      if (a.dir || a.url.length) {
+        const base = a.url.length ? fetchLink(a.url[0], a.refresh === true) : path.resolve(String(a.dir))
+        const hits = findPlugins(base).filter(p => !id || p.name === id)
+        if (hits.length !== 1) throw new Error(t(`${hits.length} Plugins gefunden; Namen angeben`, `${hits.length} plugins found; name one`))
+        target = native.stageLocal(exe, hits[0].dir, hits[0].name)
+      }
+      const r = native.install(exe, target, { source: a.source ? String(a.source) : null, acceptCommand: a['accept-command'] ? String(a['accept-command']) : null })
       if (r.ok) {
         const p = native.list(exe, { self: box.plugin }).find(x => x.id === r.id)
         const meta = nativeMeta(p?.installPath)

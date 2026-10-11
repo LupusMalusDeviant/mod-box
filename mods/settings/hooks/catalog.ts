@@ -93,6 +93,32 @@ export const SETTINGS: CatalogField[] = [
       "off"
     ],
     "default": "on"
+  },
+  {
+    "key": "importStrategy",
+    "title": {
+      "en": "Import strategy",
+      "de": "Import-Strategie"
+    },
+    "description": {
+      "en": "auto: plain function-hook mods go into the box (switchable, band, profiles); everything else is managed as a plugin of its own. native: every plugin is managed as a plugin of its own; the box only switches, configures and updates it.",
+      "de": "auto: reine Function-Hook-Mods kommen in die Box (schaltbar, Band, Profile); alles andere wird als eigenes Plugin verwaltet. nativ: jedes Plugin wird als eigenes Plugin verwaltet; die Box schaltet, konfiguriert und aktualisiert es nur."
+    },
+    "labels": {
+      "de": {
+        "auto": "automatisch",
+        "native": "immer nativ"
+      },
+      "en": {
+        "auto": "automatic",
+        "native": "always native"
+      }
+    },
+    "options": [
+      "auto",
+      "native"
+    ],
+    "default": "auto"
   }
 ]
 export const GROUPS: Record<string, Text> = {

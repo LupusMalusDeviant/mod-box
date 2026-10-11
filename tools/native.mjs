@@ -185,6 +185,37 @@ export function install(exe, plugin, { source = null, meta = {}, acceptCommand =
   return { ok: true, id, message: j?.message ?? firstLine(r.stdout), disabled: off.code === 0 || /already disabled/i.test(off.stderr + off.stdout) }
 }
 
+export const LOCAL_MARKET = 'mod-box-local'
+const MARKET_DIR = () => path.join(HOME(), 'local-market')
+
+/**
+ * A plugin without a marketplace (a plain repo or folder) goes into the box's own local marketplace:
+ * a copy under $MODBOX_HOME/local-market/plugins/<name>, listed in its marketplace.json. The
+ * marketplace is added to Claude Code once (or refreshed). Returns the id to install.
+ */
+export function stageLocal(exe, pluginDir, name) {
+  const dir = MARKET_DIR()
+  const target = path.join(dir, 'plugins', name)
+  fs.rmSync(target, { recursive: true, force: true })
+  fs.mkdirSync(path.dirname(target), { recursive: true })
+  fs.cpSync(pluginDir, target, { recursive: true, filter: p => !/[\\/](\.git|node_modules)([\\/]|$)/.test(p.slice(pluginDir.length)) })
+  const mpFile = path.join(dir, '.claude-plugin', 'marketplace.json')
+  let mp = { name: LOCAL_MARKET, owner: { name: 'Mod Box' }, description: 'Plugins the Mod Box installed from a repo or folder without a marketplace of its own.', plugins: [] }
+  try {
+    mp = JSON.parse(fs.readFileSync(mpFile, 'utf8'))
+  } catch {
+    // first plugin
+  }
+  mp.plugins = (mp.plugins ?? []).filter(p => p.name !== name).concat([{ name, source: './plugins/' + name }])
+  fs.mkdirSync(path.dirname(mpFile), { recursive: true })
+  fs.writeFileSync(mpFile, JSON.stringify(mp, null, 2) + '\n')
+  const known = cli(exe, ['plugin', 'marketplace', 'list', '--json'])
+  const has = /"mod-box-local"/.test(known.stdout)
+  const r = has ? cli(exe, ['plugin', 'marketplace', 'update', LOCAL_MARKET]) : cli(exe, ['plugin', 'marketplace', 'add', dir])
+  if (r.code !== 0) throw new Error(firstLine(r.stderr) || firstLine(r.stdout) || 'local marketplace failed')
+  return `${name}@${LOCAL_MARKET}`
+}
+
 /** Takes an installed plugin under the box's management. One you installed yourself counts as trusted. */
 export function adopt(id, meta = {}) {
   const reg = readRegistry()

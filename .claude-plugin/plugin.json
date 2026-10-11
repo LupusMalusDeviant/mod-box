@@ -44,6 +44,16 @@
         "off"
       ]
     },
+    "importStrategy": {
+      "type": "string",
+      "title": "Import strategy",
+      "description": "auto: plain function-hook mods go into the box (switchable, band, profiles); everything else is managed as a plugin of its own. native: every plugin is managed as a plugin of its own; the box only switches, configures and updates it.",
+      "default": "auto",
+      "options": [
+        "auto",
+        "native"
+      ]
+    },
     "blastRadius": {
       "type": "boolean",
       "title": "Blast Radius",
