@@ -169,7 +169,8 @@ function touch(id, patch = {}) {
  * accepted here: the result asks for confirmation with its sha256.
  */
 export function install(exe, plugin, { source = null, meta = {}, acceptCommand = null } = {}) {
-  const args = ['plugin', 'install', plugin, '--json']
+  // With --marketplace the CLI wants the bare name; the marketplace part of the id comes from the source.
+  const args = ['plugin', 'install', source ? plugin.split('@')[0] : plugin, '--json']
   if (source) args.push('--marketplace', source)
   if (acceptCommand) args.push('--accept-command', acceptCommand)
   const r = cli(exe, args)
@@ -319,5 +320,5 @@ export function uninstall(exe, id, { prune = false, keepData = false } = {}) {
   const reg = readRegistry()
   delete reg.plugins[id]
   writeRegistry(reg)
-  return { ok: true, id, message: firstLine(r.stdout) }
+  return { ok: true, id, message: jsonLine(r.stdout)?.message ?? firstLine(r.stdout) }
 }
