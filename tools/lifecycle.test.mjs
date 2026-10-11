@@ -186,6 +186,29 @@ describe('update, rollback, remove', () => {
     fs.rmSync(src, { recursive: true, force: true })
   })
 
+  test('an update of a folder original: seen, diffed and merged', () => {
+    const src = fs.mkdtempSync(path.join(os.tmpdir(), 'mbx-up-'))
+    fs.cpSync(path.join(FIX, 'fx-assets'), src, { recursive: true })
+    for (const f of ['.claude-plugin/plugin.json', 'hooks/register.ts']) {
+      const p = path.join(src, f)
+      fs.writeFileSync(p, fs.readFileSync(p, 'utf8').replace(/fx-assets/g, 'fx-upd'))
+    }
+    const r1 = run('import', '--dir', src)
+    assert.equal(r1.ok, true, r1.error)
+    assert.equal(run('updates', 'fx-upd').mods[0].status, 'current')
+    fs.writeFileSync(path.join(src, 'media', 'hello.txt'), 'hello from version 2\n')
+    fs.writeFileSync(path.join(src, 'media', 'ding.wav'), Buffer.from([82, 73, 70, 70, 0, 1, 2, 3, 0, 9]))
+    const u = run('updates', 'fx-upd').mods[0]
+    assert.equal(u.status, 'update')
+    assert.deepEqual(u.changed.sort(), ['media/ding.wav', 'media/hello.txt'])
+    assert.match(run('diff', 'fx-upd').diff, /hello from version 2/)
+    const m = run('update', 'fx-upd')
+    assert.equal(m.ok, true, m.error)
+    assert.equal(read('mods/fx-upd/media/hello.txt').trim(), 'hello from version 2')
+    assert.deepEqual([...fs.readFileSync(path.join(box, 'mods/fx-upd/media/ding.wav'))], [82, 73, 70, 70, 0, 1, 2, 3, 0, 9])
+    fs.rmSync(src, { recursive: true, force: true })
+  })
+
   test('remove takes away code, options and baseline', () => {
     const r = run('remove', 'fx-plain')
     assert.equal(r.ok, true, r.error)

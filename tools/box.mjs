@@ -15,6 +15,7 @@
 //       Removes an imported mod again.
 import { execFileSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
+import crypto from 'node:crypto'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
@@ -1094,7 +1095,35 @@ export function localPath(rel, typesPath) {
   return r
 }
 
-function upstreamFiles(pluginDir) {
+const BINARY_EXT = /\.(png|jpe?g|gif|webp|ico|bmp|wav|mp3|ogg|flac|m4a|mp4|webm|woff2?|ttf|otf|zip|gz|pdf|wasm|exe|dll|so|dylib)$/i
+/** "bin:<sha1>" stands for a binary file in a baseline: compared by hash, copied whole, never merged. */
+function binMark(buf) {
+  return 'bin:' + crypto.createHash('sha1').update(buf).digest('hex')
+}
+const isBinary = (name, buf) => BINARY_EXT.test(name) || buf.subarray(0, 8000).includes(0)
+
+function upstreamFiles(pluginDir, format = 1) {
+  if (format >= 2) {
+    // Format 2: what copyTree takes along, binary files by hash.
+    const out = {}
+    const walk2 = dir => {
+      for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+        const p = path.join(dir, e.name)
+        const rel = path.relative(pluginDir, p).split(path.sep).join('/')
+        if (e.isDirectory()) {
+          if (COPY_SKIP.has(e.name) || TEST_DIRS.has(e.name)) continue
+          walk2(p)
+        } else if (e.isFile()) {
+          if (rel === 'hooks/hooks.json' || /^(package-lock\.json|bun\.lockb?|yarn\.lock|pnpm-lock\.yaml)$/.test(e.name)) continue
+          if (fs.statSync(p).size > 5 * 1024 * 1024) continue
+          const buf = fs.readFileSync(p)
+          out[rel] = isBinary(e.name, buf) ? binMark(buf) : buf.toString('utf8')
+        }
+      }
+    }
+    walk2(pluginDir)
+    return out
+  }
   const out = {}
   const walkUp = (dir, base) => {
     for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
@@ -1117,8 +1146,15 @@ function repoRoot(dir) {
   return git(['rev-parse', '--show-toplevel'], dir).trim()
 }
 
+// The commit of a git checkout; for a plain folder a hash of its files (so a change shows as an update).
 function headOf(dir) {
-  return git(['rev-parse', 'HEAD'], dir).trim()
+  try {
+    return git(['rev-parse', 'HEAD'], dir).trim()
+  } catch {
+    const h = crypto.createHash('sha1')
+    for (const [rel, text] of Object.entries(upstreamFiles(dir, 2)).sort(([a], [b]) => a.localeCompare(b))) h.update(rel + '\0' + lf(text))
+    return 'local-' + h.digest('hex')
+  }
 }
 
 function readUpstream(dir) {
@@ -1127,26 +1163,33 @@ function readUpstream(dir) {
 }
 
 // Records the baseline: only the upstream files that exist in our copy.
-function writeSnapshot({ dir, pluginDir, url, sub, name, prefix, typesPath }) {
+function writeSnapshot({ dir, pluginDir, url, sub, name, prefix, typesPath, format = 2 }) {
   const target = path.join(ROOT, dir)
-  const all = upstreamFiles(pluginDir)
+  const all = upstreamFiles(pluginDir, format)
   const files = {}
   for (const [rel, text] of Object.entries(all)) {
     if (fs.existsSync(path.join(target, localPath(rel, typesPath)))) files[rel] = text
   }
-  // URL and subpath from the upstream's Git repo where they weren't given.
-  const root = repoRoot(pluginDir)
-  const realSub = path.relative(root, pluginDir).split(path.sep).join('/')
+  // URL and subpath from the upstream's Git repo where they weren't given. Without one (a plain
+  // folder, or a checkout without a remote) the folder itself is the original.
+  let root = null
+  try {
+    root = repoRoot(pluginDir)
+  } catch {
+    root = null
+  }
+  const realSub = root ? path.relative(root, pluginDir).split(path.sep).join('/') : ''
   let link = url
-  if (!link) {
+  if (!link && root) {
     try {
       link = git(['remote', 'get-url', 'origin'], root).trim()
     } catch {
       link = ''
     }
   }
-  if (!link) throw new Error(t('Das Original liegt in keinem Git-Repo mit Adresse; Updates lassen sich nicht prüfen.', 'The original is in no git repo with a remote; updates cannot be checked.'))
-  const snap = { url: parseLink(link).clone, path: realSub || sub || '', name, prefix: prefix ?? null, typesPath: typesPath ?? null, commit: headOf(pluginDir), at: new Date().toISOString(), files }
+  const snap = link
+    ? { format, url: parseLink(link).clone, path: realSub || sub || '', name, prefix: prefix ?? null, typesPath: typesPath ?? null, commit: headOf(pluginDir), at: new Date().toISOString(), files }
+    : { format, url: null, local: path.resolve(pluginDir), path: '', name, prefix: prefix ?? null, typesPath: typesPath ?? null, commit: headOf(pluginDir), at: new Date().toISOString(), files }
   writeJson(path.join(target, UPSTREAM_FILE), snap)
   return snap
 }
@@ -1165,6 +1208,10 @@ function vendoredDirs() {
 
 // Fetches a mod's current upstream (git pull in the cache).
 function fetchUpstream(snap, refresh) {
+  if (snap.local) {
+    if (!fs.existsSync(snap.local)) throw new Error(t(`Der Ordner des Originals fehlt: ${snap.local}`, `The original's folder is gone: ${snap.local}`))
+    return snap.local
+  }
   return fetchParsed({ clone: parseLink(snap.url).clone, ref: null, sub: (snap.path ?? '').replace(/^\.?\/|\/$/g, '') }, refresh)
 }
 
@@ -1172,7 +1219,7 @@ function compare(dir, refresh) {
   const snap = readUpstream(dir)
   const pluginDir = fetchUpstream(snap, refresh)
   const head = headOf(pluginDir)
-  const theirs = upstreamFiles(pluginDir)
+  const theirs = upstreamFiles(pluginDir, snap.format ?? 1)
   const changed = []
   const added = []
   const removed = []
@@ -1181,14 +1228,16 @@ function compare(dir, refresh) {
     else if (lf(theirs[rel]) !== lf(text)) changed.push(rel)
   }
   for (const rel of Object.keys(theirs)) {
-    if (!(rel in snap.files) && rel.startsWith('hooks/')) added.push(rel)
+    if (!(rel in snap.files) && ((snap.format ?? 1) >= 2 || rel.startsWith('hooks/'))) added.push(rel)
   }
   return { snap, pluginDir, head, theirs, changed, added, removed }
 }
 
+// updates [<id>]: compares the copied mods (or only one) with their originals.
 function updatesCmd(a) {
   const out = []
-  for (const dir of vendoredDirs()) {
+  const only = a._[1] ? String(a._[1]) : null
+  for (const dir of vendoredDirs().filter(d => !only || path.basename(d) === only)) {
     try {
       const c = compare(dir, a.refresh !== false)
       const n = c.changed.length + c.added.length + c.removed.length
@@ -1216,7 +1265,8 @@ function rewriteFor(snap, dir, rel, text) {
   const box = readJson(BOX)
   const id = path.basename(dir)
   const prefixes = Object.fromEntries(box.mods.filter(m => m.state?.prefix).map(m => [m.upstream ?? m.state.from ?? m.id, m.state.prefix]))
-  return rewrite(text, { upstream: snap.name, prefix: snap.prefix ?? 'x', id, plugin: box.plugin, prefixes }).code
+  const mod = box.mods.find(m => m.id === id)
+  return rewrite(text, { upstream: snap.name, prefix: snap.prefix ?? 'x', id, plugin: box.plugin, prefixes, storePrefix: mod?.storePrefix ?? null }).code
 }
 
 function diffCmd(a) {
@@ -1226,6 +1276,10 @@ function diffCmd(a) {
   const parts = []
   try {
     for (const rel of [...c.changed, ...c.added, ...c.removed]) {
+      if (String(c.snap.files[rel] ?? '').startsWith('bin:') || String(c.theirs[rel] ?? '').startsWith('bin:')) {
+        parts.push(`--- a/${rel}\n+++ b/${rel}\n${t('Binärdatei', 'binary file')}: ${c.snap.files[rel] ?? '-'} → ${c.theirs[rel] ?? '-'}\n`)
+        continue
+      }
       const A = path.join(tmp, 'a.txt')
       const B = path.join(tmp, 'b.txt')
       fs.writeFileSync(A, lf(c.snap.files[rel] ?? ''))
@@ -1285,9 +1339,16 @@ function updateCmd(a) {
   const deletes = []
   const conflicts = []
   const notes = []
+  const copies = []
   for (const rel of c.changed) {
     const local = path.join(target, localPath(rel, typesPath))
     if (!fs.existsSync(local)) continue
+    if (String(c.snap.files[rel]).startsWith('bin:') || String(c.theirs[rel]).startsWith('bin:')) {
+      // binary: ours untouched since the baseline -> take theirs; changed by us -> conflict
+      if (binMark(fs.readFileSync(local)) === c.snap.files[rel]) copies.push([local, path.join(c.pluginDir, rel)])
+      else conflicts.push(`${localPath(rel, typesPath)} (${t('Binärdatei, bei uns geändert', 'binary, changed here')})`)
+      continue
+    }
     const ours = fs.readFileSync(local, 'utf8')
     const base = rewriteFor(c.snap, dir, rel, c.snap.files[rel])
     const theirs = rewriteFor(c.snap, dir, rel, c.theirs[rel])
@@ -1296,13 +1357,19 @@ function updateCmd(a) {
     else writes.push([local, m.text.split('\n').join(eolOf(ours))])
   }
   for (const rel of c.added) {
+    if (String(c.theirs[rel]).startsWith('bin:')) {
+      copies.push([path.join(target, localPath(rel, typesPath)), path.join(c.pluginDir, rel)])
+      notes.push(t(`neu: ${rel}`, `new: ${rel}`))
+      continue
+    }
     writes.push([path.join(target, localPath(rel, typesPath)), rewriteFor(c.snap, dir, rel, c.theirs[rel])])
     notes.push(t(`neu: ${rel}`, `new: ${rel}`))
   }
   for (const rel of c.removed) {
     const local = path.join(target, localPath(rel, typesPath))
     if (!fs.existsSync(local)) continue
-    if (lf(fs.readFileSync(local, 'utf8')) === lf(rewriteFor(c.snap, dir, rel, c.snap.files[rel]))) deletes.push(local)
+    const same = String(c.snap.files[rel]).startsWith('bin:') ? binMark(fs.readFileSync(local)) === c.snap.files[rel] : lf(fs.readFileSync(local, 'utf8')) === lf(rewriteFor(c.snap, dir, rel, c.snap.files[rel]))
+    if (same) deletes.push(local)
     else notes.push(t(`${rel} gibt es im Original nicht mehr; unsere geänderte Fassung bleibt.`, `${rel} is gone upstream; our changed version stays.`))
   }
   if (conflicts.length) {
@@ -1310,18 +1377,22 @@ function updateCmd(a) {
   }
   // Back up, write, update the baseline, build, check; roll back on error.
   const backup = new Map()
-  for (const [p] of writes) backup.set(p, fs.existsSync(p) ? fs.readFileSync(p) : null)
+  for (const [p] of [...writes, ...copies]) backup.set(p, fs.existsSync(p) ? fs.readFileSync(p) : null)
   for (const p of deletes) backup.set(p, fs.readFileSync(p))
   const snapPath = path.join(target, UPSTREAM_FILE)
   const snapBackup = fs.readFileSync(snapPath)
   try {
     for (const [p, text] of writes) write(p, text)
+    for (const [p, from] of copies) {
+      fs.mkdirSync(path.dirname(p), { recursive: true })
+      fs.copyFileSync(from, p)
+    }
     for (const p of deletes) fs.rmSync(p, { force: true })
-    writeSnapshot({ dir, pluginDir: c.pluginDir, url: c.snap.url, sub: c.snap.path, name: c.snap.name, prefix: c.snap.prefix, typesPath })
+    writeSnapshot({ dir, pluginDir: c.pluginDir, url: c.snap.url ?? '', sub: c.snap.path, name: c.snap.name, prefix: c.snap.prefix, typesPath, format: c.snap.format ?? 1 })
     build()
     const v = validate()
     if (!v.ok) throw new Error(t('Prüfung fehlgeschlagen, zurückgerollt:\n', 'validation failed, rolled back:\n') + errorsOf(v.text))
-    return { ok: true, dir, from: c.snap.commit.slice(0, 7), to: c.head.slice(0, 7), files: writes.length + deletes.length, notes }
+    return { ok: true, dir, from: c.snap.commit.slice(0, 7), to: c.head.slice(0, 7), files: writes.length + copies.length + deletes.length, notes }
   } catch (err) {
     for (const [p, content] of backup) {
       if (content === null) fs.rmSync(p, { force: true })
