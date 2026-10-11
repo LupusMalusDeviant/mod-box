@@ -1,0 +1,53 @@
+{
+  "name": "modbox-fixtures",
+  "owner": {
+    "name": "Mod Box tests"
+  },
+  "description": "Fixture plugins for the Mod Box lifecycle tests.",
+  "plugins": [
+    {
+      "name": "fx-assets",
+      "source": "./fx-assets"
+    },
+    {
+      "name": "fx-classic",
+      "source": "./fx-classic"
+    },
+    {
+      "name": "fx-dep",
+      "source": "./fx-dep"
+    },
+    {
+      "name": "fx-dup",
+      "source": "./fx-dup"
+    },
+    {
+      "name": "fx-lsp",
+      "source": "./fx-lsp"
+    },
+    {
+      "name": "fx-mixed",
+      "source": "./fx-mixed"
+    },
+    {
+      "name": "fx-nolicense",
+      "source": "./fx-nolicense"
+    },
+    {
+      "name": "fx-plain",
+      "source": "./fx-plain"
+    },
+    {
+      "name": "fx-required",
+      "source": "./fx-required"
+    },
+    {
+      "name": "fx-secret",
+      "source": "./fx-secret"
+    },
+    {
+      "name": "fx-store",
+      "source": "./fx-store"
+    }
+  ]
+}

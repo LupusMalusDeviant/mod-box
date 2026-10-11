@@ -22,6 +22,7 @@ import { fileURLToPath } from 'node:url'
 
 import { exportMods } from './export.mjs'
 import { componentsOf, inventory, verdictOf } from './inspect.mjs'
+import * as native from './native.mjs'
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const BOX = path.join(ROOT, 'box.json')
@@ -872,6 +873,96 @@ function importStrategy(box) {
   return box.settings?.find(s => s.key === 'importStrategy')?.default ?? 'auto'
 }
 
+// ---------------------------------------------------------------- Native plugins
+
+/** How profiles see a natively managed plugin: group, token class, where it runs, read from its files. */
+function nativeMeta(dir) {
+  if (!dir || !fs.existsSync(dir)) return { group: 'native', tokens: 'none', compat: null }
+  const inv = inventory(dir)
+  const code = walk(dir).filter(p => CODE_EXT.test(p) && !p.endsWith('.d.ts') && !/[\\/]node_modules[\\/]/.test(p)).map(p => fs.readFileSync(p, 'utf8')).join('\n')
+  const guess = analyze(code)
+  const contextParts = inv.skills.length + inv.agents.length + inv.mcp.length + inv.commandFiles.length
+  const needs = [...guess.compat.needs]
+  for (const l of inv.lsp) needs.push(`LSP server ${l}`)
+  return {
+    group: guess.group === 'imported' ? 'native' : guess.group,
+    tokens: guess.tokens === 'always' ? 'always' : contextParts ? 'optional' : guess.tokens,
+    compat: { ...guess.compat, needs },
+  }
+}
+
+function claudeExe() {
+  const c = findClaude()
+  if (!c) throw new Error(t('Kein Claude Code gefunden.', 'No Claude Code found.'))
+  return c.exe
+}
+
+/**
+ * native <action> ...: plugins managed through Claude Code's own plugin system.
+ *   list | details <id> | options <id> | set <id> (values as JSON on stdin) | install <plugin>
+ *   [--source S] [--accept-command SHA] | adopt <id> | trust <id> | untrust <id> | enable <id> |
+ *   disable <id> | update <id> | uninstall <id> [--prune] | profile <profile-id>
+ */
+function nativeCmd(a) {
+  const [, action, id] = a._
+  const exe = claudeExe()
+  const box = readJson(BOX)
+  switch (action) {
+    case 'list':
+      return { ok: true, plugins: native.list(exe, { self: box.plugin }) }
+    case 'details':
+      return { ok: true, id, ...native.details(exe, id) }
+    case 'options':
+      return { ok: true, ...native.options(exe, id) }
+    case 'set': {
+      const raw = fs.readFileSync(0, 'utf8')
+      return { ok: true, ...native.setOptions(exe, id, JSON.parse(raw || '{}')) }
+    }
+    case 'install': {
+      const r = native.install(exe, id, { source: a.source ? String(a.source) : null, acceptCommand: a['accept-command'] ? String(a['accept-command']) : null })
+      if (r.ok) {
+        const p = native.list(exe, { self: box.plugin }).find(x => x.id === r.id)
+        const meta = nativeMeta(p?.installPath)
+        const reg = native.readRegistry()
+        if (reg.plugins[r.id]) native.adopt(r.id, meta) // keeps trusted:false from install
+      }
+      return r
+    }
+    case 'adopt': {
+      const p = native.list(exe, { self: box.plugin }).find(x => x.id === id)
+      if (!p) throw new Error(t(`${id} ist nicht installiert`, `${id} is not installed`))
+      return native.adopt(id, nativeMeta(p.installPath))
+    }
+    case 'trust':
+      return native.setTrust(id, true)
+    case 'untrust':
+      return native.setTrust(id, false)
+    case 'enable':
+    case 'disable':
+      return native.setEnabled(exe, id, action === 'enable')
+    case 'update':
+      return native.update(exe, id)
+    case 'uninstall':
+      return native.uninstall(exe, id, { prune: a.prune === true })
+    case 'profile': {
+      // The same rules as for the box's own mods; only managed, trusted plugins are switched.
+      const p = (box.profiles ?? {})[id]
+      if (!p) throw new Error(t(`Profil ${id} gibt es nicht`, `no profile ${id}`))
+      const changes = []
+      for (const n of native.list(exe, { self: box.plugin })) {
+        if (!n.managed || !n.trusted || n.missing) continue
+        const want = ruleSays(p.rule ?? p.set, { toggle: n.id, group: n.group, tokens: n.tokens, default: true, imported: true })
+        if (want === n.enabled) continue
+        native.setEnabled(exe, n.id, want)
+        changes.push({ id: n.id, enabled: want })
+      }
+      return { ok: true, profile: id, changes, restart: changes.length > 0 }
+    }
+    default:
+      throw new Error('native: list | details <id> | options <id> | set <id> | install <plugin> [--source S] | adopt <id> | trust <id> | untrust <id> | enable <id> | disable <id> | update <id> | uninstall <id> [--prune] | profile <id>')
+  }
+}
+
 /** inspect (--dir D | --url L) [--plugin N]: what each plugin there is and how the box can take it. Runs nothing. */
 function inspectCmd(a) {
   let dir
@@ -1285,6 +1376,7 @@ if (isMain) {
     else if (cmd === 'analyze') result = analyzeCmd(a._[1])
     else if (cmd === 'export') result = exportCmd(a)
     else if (cmd === 'inspect') result = inspectCmd(a)
+    else if (cmd === 'native') result = nativeCmd(a)
     else if (cmd === 'reimport') result = importMod({ ...a, as: a._[1] })
     else result = { ok: false, error: 'commands: build | validate | release | catalog [--url L]... [--refresh] | import (--dir D | --url L) [--plugin N] | analyze <id|dir> | remove <id> | updates | diff <id> | update <id>' }
   } catch (err) {
