@@ -1,6 +1,6 @@
 import { describe, expect, mock, test } from 'claude-code/testing'
 
-import { compatIssues, failedLinks, findPrefix } from '../mods/settings/hooks/register'
+import { compatIssues, failedLinks, findPrefix, osFromUname } from '../mods/settings/hooks/register'
 
 // The tests read the German texts; the box itself defaults to English.
 const DE = { options: { language: 'de' } }
@@ -234,6 +234,18 @@ describe('Without /config rows (desktop app)', () => {
 })
 
 describe('Compatibility', () => {
+  test('reads the system from uname', () => {
+    expect(osFromUname('Darwin')).toBe('mac')
+    expect(osFromUname('Linux')).toBe('linux')
+    expect(osFromUname('MINGW64_NT-10.0-26300')).toBe('windows')
+    expect(osFromUname('FreeBSD')).toBe(null)
+  })
+
+  test('an unknown system raises no OS warning', () => {
+    const c = { surfaces: ['terminal'], os: ['windows'], needs: [] }
+    expect(compatIssues(c, { os: '', surface: 'terminal', missing: [] })).toEqual([])
+  })
+
   test('names what is missing here', () => {
     const c = { surfaces: ['terminal', 'desktop'], os: ['windows'], needs: ['gh', 'git'] }
     expect(compatIssues(c, { os: 'windows', surface: 'desktop', missing: [] })).toEqual([])

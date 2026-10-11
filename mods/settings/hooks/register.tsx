@@ -332,6 +332,7 @@ export const register: Register = (on, options) => {
     // A profile set over several reloads continues here.
     void continueProfile($).catch(() => {})
     void adoptNewMods($).catch(() => {})
+    void detectOs($).catch(() => {})
     $.clock.every(4000, () => void flushErrors($).catch(() => {}))
     return next(e)
   })
@@ -937,14 +938,36 @@ async function adoptNewMods($: EngineInterface) {
 
 type Here = { os: string; surface: string; missing: string[] }
 
+// The operating system, found once per load: Windows from its OS variable, the rest from uname.
+// Unknown until then; an unknown system raises no OS warning rather than a wrong one.
+let detectedOs: string | null = null
+
+/** windows | mac | linux from `uname -s` output, or null when it says something else. */
+export function osFromUname(out: string): string | null {
+  const name = out.trim().toLowerCase()
+  if (name.startsWith('darwin')) return 'mac'
+  if (name.startsWith('linux')) return 'linux'
+  if (/^(mingw|msys|cygwin|windows)/.test(name)) return 'windows'
+  return null
+}
+
+async function detectOs($: EngineInterface) {
+  if (detectedOs) return
+  if ((await $.env.get('OS').catch(() => undefined)) === 'Windows_NT') {
+    detectedOs = 'windows'
+    return
+  }
+  const r = await $.process.run(['uname', '-s'], { timeoutMs: 5000 }).catch(() => null)
+  detectedOs = r && r.exitCode === 0 ? osFromUname(r.stdout) : null
+}
+
 async function here($: EngineInterface, surface: string): Promise<Here> {
-  const isWin = (await $.env.get('OS').catch(() => undefined)) === 'Windows_NT'
-  const home = await $.env.get('HOME').catch(() => undefined)
-  const os = isWin ? 'windows' : home?.startsWith('/Users/') ? 'mac' : 'linux'
+  const isWin = detectedOs === 'windows' || (await $.env.get('OS').catch(() => undefined)) === 'Windows_NT'
+  const os = isWin ? 'windows' : (detectedOs ?? '')
   const env = (await read($, envChecks)) ?? []
   const id: Record<string, string> = { node: 'node', git: 'git', gh: 'gh', sign: 'signScript', bash: 'bash' }
   const missing = env.filter(c => c.ok === false && id[c.id]).map(c => id[c.id]!)
-  if (!isWin) missing.push('powershell')
+  if (os && !isWin) missing.push('powershell')
   return { os, surface, missing }
 }
 
@@ -966,7 +989,7 @@ export function compatIssues(c: CatalogMod['compat'], h: Here): Array<{ de: stri
   const list = (xs: string[], names: Record<string, [string, string]>, i: 0 | 1) => xs.map(x => names[x]?.[i] ?? x).join(', ')
   if (h.surface && !c.surfaces.includes(h.surface)) out.push({ de: 'nur ' + list(c.surfaces, SURFACE_NAME, 0), en: list(c.surfaces, SURFACE_NAME, 1) + ' only' })
   const osNames = c.os.map(x => OS_NAME[x] ?? x).join(', ')
-  if (!c.os.includes(h.os)) out.push({ de: 'nur ' + osNames, en: osNames + ' only' })
+  if (h.os && !c.os.includes(h.os)) out.push({ de: 'nur ' + osNames, en: osNames + ' only' })
   const lacking = c.needs.filter(x => h.missing.includes(x))
   if (lacking.length) out.push({ de: 'braucht ' + list(lacking, NEED_NAME, 0), en: 'needs ' + list(lacking, NEED_NAME, 1) })
   return out
