@@ -20,6 +20,8 @@ import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
+import { exportMods } from './export.mjs'
+
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const BOX = path.join(ROOT, 'box.json')
 const MANIFEST = path.join(ROOT, '.claude-plugin', 'plugin.json')
@@ -623,6 +625,58 @@ function analyzeCmd(target) {
   return { ok: true, guess: analyze(code), current: m ? { group: m.group, tokens: m.tokens ?? null, compat: m.compat ?? null, commands: (m.commands ?? []).map(c => c.name) } : null }
 }
 
+// ---------------------------------------------------------------- Standalone exports
+
+// The mods offered on their own (own mods, and forks with real changes), and where forks come from.
+const EXPORTS = ['cache-meter', 'subagent-saver', 'secret-guard', 'ci-watch', 'sign-guard', 'handoff', 'heads-up', 'blast-radius']
+const EXPORT_REPO = 'LupusMalusDeviant/claude-mods'
+const FORK_ORIGINS = {
+  'blast-radius': {
+    label: 'anthropics/claude-code-playground',
+    url: 'https://github.com/anthropics/claude-code-playground/tree/main/claude-code/mods/blast-radius',
+    author: 'Anthropic PBC',
+    license: 'Apache-2.0',
+    changes: 'it works on Windows (PowerShell wait loop, Git Bash, Windows cd targets)',
+  },
+}
+const EXPORT_NOTES = {
+  'cache-meter': '> **Contains a fork.** The cold-send guard and keep-warm are [Cache Tax](https://github.com/karanb192/cache-tax) by Karan Bansal (MIT), embedded and modified (guard and auto-warm options, a compact-first hint, token usage); see `mods/cache-tax/` and its LICENSE.',
+}
+
+/** export [<id> ...] --out <folder>: the standalone plugins as one marketplace repo. */
+function exportCmd(a) {
+  if (!a.out) throw new Error(t('--out <ordner> angeben', 'pass --out <folder>'))
+  const out = path.resolve(String(a.out))
+  const box = readJson(BOX)
+  const ids = a._.slice(1).length ? a._.slice(1) : EXPORTS
+  const lic = fs.readFileSync(path.join(ROOT, 'LICENSE'), 'utf8').replace(/\r\n/g, '\n')
+  const mitText = lic.split('\n\nThe mods copied from other repositories')[0].trimEnd() + '\n'
+  const done = exportMods({ ROOT, box, version: readJson(MANIFEST).version, mitText, repo: EXPORT_REPO, marketplace: 'claude-mods', notes: EXPORT_NOTES }, ids, out, FORK_ORIGINS)
+  const rows = done.map(d => `| [${d.title}](plugins/${d.name}) | ${d.description} | ${d.origin ? `fork of [${d.origin.label}](${d.origin.url})` : d.embedsFork ? 'own, embeds a fork (see its README)' : 'own'} | \`/plugin install ${d.name} --marketplace ${EXPORT_REPO}\` |`)
+  write(
+    path.join(out, 'README.md'),
+    [
+      '# Claude Code mods',
+      '',
+      'Single Claude Code mods, each installable on its own. They are the standalone versions of mods from the [Mod Box](https://github.com/LupusMalusDeviant/mod-box), which bundles them (and more) with one window to switch, configure and profile them. Take the box if you want several; take a mod from here if you want just that one.',
+      '',
+      'Needs Claude Code 2.1.287 or newer. Install one in a terminal Claude Code session:',
+      '',
+      '| Mod | What it does | Origin | Install |',
+      '|---|---|---|---|',
+      ...rows,
+      '',
+      'Forks say where they come from, in their README and at the top of every changed file. Everything here is generated from the Mod Box (`node tools/box.mjs export --out <this repo>`); please send changes there.',
+      '',
+      '## License',
+      '',
+      'Each plugin has its own LICENSE: MIT for the own mods, the original license for forks (Apache-2.0 for Blast Radius; the Cache Tax part of Cache Meter is MIT by Karan Bansal).',
+      '',
+    ].join('\n'),
+  )
+  return { ok: true, out, plugins: done.map(d => d.name) }
+}
+
 function importMod(a) {
   let dir
   if (a.url.length) dir = fetchLink(a.url[0], a.refresh === true)
@@ -1151,6 +1205,7 @@ if (isMain) {
     else if (cmd === 'diff') result = diffCmd(a)
     else if (cmd === 'update') result = updateCmd(a)
     else if (cmd === 'analyze') result = analyzeCmd(a._[1])
+    else if (cmd === 'export') result = exportCmd(a)
     else result = { ok: false, error: 'commands: build | validate | release | catalog [--url L]... [--refresh] | import (--dir D | --url L) [--plugin N] | analyze <id|dir> | remove <id> | updates | diff <id> | update <id>' }
   } catch (err) {
     result = { ok: false, error: String(err.message ?? err) }

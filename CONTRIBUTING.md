@@ -19,6 +19,10 @@ Thanks for helping. A few things keep the box working as one plugin.
 
 Ask Claude: *"add the mod from owner/repo to the Mod Box"*. The bundled skill `skills/mod-box-add/SKILL.md` describes every step: license check, import, classification, texts, the "Modified for mod-box" notice, credits, tests. Doing it by hand, follow the same steps.
 
+## Standalone plugins
+
+[claude-mods](https://github.com/LupusMalusDeviant/claude-mods) is generated from this repo: `node tools/box.mjs export --out <claude-mods clone>`, then commit and push it there. Change mods here, not there.
+
 ## Before a pull request
 
 ```bash

@@ -121,3 +121,13 @@ test('analyze: a first guess at group, tokens, commands and where it runs', () =
   assert.deepEqual(win.compat.os, ['windows'])
   assert.equal(win.tokens, 'always')
 })
+
+test('standaloneState: box state keys move to the mod plugin, the token ledger too', async () => {
+  const { standaloneState } = await import('./export.mjs')
+  const code = "const a = atom({ plugin: 'mod-box', key: 'hu_note' } as const, null)\nconst U = { plugin: 'mod-box', key: 'mb_usage' } as const\nconst other = { plugin: 'mod-box', key: 'ci_watch' }"
+  const r = standaloneState(code, { plugin: 'mod-box', prefix: 'hu', name: 'heads-up' })
+  assert.match(r.code, /plugin: 'heads-up', key: 'note'/)
+  assert.match(r.code, /plugin: 'heads-up', key: 'usage'/)
+  assert.match(r.code, /plugin: 'mod-box', key: 'ci_watch'/)
+  assert.equal(r.usesLedger, true)
+})

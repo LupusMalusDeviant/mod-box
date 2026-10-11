@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- `tools/box.mjs export`: standalone plugins for single mods, published as the claude-mods marketplace.
+- README: the box is described as a best-of selection that takes any other mods.
+
 ## 0.4.0
 
 - **Subagent Saver** (new): built-in Explore subagents without a model of their own run on Sonnet (or Haiku) instead of inheriting the main model.

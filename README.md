@@ -4,7 +4,7 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 ![Claude Code 2.1.287+](https://img.shields.io/badge/Claude%20Code-2.1.287%2B-d97757)
 
-**Fourteen Claude Code mods in one plugin, each with its own switch, and one window to run them all.**
+**One mod to manage your Claude Code mods: switch, configure and profile them in one window. It ships with my best-of selection of fourteen mods, and takes any others you add.**
 
 Claude Code mods are small hook modules that change how Claude Code behaves and looks: a guard that stops `rm -rf` before it runs, a meter that shows when the prompt cache goes cold, a watcher that follows your CI after every push. There are a lot of good ones scattered over GitHub. The Mod Box collects them, makes them work together, and gives you one place to switch them, configure them and add more.
 
@@ -45,6 +45,10 @@ Then open the window with `/mod-box`. A mod installed at user scope also runs in
 **Update** with `claude plugin update mod-box@mod-box` and a restart of Claude. **Remove** with `claude plugin uninstall mod-box@mod-box`.
 
 **Working on the box itself:** have Claude Code load it straight from your clone. In `~/.claude/settings.json`, under `env`, set `CLAUDE_CODE_PLUGIN_DIRS` to the folder and `CLAUDE_CODE_PLUGIN_DIR_WATCH` to `1`, then restart Claude once. After that, every saved change reloads the box by itself. The tools in `tools/` need Node.js 26. See [CONTRIBUTING.md](CONTRIBUTING.md).
+
+## Just one mod?
+
+The own mods and the forks with real changes are also available one by one, without the box: [**claude-mods**](https://github.com/LupusMalusDeviant/claude-mods) (Cache Meter, Subagent Saver, Secret Guard, CI Watch, Sign Guard, Handoff Note, Heads-up, and Blast Radius as a marked fork). For the other mods, use their originals; they are linked under [Credits](#credits).
 
 ## Safety
 
@@ -163,7 +167,7 @@ All instructions the box gives Claude (the skill, the prompts of the mods) are E
 
 - **`box.json`** is the single source: mods, switches, options (English, with `_de` translations), groups, state prefixes and profiles.
 - **`node tools/box.mjs build`** generates `hooks/register.ts`, the type contracts, the `userConfig` in `.claude-plugin/plugin.json` and the window's catalog. Don't edit those by hand.
-- **`tools/box.mjs`** also has `catalog`, `import`, `analyze <id|dir>`, `remove`, `validate`, `updates`, `diff <id>`, `update <id>` and `release` (build, validate, raise the version). The window calls exactly these.
+- **`tools/box.mjs`** also has `export <id>... --out <folder>` (the standalone plugins of claude-mods), `catalog`, `import`, `analyze <id|dir>`, `remove`, `validate`, `updates`, `diff <id>`, `update <id>` and `release` (build, validate, raise the version). The window calls exactly these.
 
 An imported mod is rewritten so the box can drive it like the others:
 
