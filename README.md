@@ -71,6 +71,16 @@ Then open the window with `/mod-box`. A mod installed at user scope also runs in
 
 Some hosts, the desktop app among them, don't list a plugin's options in `/config`. There the window builds the rows itself and writes changes to `pluginConfigs` in `~/.claude/settings.json`, which is where Claude Code keeps them.
 
+## In the terminal
+
+The same window runs in terminal Claude Code, as a side pane next to the conversation.
+
+<table>
+<tr><td><img src="docs/images/cli-mods.png" alt="Mods tab in the terminal" width="400"></td><td><img src="docs/images/cli-profiles.png" alt="Profiles tab in the terminal" width="400"></td></tr>
+<tr><td><img src="docs/images/cli-sources.png" alt="Sources tab in the terminal" width="400"></td><td><img src="docs/images/cli-health.png" alt="Health tab in the terminal" width="400"></td></tr>
+<tr><td colspan="2" align="center"><img src="docs/images/cli-filetree.png" alt="Filetree side pane in the terminal" width="400"></td></tr>
+</table>
+
 ## The mods
 
 | Switch | Mod | Default | What it does | Costs tokens? |
