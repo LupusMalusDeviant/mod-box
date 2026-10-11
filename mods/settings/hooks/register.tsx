@@ -392,8 +392,11 @@ export const register: Register = (on, options) => {
     const storedId = await activeProfileId($)
     const matches = (p: (typeof PROFILES)[number]) => profileSet(p, trusted).every(([k, v]) => (rows.get(k)?.value === true) === v)
     const stored = PROFILES.find(p => p.id === storedId)
-    const active = stored ?? PROFILES.find(matches)
-    const changed = !!stored && !matches(stored)
+    // The stored profile while it still fits; else the profile the switches match exactly; else
+    // the stored one marked "(changed)".
+    const exact = stored && matches(stored) ? stored : PROFILES.find(matches)
+    const active = exact ?? stored
+    const changed = !exact && !!stored
     const r = await read($, report)
     return (
       <Box flexDirection="column" paddingX={1}>
@@ -539,7 +542,10 @@ function drawParam($: EngineInterface, ui: any, rows: Map<string, ConfigRow>, f:
 
 /** The first clause of a description: what a closed row shows. */
 export function tagline(text: string): string {
-  const cut = text.search(/;\s|\.\s|\s\(/)
+  // A parenthesis only ends the tagline when enough comes before it ("Such-Subagenten (Explore) …").
+  const stop = text.search(/;\s|\.\s/)
+  const paren = text.search(/\s\(/)
+  const cut = paren > 40 && (stop < 0 || paren < stop) ? paren : stop
   return (cut > 12 ? text.slice(0, cut) : text).replace(/[.;]\s*$/, '')
 }
 
