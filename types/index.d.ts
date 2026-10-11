@@ -272,6 +272,11 @@ export type MeterInfo = {
   limits: Array<{ kind: string; percentUsed: number; resetsAt?: string }>
 }
 
+// ---- subagent-saver ----
+
+/** How many subagents were started on the cheaper model, and the last one. */
+export type SaverStats = { routed: number; last: string }
+
 // ---- handoff ----
 
 export type Handoff = {
@@ -385,6 +390,9 @@ declare module 'claude-code' {
 
       // cache-meter
       cm_info: MeterInfo; cm_tick: number
+
+      // subagent-saver
+      ss_stats: SaverStats
 
       // handoff
       ho_note: Handoff | null; ho_text: string; ho_busy: boolean

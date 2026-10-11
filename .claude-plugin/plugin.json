@@ -1,7 +1,7 @@
 {
   "name": "mod-box",
   "version": "0.3.0",
-  "description": "13 Claude Code mods in one plugin, each switchable on its own; /mod-box opens the window to switch, configure and import mods.",
+  "description": "14 Claude Code mods in one plugin, each switchable on its own; /mod-box opens the window to switch, configure and import mods.",
   "author": {
     "name": "Lupus Malus Deviant"
   },
@@ -96,6 +96,12 @@
       "type": "boolean",
       "title": "Cache Meter",
       "description": "Band: time left on the warm cache, hit rate, context as weather, plan limits, compact and keep-warm buttons; stops one send to a cold cache and names its cost (Cache Tax runs inside). Costs tokens: keep-warm requests, only when switched on.",
+      "default": true
+    },
+    "subagentSaver": {
+      "type": "boolean",
+      "title": "Subagent Saver",
+      "description": "Search subagents (Explore) that were given no model of their own run on a cheaper one instead of the main model. An explicit model, forks, teammates and plugin agents stay untouched.",
       "default": true
     },
     "handoff": {
@@ -332,6 +338,18 @@
       "title": "Cache Meter: keep warm after a cold write",
       "description": "on: after a paid cold write, keep the cache warm for 3 hours by itself (costs tokens)."
     },
+    "cacheMeterAutoCompact": {
+      "type": "string",
+      "default": "auto",
+      "options": [
+        "auto",
+        "200k",
+        "300k",
+        "500k"
+      ],
+      "title": "Cache Meter: auto-compact at",
+      "description": "Sets Claude Code's autoCompactWindow. On 1M-context models Claude only compacts by itself at about 967k tokens, and every turn re-reads the whole context until then. auto = Claude's default."
+    },
     "cacheMeterShow": {
       "type": "string",
       "default": "band",
@@ -341,6 +359,34 @@
         "off"
       ],
       "title": "Cache Meter: display",
+      "description": "band: above the prompt. status: in the status line. off: not shown (the mod keeps working)."
+    },
+    "subagentSaverModel": {
+      "type": "string",
+      "default": "sonnet",
+      "options": [
+        "sonnet",
+        "haiku",
+        "off"
+      ],
+      "title": "Subagent Saver: model",
+      "description": "Model for the listed subagent types. Sonnet searches nearly as well as Opus; Haiku is cheaper but may miss things, which then costs a second search on the main model."
+    },
+    "subagentSaverTypes": {
+      "type": "string",
+      "default": "Explore",
+      "title": "Subagent Saver: agent types",
+      "description": "Built-in subagent types to route, comma separated."
+    },
+    "subagentSaverShow": {
+      "type": "string",
+      "default": "band",
+      "options": [
+        "band",
+        "status",
+        "off"
+      ],
+      "title": "Subagent Saver: display",
       "description": "band: above the prompt. status: in the status line. off: not shown (the mod keeps working)."
     },
     "handoffAuto": {

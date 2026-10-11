@@ -951,6 +951,38 @@ export const CATALOG: CatalogMod[] = [
         "default": "off"
       },
       {
+        "key": "cacheMeterAutoCompact",
+        "title": {
+          "en": "Cache Meter: auto-compact at",
+          "de": "Cache-Meter: automatisch kompaktieren ab"
+        },
+        "description": {
+          "en": "Sets Claude Code's autoCompactWindow. On 1M-context models Claude only compacts by itself at about 967k tokens, and every turn re-reads the whole context until then. auto = Claude's default.",
+          "de": "Setzt autoCompactWindow von Claude Code. Bei Modellen mit 1M Kontext kompaktiert Claude erst bei etwa 967k Token von selbst, und bis dahin liest jede Runde den ganzen Kontext neu. auto = Standard von Claude."
+        },
+        "labels": {
+          "de": {
+            "auto": "Standard",
+            "200k": "200k Token",
+            "300k": "300k Token",
+            "500k": "500k Token"
+          },
+          "en": {
+            "auto": "default",
+            "200k": "200k tokens",
+            "300k": "300k tokens",
+            "500k": "500k tokens"
+          }
+        },
+        "options": [
+          "auto",
+          "200k",
+          "300k",
+          "500k"
+        ],
+        "default": "auto"
+      },
+      {
         "key": "cacheMeterShow",
         "title": {
           "en": "Cache Meter: display",
@@ -1000,6 +1032,115 @@ export const CATALOG: CatalogMod[] = [
       }
     ],
     "tokens": "optional",
+    "compat": {
+      "surfaces": [
+        "terminal",
+        "desktop",
+        "vscode",
+        "mobile"
+      ],
+      "os": [
+        "windows",
+        "mac",
+        "linux"
+      ],
+      "needs": []
+    }
+  },
+  {
+    "id": "subagent-saver",
+    "toggle": "subagentSaver",
+    "default": true,
+    "band": true,
+    "title": {
+      "en": "Subagent Saver",
+      "de": "Subagenten-Sparer"
+    },
+    "description": {
+      "en": "Search subagents (Explore) that were given no model of their own run on a cheaper one instead of the main model. An explicit model, forks, teammates and plugin agents stay untouched.",
+      "de": "Such-Subagenten (Explore) ohne eigenes Modell laufen auf einem günstigeren statt dem Hauptmodell. Ein ausdrücklich gewähltes Modell, Forks, Teammates und Plugin-Agenten bleiben unberührt."
+    },
+    "group": "context",
+    "costs": null,
+    "params": [
+      {
+        "key": "subagentSaverModel",
+        "title": {
+          "en": "Subagent Saver: model",
+          "de": "Subagenten-Sparer: Modell"
+        },
+        "description": {
+          "en": "Model for the listed subagent types. Sonnet searches nearly as well as Opus; Haiku is cheaper but may miss things, which then costs a second search on the main model.",
+          "de": "Modell für die genannten Subagent-Typen. Sonnet sucht fast so gut wie Opus; Haiku ist billiger, übersieht aber eher etwas, das dann eine zweite Suche auf dem Hauptmodell kostet."
+        },
+        "labels": {
+          "de": {
+            "sonnet": "Sonnet",
+            "haiku": "Haiku",
+            "off": "aus"
+          },
+          "en": {
+            "sonnet": "Sonnet",
+            "haiku": "Haiku",
+            "off": "off"
+          }
+        },
+        "options": [
+          "sonnet",
+          "haiku",
+          "off"
+        ],
+        "default": "sonnet"
+      },
+      {
+        "key": "subagentSaverTypes",
+        "title": {
+          "en": "Subagent Saver: agent types",
+          "de": "Subagenten-Sparer: Agent-Typen"
+        },
+        "description": {
+          "en": "Built-in subagent types to route, comma separated.",
+          "de": "Eingebaute Subagent-Typen, die umgeleitet werden, mit Komma getrennt."
+        },
+        "labels": {},
+        "options": null,
+        "default": "Explore"
+      },
+      {
+        "key": "subagentSaverShow",
+        "title": {
+          "en": "Subagent Saver: display",
+          "de": "Subagenten-Sparer: Anzeige"
+        },
+        "description": {
+          "en": "band: above the prompt. status: in the status line. off: not shown (the mod keeps working).",
+          "de": "Band: über dem Prompt. Statuszeile: in der Statuszeile. aus: nicht angezeigt (der Mod arbeitet weiter)."
+        },
+        "labels": {
+          "de": {
+            "band": "Band",
+            "status": "Statuszeile",
+            "off": "aus"
+          },
+          "en": {
+            "band": "band",
+            "status": "status line",
+            "off": "off"
+          }
+        },
+        "options": [
+          "band",
+          "status",
+          "off"
+        ],
+        "default": "band"
+      }
+    ],
+    "imported": false,
+    "upstream": "subagent-saver",
+    "source": null,
+    "commands": [],
+    "tokens": "none",
     "compat": {
       "surfaces": [
         "terminal",
@@ -1337,6 +1478,10 @@ export const PROFILES: CatalogProfile[] = [
         true
       ],
       [
+        "subagentSaver",
+        true
+      ],
+      [
         "handoff",
         true
       ],
@@ -1395,6 +1540,10 @@ export const PROFILES: CatalogProfile[] = [
       ],
       [
         "cacheMeter",
+        true
+      ],
+      [
+        "subagentSaver",
         true
       ],
       [
@@ -1459,6 +1608,10 @@ export const PROFILES: CatalogProfile[] = [
         false
       ],
       [
+        "subagentSaver",
+        false
+      ],
+      [
         "handoff",
         false
       ],
@@ -1517,6 +1670,10 @@ export const PROFILES: CatalogProfile[] = [
       ],
       [
         "cacheMeter",
+        true
+      ],
+      [
+        "subagentSaver",
         true
       ],
       [

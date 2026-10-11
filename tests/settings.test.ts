@@ -117,7 +117,7 @@ describe('Language and design', () => {
     engine(on)
     const ui = await pane($, 'terminal')
     expect(await ui.find({ key: 'tab-profiles' })).toBeDefined()
-    expect(await ui.find({ type: 'Text', text: /13 on/ })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: /[0-9]+ on$/ })).toBeDefined()
     expect(await ui.find({ type: 'Text', text: /General/ })).toBeDefined()
     expect(await ui.find({ type: 'Text', text: /kostet Token/ })).toBeUndefined()
   })

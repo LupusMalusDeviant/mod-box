@@ -34,6 +34,35 @@ let ttlMs = 60 * 60_000
 let showLimits = true
 let keepWarmMs = 3 * 60 * 60_000
 
+const STORE_AUTOCOMPACT = 'autocompact-by-box'
+
+/** Tokens for Claude Code's autoCompactWindow setting, or null for its own default. */
+export function autoCompactTokens(choice: string): number | null {
+  const n = Number(choice.replace(/k$/i, '')) * 1000
+  return Number.isFinite(n) && n >= 100000 && n <= 1000000 ? n : null
+}
+
+// Writes the chosen window into ~/.claude/settings.json (Claude Code watches that file). Only a
+// value the box itself wrote is ever removed again, so a hand-set one stays.
+async function applyAutoCompact($: EngineInterface, choice: string) {
+  const home = ((await $.env.get('USERPROFILE')) ?? (await $.env.get('HOME')) ?? '').replace(/\\/g, '/')
+  if (!home) return
+  const path = `${home}/.claude/settings.json`
+  const s = JSON.parse(String(await $.fs.read(path))) as Record<string, unknown>
+  const want = autoCompactTokens(choice)
+  const ours = await $.store.get(STORE_AUTOCOMPACT)
+  if (want === null) {
+    if (ours === null || ours === undefined || s.autoCompactWindow !== ours) return
+    delete s.autoCompactWindow
+    await $.store.delete(STORE_AUTOCOMPACT)
+  } else {
+    if (s.autoCompactWindow === want) return
+    s.autoCompactWindow = want
+    await $.store.set(STORE_AUTOCOMPACT, want)
+  }
+  await $.fs.write(path, JSON.stringify(s, null, 2) + '\n')
+}
+
 export const register: Register = (on, options) => {
   // Band manager: hand this mod’s display to the Mod Box (it draws, orders and places it).
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
@@ -57,6 +86,7 @@ export const register: Register = (on, options) => {
   on('session.start', {}, async ($, e, next) => {
     const r = await next(e)
     await refreshContext($)
+    await applyAutoCompact($, String(options.autoCompact ?? 'auto')).catch(() => {})
     $.clock.every(TICK_MS, () => void update($, tick, n => (n ?? 0) + 1).catch(() => {}))
     return r
   })

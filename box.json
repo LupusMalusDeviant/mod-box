@@ -864,6 +864,36 @@
               "off": "aus"
             }
           }
+        },
+        {
+          "key": "cacheMeterAutoCompact",
+          "field": "autoCompact",
+          "type": "string",
+          "default": "auto",
+          "options": [
+            "auto",
+            "200k",
+            "300k",
+            "500k"
+          ],
+          "title": "Cache Meter: auto-compact at",
+          "title_de": "Cache-Meter: automatisch kompaktieren ab",
+          "description": "Sets Claude Code's autoCompactWindow. On 1M-context models Claude only compacts by itself at about 967k tokens, and every turn re-reads the whole context until then. auto = Claude's default.",
+          "description_de": "Setzt autoCompactWindow von Claude Code. Bei Modellen mit 1M Kontext kompaktiert Claude erst bei etwa 967k Token von selbst, und bis dahin liest jede Runde den ganzen Kontext neu. auto = Standard von Claude.",
+          "labels": {
+            "de": {
+              "auto": "Standard",
+              "200k": "200k Token",
+              "300k": "300k Token",
+              "500k": "500k Token"
+            },
+            "en": {
+              "auto": "default",
+              "200k": "200k tokens",
+              "300k": "300k tokens",
+              "500k": "500k tokens"
+            }
+          }
         }
       ],
       "state": {
@@ -895,6 +925,80 @@
         }
       ],
       "tokens": "optional",
+      "compat": {
+        "surfaces": [
+          "terminal",
+          "desktop",
+          "vscode",
+          "mobile"
+        ],
+        "os": [
+          "windows",
+          "mac",
+          "linux"
+        ],
+        "needs": []
+      }
+    },
+    {
+      "id": "subagent-saver",
+      "toggle": "subagentSaver",
+      "title": "Subagent Saver",
+      "title_de": "Subagenten-Sparer",
+      "group": "context",
+      "description": "Search subagents (Explore) that were given no model of their own run on a cheaper one instead of the main model. An explicit model, forks, teammates and plugin agents stay untouched.",
+      "description_de": "Such-Subagenten (Explore) ohne eigenes Modell laufen auf einem günstigeren statt dem Hauptmodell. Ein ausdrücklich gewähltes Modell, Forks, Teammates und Plugin-Agenten bleiben unberührt.",
+      "default": true,
+      "entry": "mods/subagent-saver/hooks/register.tsx",
+      "pass": {
+        "language": "language"
+      },
+      "options": [
+        {
+          "key": "subagentSaverModel",
+          "field": "model",
+          "type": "string",
+          "default": "sonnet",
+          "options": [
+            "sonnet",
+            "haiku",
+            "off"
+          ],
+          "title": "Subagent Saver: model",
+          "title_de": "Subagenten-Sparer: Modell",
+          "description": "Model for the listed subagent types. Sonnet searches nearly as well as Opus; Haiku is cheaper but may miss things, which then costs a second search on the main model.",
+          "description_de": "Modell für die genannten Subagent-Typen. Sonnet sucht fast so gut wie Opus; Haiku ist billiger, übersieht aber eher etwas, das dann eine zweite Suche auf dem Hauptmodell kostet.",
+          "labels": {
+            "de": {
+              "sonnet": "Sonnet",
+              "haiku": "Haiku",
+              "off": "aus"
+            },
+            "en": {
+              "sonnet": "Sonnet",
+              "haiku": "Haiku",
+              "off": "off"
+            }
+          }
+        },
+        {
+          "key": "subagentSaverTypes",
+          "field": "types",
+          "type": "string",
+          "default": "Explore",
+          "title": "Subagent Saver: agent types",
+          "title_de": "Subagenten-Sparer: Agent-Typen",
+          "description": "Built-in subagent types to route, comma separated.",
+          "description_de": "Eingebaute Subagent-Typen, die umgeleitet werden, mit Komma getrennt."
+        }
+      ],
+      "state": {
+        "from": "subagent-saver",
+        "prefix": "ss",
+        "contract": "mods/subagent-saver/types/contract.d.ts"
+      },
+      "band": true,
+      "tokens": "none",
       "compat": {
         "surfaces": [
           "terminal",

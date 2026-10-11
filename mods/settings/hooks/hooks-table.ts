@@ -88,6 +88,10 @@ export const HOOKS: Record<string, string[]> = {
     "turn.step",
     "ui.render"
   ],
+  "subagentSaver": [
+    "agent.spawn",
+    "ui.render"
+  ],
   "handoff": [
     "command.run",
     "session.start",

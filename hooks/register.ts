@@ -12,10 +12,11 @@ import { register as m6 } from '../mods/filetree/hooks/register' // filetree
 import { register as m7 } from '../mods/replay-theater/hooks/replay-theater.mjs' // replay-theater
 import { register as m8 } from '../mods/next-steps/hooks/register' // next-steps
 import { register as m9 } from '../mods/cache-meter/hooks/register' // cache-meter
-import { register as m10 } from '../mods/handoff/hooks/register' // handoff
-import { register as m11 } from '../mods/visible-compact/hooks/register' // visible-compact
-import { register as m12 } from '../mods/heads-up/hooks/register' // heads-up
-import { register as m13 } from '../mods/catch-me-up/hooks/register.js' // catch-me-up
+import { register as m10 } from '../mods/subagent-saver/hooks/register' // subagent-saver
+import { register as m11 } from '../mods/handoff/hooks/register' // handoff
+import { register as m12 } from '../mods/visible-compact/hooks/register' // visible-compact
+import { register as m13 } from '../mods/heads-up/hooks/register' // heads-up
+import { register as m14 } from '../mods/catch-me-up/hooks/register.js' // catch-me-up
 
 export function isOn(options: Record<string, unknown>, key: string, fallback: boolean): boolean {
   const v = options[key]
@@ -38,9 +39,10 @@ export const register: Register = (on, options) => {
   if (isOn(o, "filetree", true)) (m6 as any)(on, { "activity": opt(o, "filetreeActivity", "reads and writes"), "glyphs": opt(o, "filetreeGlyphs", "auto"), "follow": opt(o, "filetreeFollow", "on"), "column": opt(o, "filetreeColumn", "date"), "open": opt(o, "filetreeOpen", "") })
   if (isOn(o, "replayTheater", true)) (m7 as any)(on, {  })
   if (isOn(o, "nextSteps", false)) (m8 as any)(on, { "language": opt(o, "language", "en") })
-  if (isOn(o, "cacheMeter", true)) (m9 as any)(on, { "ttlMinutes": opt(o, "cacheMeterTtl", "60"), "limits": opt(o, "cacheMeterLimits", "on"), "guard": opt(o, "cacheMeterGuard", "refuse"), "keepWarmHours": opt(o, "cacheMeterKeepWarm", "3"), "autoWarm": opt(o, "cacheMeterAutoWarm", "off"), "language": opt(o, "language", "en") })
-  if (isOn(o, "handoff", true)) (m10 as any)(on, { "auto": opt(o, "handoffAuto", "off"), "language": opt(o, "language", "en"), "ttlMinutes": opt(o, "cacheMeterTtl", "60") })
-  if (isOn(o, "visibleCompact", true)) (m11 as any)(on, { "storage": opt(o, "compactStorage", "temp") })
-  if (isOn(o, "headsUp", false)) (m12 as any)(on, { "language": opt(o, "language", "en") })
-  if (isOn(o, "catchMeUp", false)) (m13 as any)(on, { "language": opt(o, "language", "en") })
+  if (isOn(o, "cacheMeter", true)) (m9 as any)(on, { "ttlMinutes": opt(o, "cacheMeterTtl", "60"), "limits": opt(o, "cacheMeterLimits", "on"), "guard": opt(o, "cacheMeterGuard", "refuse"), "keepWarmHours": opt(o, "cacheMeterKeepWarm", "3"), "autoWarm": opt(o, "cacheMeterAutoWarm", "off"), "autoCompact": opt(o, "cacheMeterAutoCompact", "auto"), "language": opt(o, "language", "en") })
+  if (isOn(o, "subagentSaver", true)) (m10 as any)(on, { "model": opt(o, "subagentSaverModel", "sonnet"), "types": opt(o, "subagentSaverTypes", "Explore"), "language": opt(o, "language", "en") })
+  if (isOn(o, "handoff", true)) (m11 as any)(on, { "auto": opt(o, "handoffAuto", "off"), "language": opt(o, "language", "en"), "ttlMinutes": opt(o, "cacheMeterTtl", "60") })
+  if (isOn(o, "visibleCompact", true)) (m12 as any)(on, { "storage": opt(o, "compactStorage", "temp") })
+  if (isOn(o, "headsUp", false)) (m13 as any)(on, { "language": opt(o, "language", "en") })
+  if (isOn(o, "catchMeUp", false)) (m14 as any)(on, { "language": opt(o, "language", "en") })
 }

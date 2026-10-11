@@ -1,6 +1,6 @@
 # Mod Box
 
-Thirteen Claude Code mods in **one** plugin. Each one has its own switch, and one window manages them all: you can switch mods on and off, change their options, apply profiles, and import more mods from git repos and marketplaces.
+Fourteen Claude Code mods in **one** plugin. Each one has its own switch, and one window manages them all: you can switch mods on and off, change their options, apply profiles, and import more mods from git repos and marketplaces.
 
 Most of the mods are **adapted copies of other people's mods** (see [Credits](#credits)). The rest were written for this box.
 
@@ -46,7 +46,8 @@ Some hosts, the desktop app among them, don't list a plugin's options in `/confi
 | `filetree` | Filetree | on | File tree side pane (`/filetree`) that lights up as Claude reads and writes. | no |
 | `replayTheater` | Replay Theater | on | Steps through the last turn's edits (`/replay`). | no |
 | `nextSteps` | Next Steps | off | Suggests 2–3 next prompts. | a Haiku call per answer |
-| `cacheMeter` | Cache Meter (with Cache Tax) | on | Shows the time left on the warm cache, the hit rate, the context as weather and the plan limits, with compact and keep-warm buttons. It also stops a send to a cold cache once and names its cost. | only keep-warm requests, when on |
+| `cacheMeter` | Cache Meter (with Cache Tax) | on | Shows the time left on the warm cache, the hit rate, the context as weather and the plan limits, with compact and keep-warm buttons. It also stops a send to a cold cache once and names its cost, and the cost of compacting first instead. **Auto-compact at** sets Claude Code's `autoCompactWindow`: on 1M-context models Claude otherwise compacts only at about 967k tokens. | only keep-warm requests, when on |
+| `subagentSaver` | Subagent Saver | on | Search subagents (Explore) that got no model of their own run on Sonnet (or Haiku) instead of inheriting the main model. An explicit model, forks, teammates and plugin agents stay untouched; the band shows how many were routed. | no |
 | `handoff` | Handoff Note | on | `/handoff` writes `.claude/handoff.local.md`, and a new session offers to continue from it. | one request over the warm cache |
 | `visibleCompact` | Visible Compact | on | Before/after view of `/compact` (`/show-last-compact`). | no |
 | `headsUp` | Heads-up | off | Points out one easily missed but important thing in a long answer. | a Haiku call per long answer |
@@ -156,7 +157,7 @@ These mods come from other repositories and **were modified for the Mod Box**. E
 | Savvy Progress | [JohnnyVizz/claude-kit](https://github.com/JohnnyVizz/claude-kit/tree/main/plugins/savvy-progress) | johnnyvizz | MIT | a type fix; state and tool names rewritten |
 | Visible Compact | [nvsravank/visible-compact](https://github.com/nvsravank/visible-compact) | nvsravank | MIT | state, matchers and paths rewritten |
 
-**Heads-up** is a re-implementation inspired by "You Should Know", which ships with Claude Code (`/plugin enable cc-plugin-you-should-know@builtin`). **Cache Meter, Secret Guard, CI Watch, Sign Guard, Handoff Note**, the window and the tools were written for this box.
+**Heads-up** is a re-implementation inspired by "You Should Know", which ships with Claude Code (`/plugin enable cc-plugin-you-should-know@builtin`). **Cache Meter, Subagent Saver, Secret Guard, CI Watch, Sign Guard, Handoff Note**, the window and the tools were written for this box.
 
 ## License
 

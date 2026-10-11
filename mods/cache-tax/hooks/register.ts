@@ -116,6 +116,19 @@ function guardText(s: State, now: number): string {
     (warm == null ? '' : ` (a warm turn would have cost ${fmtUsd(warm)})`) + '.'
 }
 
+// Mod Box: the third way out of a cold send. Compacting cold writes about as much now, but every
+// later turn then carries a small context instead of the whole one.
+const COMPACT_AFTER = 20000
+const COMPACT_OUTPUT = 4000
+
+export function compactHint(ctx: number, model: string | null): string {
+  const price = priceOf(model)
+  if (!price || ctx < BIG_TOKENS) return ''
+  const now = (ctx * price[1] + COMPACT_OUTPUT * price[2]) / 1e6
+  const perTurn = ((ctx - COMPACT_AFTER) * price[0]) / 1e6
+  return ` Or /compact first: about ${fmtUsd(now)} now, then each later turn reads about ${fmtTok(COMPACT_AFTER)} instead of ${fmtTok(ctx)} tokens (about ${fmtUsd(perTurn)} less per turn; compaction loses detail).`
+}
+
 export type ResumeFields = {
   source: string
   model?: string
@@ -520,7 +533,7 @@ export const register: Register = (on, options) => {
     const now = await $.clock.now()
     if (!isCold(s, now) || s.ctx < BIG_TOKENS) return next(e)
     if (s.guard === 'warn') {
-      $.ui.log(`${guardText(s, now)} Sending anyway; keepwarm will hold the cache for ${fmtDuration(AUTO_WARM_MS)} once it lands.`)
+      $.ui.log(`${guardText(s, now)} Sending anyway; keepwarm will hold the cache for ${fmtDuration(AUTO_WARM_MS)} once it lands.${compactHint(s.ctx, s.lastModel)}`)
       s.coldWritePending = true
       return next(e)
     }
@@ -530,7 +543,7 @@ export const register: Register = (on, options) => {
       return next(e)
     }
     s.ackedAt = s.lastRequestAt
-    return { drop: `cache-tax: ${guardText(s, now)} Send it again to pay it, and keepwarm will then hold the cache for ${fmtDuration(AUTO_WARM_MS)}. Or /clear and start from a note.` }
+    return { drop: `cache-tax: ${guardText(s, now)} Send it again to pay it, and keepwarm will then hold the cache for ${fmtDuration(AUTO_WARM_MS)}.${compactHint(s.ctx, s.lastModel)} Or /clear and start from a note.` }
   })
 
   on('turn.step', {}, async function* ($, e, next) {
