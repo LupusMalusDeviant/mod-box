@@ -90,6 +90,8 @@ Some hosts, the desktop app among them, don't list a plugin's options in `/confi
 | `headsUp` | Heads-up | off | Points out one easily missed but important thing in a long answer. | a Haiku call per long answer |
 | `catchMeUp` | Catch Me Up | off | Live summary of the session (`/catch-me-up`). | Haiku calls after turns |
 
+<p align="center"><img src="docs/images/cache-meter.png" alt="Cache Meter opened: commands, token cost and options" width="500"></p>
+
 ## Commands
 
 | Command | Mod | What it does |
@@ -108,8 +110,6 @@ Some hosts, the desktop app among them, don't list a plugin's options in `/confi
 The window lists them too: next to each mod's name, and in full under ⚙.
 
 ## The band above the prompt
-
-<p align="center"><img src="docs/images/band.png" alt="The band above the prompt" width="820"></p>
 
 CI Watch, Sign Guard, Cache Meter, Handoff Note and Heads-up hand their displays to the box, which draws them all in one band above the prompt:
 
@@ -130,6 +130,8 @@ The window remembers the profile you applied last (*Default* until you apply one
 ## Where a mod runs
 
 Each mod declares where it works: the surfaces (terminal, desktop app, VS Code, mobile), the operating systems, and the programs it needs (`git`, `gh` signed in, Node.js, Git Bash, PowerShell, a signing script). The window compares that with the session you are in (surface, OS, and the environment check under **Health**) and puts a ⚠ with the reason next to a mod that would not, or not fully, run here. ⚙ shows the full list.
+
+<p align="center"><img src="docs/images/sources.png" alt="The Sources tab" width="820"></p>
 
 ## Adding mods with Claude
 
