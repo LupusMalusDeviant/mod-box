@@ -81,7 +81,7 @@ CI Watch, Sign Guard, Cache Meter, Handoff Note and Heads-up hand their displays
 
 Each mod in `box.json` carries attributes: `group` (guards, display, context, watchers), `tokens` (none, optional, always), `default`, and `compat` (see below). A profile is a rule over them: *Default* takes each mod's `default`, *Lean* takes `tokens: none | optional`, *Guards only* takes `group: guards`, *Everything on* takes all. So a new mod lands in the right profiles as soon as it is classified.
 
-The window remembers the profile you applied last. At the next session start it gives every mod that is new since then the switch that profile wants, and marks it **new**. If you have changed switches by hand since, the header says *(changed)*; new mods still follow the profile.
+The window remembers the profile you applied last (*Default* until you apply one). At the next session start it gives every mod that is new since then the switch that profile wants, and marks it **new**. If you have changed switches by hand since, the header says *(changed)*; new mods still follow the profile.
 
 **Foreign code waits for trust.** A mod imported from another repo starts switched off, and profiles leave it off until you trust it: **Trust** under its ⚙, or switch it on by hand once. Imported mods show 🔒 until then, 📦 after.
 

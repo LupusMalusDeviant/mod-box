@@ -388,7 +388,7 @@ export const register: Register = (on, options) => {
     else if (current === 'diag') body = <Box flexDirection="column">{await drawUsage($, ui)}{await drawDiagnosis($, ui)}</Box>
     else body = drawMods($, ui, rows, await drawNotes($, ui), await read($, usage), await read($, expanded), columns, { ...(await here($, e.surface)), trusted, fresh: await read($, fresh) })
 
-    const storedId = await $.store.get(STORE_ACTIVE).catch(() => null)
+    const storedId = await activeProfileId($)
     const matches = (p: (typeof PROFILES)[number]) => profileSet(p, trusted).every(([k, v]) => (rows.get(k)?.value === true) === v)
     const stored = PROFILES.find(p => p.id === storedId)
     const active = stored ?? PROFILES.find(matches)
@@ -875,6 +875,12 @@ function profileSet(p: (typeof PROFILES)[number], trusted: string[]): Array<[str
   return p.set.map(([k, v]) => [k, v && (!CATALOG.find(m => m.toggle === k)?.imported || trusted.includes(k))])
 }
 
+/** The profile applied last; "default" until one is applied in the window. */
+async function activeProfileId($: EngineInterface): Promise<string> {
+  const v = await $.store.get(STORE_ACTIVE).catch(() => null)
+  return typeof v === 'string' ? v : 'default'
+}
+
 async function trustedList($: EngineInterface): Promise<string[]> {
   const v = await $.store.get(STORE_TRUSTED).catch(() => null)
   return Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : []
@@ -884,7 +890,7 @@ async function trustMod($: EngineInterface, toggle: string) {
   const list = await trustedList($)
   if (!list.includes(toggle)) await $.store.set(STORE_TRUSTED, [...list, toggle])
   // From now on the active profile decides about it, as about every other mod.
-  const activeId = await $.store.get(STORE_ACTIVE).catch(() => null)
+  const activeId = await activeProfileId($)
   const p = PROFILES.find(x => x.id === activeId)
   const want = p?.set.find(([k]) => k === toggle)?.[1]
   if (want !== undefined) await setMany($, { [toggle]: want })
@@ -919,7 +925,7 @@ async function adoptNewMods($: EngineInterface) {
   const added = all.filter(x => !seen.includes(x))
   if (!added.length) return
   await update($, fresh, () => added)
-  const activeId = await $.store.get(STORE_ACTIVE).catch(() => null)
+  const activeId = await activeProfileId($)
   const p = PROFILES.find(x => x.id === activeId)
   if (!p) return
   const rows = await configRows($)
