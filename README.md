@@ -1,20 +1,57 @@
 # Mod Box
 
-Fourteen Claude Code mods in **one** plugin. Each one has its own switch, and one window manages them all: you can switch mods on and off, change their options, apply profiles, and import more mods from git repos and marketplaces.
+[![CI](https://github.com/LupusMalusDeviant/mod-box/actions/workflows/ci.yml/badge.svg)](https://github.com/LupusMalusDeviant/mod-box/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+![Claude Code 2.1.287+](https://img.shields.io/badge/Claude%20Code-2.1.287%2B-d97757)
 
-Most of the mods are **adapted copies of other people's mods** (see [Credits](#credits)). The rest were written for this box.
+**Fourteen Claude Code mods in one plugin, each with its own switch, and one window to run them all.**
+
+Claude Code mods are small hook modules that change how Claude Code behaves and looks: a guard that stops `rm -rf` before it runs, a meter that shows when the prompt cache goes cold, a watcher that follows your CI after every push. There are a lot of good ones scattered over GitHub. The Mod Box collects them, makes them work together, and gives you one place to switch them, configure them and add more.
+
+<!-- screenshot: the Mods tab -->
+<p align="center"><img src="docs/images/mods.png" alt="The Mods tab of the Mod Box window" width="820"></p>
+
+**Highlights**
+
+- **One window** (`/mod-box`): every mod as a card with a switch, its options, commands and token cost; profiles; sources; health.
+- **Guards**: Blast Radius holds destructive shell commands, Secret Guard stops keys and `.env` files before they reach a file or commit, CI Watch follows every push and pull request to the end.
+- **Saves money and limits**: Cache Meter shows the warm cache and plan limits and stops a send to a cold cache with its price; Subagent Saver runs search subagents on Sonnet instead of your main model; auto-compact can kick in earlier.
+- **Grows with you**: import mods from any git repo or marketplace, or ask Claude to add one with the bundled `mod-box-add` skill. Profiles are rules, so new mods land in the right ones; foreign code stays off until you trust it.
+- **Knows where it runs**: each mod declares surfaces, systems and tools it needs; the window warns when one would not work here.
+- English and German UI.
+
+Most of the mods are **adapted copies of other people's mods**, credited below with what was changed. The rest were written for this box.
 
 ## Install
 
-Type this at the prompt of a terminal Claude Code session (needs Claude Code 2.1.287 or newer; the tools in `tools/` need Node.js 26):
+Needs Claude Code 2.1.287 or newer. In a terminal Claude Code session:
 
 ```
 /plugin install mod-box --marketplace LupusMalusDeviant/mod-box
 ```
 
-Answer `y` to add the marketplace, then pick a scope. To try it from a clone without installing it, start Claude Code with `claude --plugin-dir <clone>`.
+Answer `y` to add the marketplace, then pick a scope. Or from a shell:
 
-**Working on the box itself:** have Claude Code load it straight from your clone. In `~/.claude/settings.json`, under `env`, set `CLAUDE_CODE_PLUGIN_DIRS` to the folder and `CLAUDE_CODE_PLUGIN_DIR_WATCH` to `1`, then restart Claude once. After that, every saved change reloads the box by itself. An installed plugin runs from a copy that Claude makes at install time, so it only changes with a new version and a restart.
+```bash
+claude plugin marketplace add LupusMalusDeviant/mod-box
+```
+
+```bash
+claude plugin install mod-box@mod-box
+```
+
+Then open the window with `/mod-box`. A mod installed at user scope also runs in the desktop app's Code tab.
+
+**Update** with `claude plugin update mod-box@mod-box` and a restart of Claude. **Remove** with `claude plugin uninstall mod-box@mod-box`.
+
+**Working on the box itself:** have Claude Code load it straight from your clone. In `~/.claude/settings.json`, under `env`, set `CLAUDE_CODE_PLUGIN_DIRS` to the folder and `CLAUDE_CODE_PLUGIN_DIR_WATCH` to `1`, then restart Claude once. After that, every saved change reloads the box by itself. The tools in `tools/` need Node.js 26. See [CONTRIBUTING.md](CONTRIBUTING.md).
+
+## Safety
+
+- Mods run inside your Claude Code session with the rights of a plugin: they can read and write files and run commands. Only import mods from sources you trust. Imported mods start switched off and stay off in every profile until you trust them.
+- Secret Guard and Blast Radius are guards, not guarantees.
+- The box writes to `~/.claude/settings.json` only where you ask it to: switches and options (in `pluginConfigs`, where the desktop app does not list plugin rows in `/config`) and the auto-compact window when you set it.
+- The box sends none of your data anywhere. It only fetches from git sources you add, and CI Watch talks to GitHub through your own `gh`. Mods that call a model (Next Steps, Heads-up, Catch Me Up, the handoff note, keep-warm) say so and show their token use.
 
 ## The window
 
@@ -72,11 +109,15 @@ The window lists them too: next to each mod's name, and in full under ⚙.
 
 ## The band above the prompt
 
+<p align="center"><img src="docs/images/band.png" alt="The band above the prompt" width="820"></p>
+
 CI Watch, Sign Guard, Cache Meter, Handoff Note and Heads-up hand their displays to the box, which draws them all in one band above the prompt:
 
 - **Band layout** *compact* puts calm displays on one shared line, and urgent ones (red CI, a sign offer, a heads-up) on lines of their own. *lines* gives each display its own line.
 - **Display**, per mod, chooses band, status line or off.
 - **Order** is set with arrows in the Mods tab.
+
+<p align="center"><img src="docs/images/profiles.png" alt="The Profiles tab" width="820"></p>
 
 ## Profiles and new mods
 

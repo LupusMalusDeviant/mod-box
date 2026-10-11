@@ -1,0 +1,42 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: Validate and test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+
+      - name: Install Claude Code
+        run: npm install -g @anthropic-ai/claude-code
+
+      - name: Generated files are up to date
+        shell: bash
+        run: |
+          node tools/box.mjs build
+          git diff --exit-code -- . ':(exclude).claude-plugin/types'
+
+      - name: Validate the plugin
+        run: claude plugin validate .
+
+      - name: Plugin tests
+        run: claude plugin test .
+
+      - name: Tool tests
+        run: node --test tools/box.test.mjs
