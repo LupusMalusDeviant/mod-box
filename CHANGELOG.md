@@ -1,9 +1,10 @@
 # Changelog
 
-## Unreleased
+## 0.4.1
 
 - `tools/box.mjs export`: standalone plugins for single mods, published as the claude-mods marketplace.
-- README: the box is described as a best-of selection that takes any other mods.
+- README: the box is described as a best-of selection that takes any other mods; terminal screenshots.
+- Window: a short parenthesis no longer cuts a mod's tagline; the header shows the profile the switches match.
 
 ## 0.4.0
 
