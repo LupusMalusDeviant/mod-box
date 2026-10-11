@@ -4,3 +4,4 @@ node_modules/
 .mod-box-test/
 hooks/reload.stamp
 *.log
+Screenshots/

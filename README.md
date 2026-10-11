@@ -111,6 +111,8 @@ The window lists them too: next to each mod's name, and in full under ⚙.
 
 ## The band above the prompt
 
+<p align="center"><img src="docs/images/band.png" alt="The band: warm cache, hit rate, context as weather, plan limits" width="760"><br><img src="docs/images/band-ci.png" alt="The band with a green CI run on its own line" width="760"></p>
+
 CI Watch, Sign Guard, Cache Meter, Handoff Note and Heads-up hand their displays to the box, which draws them all in one band above the prompt:
 
 - **Band layout** *compact* puts calm displays on one shared line, and urgent ones (red CI, a sign offer, a heads-up) on lines of their own. *lines* gives each display its own line.
