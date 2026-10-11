@@ -14,7 +14,7 @@ import type { ModUsage, UsageBook } from './usage'
 import { BAND_IDS } from './bands'
 import { HOOKS } from './hooks-table'
 import { CATALOG, GROUPS, PLUGIN, PROFILES, SETTINGS } from './catalog'
-import type { CatalogField, Text as I18n } from './catalog'
+import type { CatalogField, CatalogMod, Text as I18n } from './catalog'
 import type { EnvCheck, HookError, ImportReport, Source, Tab, UpdateInfo } from '../types'
 
 const PANE = 'mod-box-settings'
@@ -23,6 +23,10 @@ const PANE = 'mod-box-settings'
 let PREFIX = PLUGIN + '.'
 const STORE_LINKS = 'source-links'
 const STORE_PENDING = 'profile-pending'
+// The profile last applied, the mods the box has seen, and the imported mods the person trusts.
+const STORE_ACTIVE = 'active-profile'
+const STORE_SEEN = 'seen-mods'
+const STORE_TRUSTED = 'trusted-mods'
 const ROWS_PER_SOURCE = 12
 
 const tab = atom({ plugin: 'mod-box', key: 'mb_tab' } as const, 'mods' as Tab)
@@ -34,6 +38,8 @@ const filter = atom({ plugin: 'mod-box', key: 'mb_filter' } as const, '')
 const open = atom({ plugin: 'mod-box', key: 'mb_open' } as const, [] as string[])
 const report = atom({ plugin: 'mod-box', key: 'mb_report' } as const, null as ImportReport | null)
 const expanded = atom({ plugin: 'mod-box', key: 'mb_expanded' } as const, [] as string[])
+// Mods that came in since the last session: marked "new" in the window for this session.
+const fresh = atom({ plugin: 'mod-box', key: 'mb_fresh' } as const, [] as string[])
 let version = ''
 const updates = atom({ plugin: 'mod-box', key: 'mb_updates' } as const, null as UpdateInfo[] | null)
 const usage = atom({ plugin: 'mod-box', key: 'mb_usage' } as const, {} as Record<string, ModUsage>)
@@ -46,7 +52,7 @@ const diff = atom({ plugin: 'mod-box', key: 'mb_diff' } as const, null as { id: 
 
 // ---------------------------------------------------------------- language and options
 
-let lang: 'de' | 'en' = 'de'
+let lang: 'de' | 'en' = 'en'
 const t = (de: string, en: string) => (lang === 'en' ? en : de)
 const tx = (text: I18n | null | undefined) => (text ? (lang === 'en' ? text.en : text.de || text.en) : '')
 const label = (f: CatalogField | undefined, value: string) => f?.labels?.[lang]?.[value] ?? value
@@ -78,7 +84,7 @@ export function bandOrder(raw: string): string[] {
 
 export const register: Register = (on, options) => {
   opts = (options ?? {}) as Record<string, unknown>
-  lang = opts.language === 'en' ? 'en' : 'de'
+  lang = opts.language === 'de' ? 'de' : 'en'
 
   // Diagnosis: as the outermost hooks of the box these read next.trace after the box's own hooks ran
   // and note every box hook that failed. Switch it off with the setting diagnose = off.
@@ -325,6 +331,7 @@ export const register: Register = (on, options) => {
     if (Array.isArray(saved)) await update($, links, () => saved.filter((x): x is string => typeof x === 'string'))
     // A profile set over several reloads continues here.
     void continueProfile($).catch(() => {})
+    void adoptNewMods($).catch(() => {})
     $.clock.every(4000, () => void flushErrors($).catch(() => {}))
     return next(e)
   })
@@ -342,6 +349,7 @@ export const register: Register = (on, options) => {
     await $.ui.open({ id: PANE, title: 'Mod Box', focus: true, closeOnEscape: true })
     const now = await read($, tab)
     if (now === 'sources' && (await read($, sources)) === null) void loadCatalog($, false)
+    if ((await read($, envChecks)) === null) void runEnvChecks($).catch(() => {})
     return { text: t('Mod-Box geöffnet (Esc schließt).', 'Mod Box opened (Esc closes).') }
   })
 
@@ -373,13 +381,18 @@ export const register: Register = (on, options) => {
     ]
 
     const columns = e.props.bodyColumns ?? 80
+    const trusted = await trustedList($)
     let body
     if (current === 'profiles') body = drawProfiles($, ui, rows, columns)
     else if (current === 'sources') body = <Box flexDirection="column">{await drawUpdates($, ui)}{await drawSources($, ui, columns)}</Box>
     else if (current === 'diag') body = <Box flexDirection="column">{await drawUsage($, ui)}{await drawDiagnosis($, ui)}</Box>
-    else body = drawMods($, ui, rows, await drawNotes($, ui), await read($, usage), await read($, expanded), columns)
+    else body = drawMods($, ui, rows, await drawNotes($, ui), await read($, usage), await read($, expanded), columns, { ...(await here($, e.surface)), trusted, fresh: await read($, fresh) })
 
-    const active = PROFILES.find(p => p.set.every(([k, v]) => (rows.get(k)?.value === true) === v))
+    const storedId = await $.store.get(STORE_ACTIVE).catch(() => null)
+    const matches = (p: (typeof PROFILES)[number]) => profileSet(p, trusted).every(([k, v]) => (rows.get(k)?.value === true) === v)
+    const stored = PROFILES.find(p => p.id === storedId)
+    const active = stored ?? PROFILES.find(matches)
+    const changed = !!stored && !matches(stored)
     const r = await read($, report)
     return (
       <Box flexDirection="column" paddingX={1}>
@@ -390,7 +403,7 @@ export const register: Register = (on, options) => {
           </Text>
           <Text>
             {isBusy ? <Text color="suggestion">{`⏳ ${isBusy}    `}</Text> : null}
-            {active ? <Text color="inactive">{`${PROFILE_ICON[active.id] ?? '◎'} ${tx(active.label)}    `}</Text> : null}
+            {active ? <Text color="inactive">{`${PROFILE_ICON[active.id] ?? '◎'} ${tx(active.label)}${changed ? t(' (angepasst)', ' (changed)') : ''}    `}</Text> : null}
             <Text color="success" bold>{`${onCount}`}</Text>
             <Text color="inactive">{t(` / ${CATALOG.length} an`, ` / ${CATALOG.length} on`)}</Text>
           </Text>
@@ -539,7 +552,7 @@ function card(ui: any, key: string, accent: string, head: unknown, children: unk
   )
 }
 
-function drawMods($: EngineInterface, ui: any, rows: Map<string, ConfigRow>, notes: unknown, used: Record<string, ModUsage>, open: string[], columns: number) {
+function drawMods($: EngineInterface, ui: any, rows: Map<string, ConfigRow>, notes: unknown, used: Record<string, ModUsage>, open: string[], columns: number, env: Here & { trusted: string[]; fresh: string[] }) {
   const { Box, Text, Button } = ui
   if (rows.size === 0) return <Text dimColor>{t('Keine Einstellungen gefunden. Ist die Mod Box aktiviert?', 'No settings found. Is the Mod Box enabled?')}</Text>
 
@@ -553,18 +566,23 @@ function drawMods($: EngineInterface, ui: any, rows: Map<string, ConfigRow>, not
     if (!r) return null
     const isOn = r.value === true
     const isOpen = open.includes(m.toggle)
-    const hasMore = m.params.length > 0 || m.toggle === 'secretGuard' || m.imported || !!m.costs || m.commands.length > 0
+    const hasMore = true
+    const issues = compatIssues(m.compat, env)
+    const isTrusted = !m.imported || env.trusted.includes(m.toggle)
+    const isNew = env.fresh.includes(m.toggle)
     return (
       <Box key={`g-${m.toggle}`} flexDirection="column" marginTop={isOpen ? 1 : 0} marginBottom={isOpen ? 1 : 0}>
         <Box flexDirection="row" alignItems="center" justifyContent="space-between">
           <Box flexDirection="row" alignItems="center" flexShrink={1}>
-            <Button key={`t-${m.toggle}`} plain onPress={() => void set($, r.key, !isOn)}>
+            <Button key={`t-${m.toggle}`} plain onPress={() => void switchMod($, m.toggle, r.key, !isOn)}>
               <Text color={isOn ? 'success' : 'inactive'}>{isOn ? '●' : '○'}</Text>
               {' '}
               <Text bold={isOn} color={isOn ? 'text' : 'inactive'}>{tx(m.title)}</Text>
             </Button>
             {m.costs ? <Text color="warning">{' 💰'}</Text> : null}
-            {m.imported ? <Text>{' 📦'}</Text> : null}
+            {m.imported ? <Text>{isTrusted ? ' 📦' : ' 🔒'}</Text> : null}
+            {isNew ? <Text color="claude" bold>{t('  neu', '  new')}</Text> : null}
+            {issues.length ? <Text color="warning">{`  ⚠ ${tx(issues[0]!)}`}</Text> : null}
             {m.commands.length ? <Text color="suggestion" dimColor>{`  ${m.commands[0]!.name.split(' ')[0]}`}</Text> : null}
             {used[m.toggle] ? <Text color="warning" dimColor>{`  ${usageText(used[m.toggle]!)}`}</Text> : null}
           </Box>
@@ -573,6 +591,20 @@ function drawMods($: EngineInterface, ui: any, rows: Map<string, ConfigRow>, not
         <Box paddingLeft={2}>
           <Text color="inactive" dimColor wrap={isOpen ? 'wrap' : 'truncate-end'}>{isOpen ? tx(m.description) : tagline(tx(m.description))}</Text>
         </Box>
+        {isOpen ? (
+          <Box flexDirection="column" paddingLeft={2}>
+            <Text color="inactive" wrap="wrap">{`${t('Läuft auf', 'Runs on')}: ${compatText(m.compat)}`}</Text>
+            {issues.map((x, i) => (
+              <Text key={`iss-${m.toggle}-${i}`} color="warning" wrap="wrap">{`⚠ ${tx(x)}`}</Text>
+            ))}
+            {!isTrusted ? (
+              <Box flexDirection="row" columnGap={2}>
+                <Text color="warning" wrap="wrap">{t('🔒 Fremder Code, noch nicht vertraut: Profile schalten ihn nicht ein.', '🔒 Foreign code, not trusted yet: profiles do not switch it on.')}</Text>
+                <Button key={`trust-${m.toggle}`} label={t('Vertrauen', 'Trust')} plain onPress={() => void trustMod($, m.toggle)} />
+              </Box>
+            ) : null}
+          </Box>
+        ) : null}
         {isOpen && m.commands.length ? (
           <Box flexDirection="column" paddingLeft={2}>
             {m.commands.map(c => (
@@ -807,8 +839,10 @@ function drawProfiles($: EngineInterface, ui: any, rows: Map<string, ConfigRow>,
 async function applyProfile($: EngineInterface, id: string) {
   const p = PROFILES.find(x => x.id === id)
   if (!p) return
-  if (SYNTHETIC || (await configRows($), SYNTHETIC)) return writeOptions($, Object.fromEntries(p.set))
-  await $.store.set(STORE_PENDING, p.set.map(([k, v]) => [k, v]))
+  await $.store.set(STORE_ACTIVE, p.id)
+  const values = profileSet(p, await trustedList($))
+  if (SYNTHETIC || (await configRows($), SYNTHETIC)) return writeOptions($, Object.fromEntries(values))
+  await $.store.set(STORE_PENDING, values.map(([k, v]) => [k, v]))
   $.ui.toast(t(`Profil „${tx(p.label)}“ wird gesetzt …`, `Applying profile "${tx(p.label)}" …`))
   await continueProfile($)
 }
@@ -832,6 +866,104 @@ async function continueProfile($: EngineInterface) {
     const r = await $.config.set({ key: PREFIX + k, value: v }).catch(() => null)
     if (r && r.deny !== undefined) $.ui.toast(`${k}: ${r.deny}`)
   }
+}
+
+// ---------------------------------------------------------------- Profiles for new mods, trust, compatibility
+
+/** A profile's switches, with imported mods nobody trusted yet kept off. */
+function profileSet(p: (typeof PROFILES)[number], trusted: string[]): Array<[string, boolean]> {
+  return p.set.map(([k, v]) => [k, v && (!CATALOG.find(m => m.toggle === k)?.imported || trusted.includes(k))])
+}
+
+async function trustedList($: EngineInterface): Promise<string[]> {
+  const v = await $.store.get(STORE_TRUSTED).catch(() => null)
+  return Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : []
+}
+
+async function trustMod($: EngineInterface, toggle: string) {
+  const list = await trustedList($)
+  if (!list.includes(toggle)) await $.store.set(STORE_TRUSTED, [...list, toggle])
+  // From now on the active profile decides about it, as about every other mod.
+  const activeId = await $.store.get(STORE_ACTIVE).catch(() => null)
+  const p = PROFILES.find(x => x.id === activeId)
+  const want = p?.set.find(([k]) => k === toggle)?.[1]
+  if (want !== undefined) await setMany($, { [toggle]: want })
+  else redraw($)
+}
+
+/** Switching an imported mod on by hand counts as trusting it. */
+async function switchMod($: EngineInterface, toggle: string, key: string, value: boolean) {
+  if (value && CATALOG.find(m => m.toggle === toggle)?.imported) {
+    const list = await trustedList($)
+    if (!list.includes(toggle)) await $.store.set(STORE_TRUSTED, [...list, toggle])
+  }
+  await set($, key, value)
+}
+
+/** Several switches at once: one write where the host lists no rows, else the reload chain. */
+async function setMany($: EngineInterface, values: Record<string, boolean>) {
+  if (SYNTHETIC || (await configRows($), SYNTHETIC)) return writeOptions($, values)
+  await $.store.set(STORE_PENDING, Object.entries(values))
+  await continueProfile($)
+}
+
+/**
+ * Mods that are new since the last session take the switch the active profile gives them, so a
+ * profile keeps meaning what it says when the box grows. Imported mods wait for trust.
+ */
+async function adoptNewMods($: EngineInterface) {
+  const all = CATALOG.map(m => m.toggle)
+  const seen = await $.store.get(STORE_SEEN).catch(() => null)
+  await $.store.set(STORE_SEEN, all)
+  if (!Array.isArray(seen)) return
+  const added = all.filter(x => !seen.includes(x))
+  if (!added.length) return
+  await update($, fresh, () => added)
+  const activeId = await $.store.get(STORE_ACTIVE).catch(() => null)
+  const p = PROFILES.find(x => x.id === activeId)
+  if (!p) return
+  const rows = await configRows($)
+  const want = profileSet(p, await trustedList($)).filter(([k, v]) => added.includes(k) && (rows.get(k)?.value === true) !== v)
+  if (!want.length) return
+  $.ui.toast(t(`Neu in der Mod Box: ${added.length}. Profil „${tx(p.label)}“ angewandt.`, `New in the Mod Box: ${added.length}. Profile "${tx(p.label)}" applied.`))
+  await setMany($, Object.fromEntries(want))
+}
+
+type Here = { os: string; surface: string; missing: string[] }
+
+async function here($: EngineInterface, surface: string): Promise<Here> {
+  const isWin = (await $.env.get('OS').catch(() => undefined)) === 'Windows_NT'
+  const home = await $.env.get('HOME').catch(() => undefined)
+  const os = isWin ? 'windows' : home?.startsWith('/Users/') ? 'mac' : 'linux'
+  const env = (await read($, envChecks)) ?? []
+  const id: Record<string, string> = { node: 'node', git: 'git', gh: 'gh', sign: 'signScript', bash: 'bash' }
+  const missing = env.filter(c => c.ok === false && id[c.id]).map(c => id[c.id]!)
+  if (!isWin) missing.push('powershell')
+  return { os, surface, missing }
+}
+
+const SURFACE_NAME: Record<string, [string, string]> = { terminal: ['Terminal', 'terminal'], desktop: ['Desktop-App', 'desktop app'], vscode: ['VS Code', 'VS Code'], mobile: ['Mobil', 'mobile'] }
+const OS_NAME: Record<string, string> = { windows: 'Windows', mac: 'macOS', linux: 'Linux' }
+const NEED_NAME: Record<string, [string, string]> = { git: ['git', 'git'], gh: ['gh (angemeldet)', 'gh (signed in)'], node: ['Node.js', 'Node.js'], bash: ['Git-Bash', 'Git Bash'], powershell: ['PowerShell', 'PowerShell'], signScript: ['ein Signierskript', 'a signing script'] }
+const name2 = (pair: [string, string] | undefined, fallback: string) => (pair ? t(pair[0], pair[1]) : fallback)
+
+export function compatText(c: CatalogMod['compat']): string {
+  const surfaces = c.surfaces.length === 4 ? t('überall', 'everywhere') : c.surfaces.map(x => name2(SURFACE_NAME[x], x)).join(', ')
+  const os = c.os.length === 3 ? '' : ' · ' + c.os.map(x => OS_NAME[x] ?? x).join(', ')
+  const needs = c.needs.length ? ' · ' + t('braucht', 'needs') + ' ' + c.needs.map(x => name2(NEED_NAME[x], x)).join(', ') : ''
+  return surfaces + os + needs
+}
+
+/** Why a mod would not (fully) run here, each reason as German and English text. */
+export function compatIssues(c: CatalogMod['compat'], h: Here): Array<{ de: string; en: string }> {
+  const out: Array<{ de: string; en: string }> = []
+  const list = (xs: string[], names: Record<string, [string, string]>, i: 0 | 1) => xs.map(x => names[x]?.[i] ?? x).join(', ')
+  if (h.surface && !c.surfaces.includes(h.surface)) out.push({ de: 'nur ' + list(c.surfaces, SURFACE_NAME, 0), en: list(c.surfaces, SURFACE_NAME, 1) + ' only' })
+  const osNames = c.os.map(x => OS_NAME[x] ?? x).join(', ')
+  if (!c.os.includes(h.os)) out.push({ de: 'nur ' + osNames, en: osNames + ' only' })
+  const lacking = c.needs.filter(x => h.missing.includes(x))
+  if (lacking.length) out.push({ de: 'braucht ' + list(lacking, NEED_NAME, 0), en: 'needs ' + list(lacking, NEED_NAME, 1) })
+  return out
 }
 
 // ---------------------------------------------------------------- Sources
@@ -1377,7 +1509,7 @@ async function runEnvChecks($: EngineInterface) {
     text: gh.exitCode === 0 ? t('gh angemeldet (CI-Wächter bereit)', 'gh signed in (CI Watch ready)') : /not found|ENOENT|cannot/i.test(gh.stderr) ? t('gh fehlt: der CI-Wächter kann nichts prüfen.', 'gh missing: CI Watch cannot check anything.') : t('gh nicht angemeldet: gh auth login', 'gh not signed in: gh auth login'),
   })
   if (isWin) {
-    const script = `${home}/.claude/skills/sign-binary/sign.ps1`
+    const script = String(opts.signScript ?? '').trim().replace(/\\/g, '/') || `${home}/.claude/skills/sign-binary/sign.ps1`
     const hasScript = await $.fs.exists(script).catch(() => false)
     checks.push({ id: 'sign', ok: hasScript, text: hasScript ? t('Signierskript vorhanden', 'sign script present') : t(`Signierskript fehlt: ${script}`, `sign script missing: ${script}`) })
     const pf = ((await $.env.get('ProgramFiles')) ?? 'C:/Program Files').replace(/\\/g, '/')

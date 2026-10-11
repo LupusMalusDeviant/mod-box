@@ -121,7 +121,7 @@ describe('CI watch', () => {
 
   test('summary', () => {
     const w = { sha: 'abcdef123', branch: 'main', cwd: '/', startedAt: 1_000, endedAt: 66_000, phase: 'gruen' as const, runs: [{ id: 1, name: 'B', status: 'completed', conclusion: 'success', url: '' }], failed: null, message: '', isDismissed: false }
-    expect(summary(w)).toBe('main@abcdef1: grün, 1 Lauf/Läufe in 1m05s')
+    expect(summary(w)).toBe('main@abcdef1: green, 1 run(s) in 1m05s')
   })
 })
 
@@ -249,10 +249,10 @@ describe('CI watch: pull requests', () => {
       [0, 'Vercel', 'completed', 'failure'],
       [124, 'CI / lint', 'in_progress', 'pending'],
     ])
-    expect(mergeText({ state: 'OPEN', mergeStateStatus: 'CLEAN' })).toBe('bereit zum Mergen')
-    expect(mergeText({ state: 'OPEN', reviewDecision: 'REVIEW_REQUIRED', mergeStateStatus: 'BLOCKED' })).toBe('wartet auf Review')
-    expect(mergeText({ state: 'OPEN', isDraft: true })).toBe('noch Entwurf')
-    expect(mergeText({ state: 'MERGED' })).toBe('schon gemergt')
+    expect(mergeText({ state: 'OPEN', mergeStateStatus: 'CLEAN' })).toBe('ready to merge')
+    expect(mergeText({ state: 'OPEN', reviewDecision: 'REVIEW_REQUIRED', mergeStateStatus: 'BLOCKED' })).toBe('waiting for review')
+    expect(mergeText({ state: 'OPEN', isDraft: true })).toBe('still a draft')
+    expect(mergeText({ state: 'MERGED' })).toBe('already merged')
     expect(PR_URL.exec('Creating pull request\nhttps://github.com/o/r/pull/42\n')?.[1]).toBe('42')
     expect(PR_CREATE.test('gh pr create --fill')).toBe(true)
     expect(PR_CREATE.test('gh pr view 3')).toBe(false)

@@ -30,7 +30,7 @@ const PANE = 'mod-box-secret-allow'
 const MAX_BLOCKED = 20
 
 // Display language and options (module level: the pane and the checks read them).
-let lang: 'de' | 'en' = 'de'
+let lang: 'de' | 'en' = 'en'
 const t = (de: string, en: string) => (lang === 'en' ? en : de)
 let placeholders = true
 let isWindows = false
@@ -183,7 +183,7 @@ async function applyExceptions($: EngineInterface, hits: Hit[]): Promise<Hit[]> 
 
 export const register: Register = (on, options) => {
   const mode = options.mode === 'warn' ? 'warn' : 'block'
-  lang = options.language === 'en' ? 'en' : 'de'
+  lang = options.language === 'de' ? 'de' : 'en'
   placeholders = options.placeholders !== 'off'
 
   on('session.start', {}, async ($, e, next) => {

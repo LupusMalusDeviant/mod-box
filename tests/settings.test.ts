@@ -1,6 +1,6 @@
 import { describe, expect, mock, test } from 'claude-code/testing'
 
-import { failedLinks, findPrefix } from '../mods/settings/hooks/register'
+import { compatIssues, failedLinks, findPrefix } from '../mods/settings/hooks/register'
 
 // The tests read the German texts; the box itself defaults to English.
 const DE = { options: { language: 'de' } }
@@ -72,11 +72,11 @@ describe('Settings window', () => {
 })
 
 describe('Profiles and sources', () => {
-  test('profile "lean" sets only the differing switches', DE, async ($: any, on: any) => {
+  test('profile "guards only" sets only the differing switches', DE, async ($: any, on: any) => {
     const sets = engine(on)
     const ui = await pane($, 'terminal')
     await ui.press({ key: 'tab-profiles' })
-    await ui.press({ key: 'prof-b-lean' })
+    await ui.press({ key: 'prof-b-guards' })
     expect(sets).toEqual([
       { key: 'mod-box.savvyProgress', value: false },
       { key: 'mod-box.filetree', value: false },
@@ -230,5 +230,14 @@ describe('Without /config rows (desktop app)', () => {
     const saved = JSON.parse(file)
     expect(saved.model).toBe('opus')
     expect(saved.pluginConfigs['mod-box@inline'].options).toEqual({ filetreeGlyphs: 'nerd', headsUp: true })
+  })
+})
+
+describe('Compatibility', () => {
+  test('names what is missing here', () => {
+    const c = { surfaces: ['terminal', 'desktop'], os: ['windows'], needs: ['gh', 'git'] }
+    expect(compatIssues(c, { os: 'windows', surface: 'desktop', missing: [] })).toEqual([])
+    const issues = compatIssues(c, { os: 'linux', surface: 'mobile', missing: ['gh'] }).map(x => x.en)
+    expect(issues).toEqual(['terminal, desktop app only', 'Windows only', 'needs gh (signed in)'])
   })
 })

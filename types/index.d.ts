@@ -348,6 +348,7 @@ declare module 'claude-code' {
       mb_open: string[]
       mb_report: ImportReport | null
       mb_expanded: string[]
+      mb_fresh: string[]
       mb_updates: UpdateInfo[] | null
       mb_usage: Record<string, ModUsage>
       mb_errors: HookError[]

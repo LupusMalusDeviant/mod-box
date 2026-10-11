@@ -19,25 +19,21 @@ const busy = atom({ plugin: 'mod-box', key: 'ho_busy' } as const, false)
 const FILE = '.claude/handoff.local.md'
 
 // Display language (options.language: de | en)
-let lang: 'de' | 'en' = 'de'
+let lang: 'de' | 'en' = 'en'
 const t = (de: string, en: string) => (lang === 'en' ? en : de)
 const PANE = 'handoff'
 const MAX_AGE_MS = 14 * 24 * 60 * 60_000
 const AUTO_BEFORE_COLD_MS = 6 * 60_000
 const AUTO_MIN_TOKENS = 40_000
 
-export function handoffPrompt(lang: string): string {
-  const de = lang !== 'en'
-  return de
-    ? 'Schreibe eine Übergabe-Notiz für eine neue Claude-Code-Sitzung, die diese Arbeit ohne den bisherigen Verlauf fortsetzt. ' +
-        'Markdown, knapp, mit diesen Abschnitten: "## Ziel" (worum es geht und warum), "## Erledigt" (mit Dateipfaden), ' +
-        '"## Stand" (was gerade halb fertig ist, was zuletzt passierte), "## Offen / nächste Schritte" (konkret, in Reihenfolge), ' +
-        '"## Wichtig zu wissen" (Entscheidungen, Fallstricke, Befehle, Vorlieben des Nutzers). ' +
-        'Keine Einleitung, beginne mit der ersten Überschrift. Nichts erfinden: was unklar ist, als offen markieren.'
-    : 'Write a handoff note for a new Claude Code session that continues this work without the prior transcript. ' +
-        'Markdown, concise, with these sections: "## Goal", "## Done" (with file paths), "## Current state", ' +
-        '"## Open / next steps" (concrete, in order), "## Good to know" (decisions, pitfalls, commands, user preferences). ' +
-        'No preamble, start with the first heading. Do not invent: mark what is unclear as open.'
+// Instructions to Claude are English; the note is for the next Claude session, so it is English too.
+export function handoffPrompt(_lang: string): string {
+  return (
+    'Write a handoff note for a new Claude Code session that continues this work without the prior transcript. ' +
+    'Markdown, concise, with these sections: "## Goal", "## Done" (with file paths), "## Current state", ' +
+    '"## Open / next steps" (concrete, in order), "## Good to know" (decisions, pitfalls, commands, user preferences). ' +
+    'No preamble, start with the first heading. Do not invent: mark what is unclear as open.'
+  )
 }
 
 export const register: Register = (on, options) => {
@@ -51,7 +47,7 @@ export const register: Register = (on, options) => {
     return rest
   })
 
-  lang = options.language === 'en' ? 'en' : 'de'
+  lang = options.language === 'de' ? 'de' : 'en'
   const isAuto = options.auto === 'on'
   const ttlMs = (Number(options.ttlMinutes) || 60) * 60_000
   let lastAt = 0
@@ -140,7 +136,7 @@ async function write($: EngineInterface, lang: string, isAuto: boolean): Promise
     const cwd = await $.session.cwd()
     const now = await $.clock.now()
     const path = `${cwd}/${FILE}`
-    const body = `<!-- Übergabe-Notiz der Mod-Box, ${new Date(now).toISOString()}${isAuto ? t(', automatisch vor Cache-Ablauf', ', automatic before cache expiry') : ''} -->\n\n${r.text.trim()}\n`
+    const body = `<!-- Mod Box handoff note, ${new Date(now).toISOString()}${isAuto ? ', written automatically before the cache expired' : ''} -->\n\n${r.text.trim()}\n`
     await $.fs.write(path, body)
     await update($, text, () => body)
     await update($, note, () => ({ path, at: now, preview: preview(body), kind: 'geschrieben', isDismissed: false }))
@@ -185,7 +181,7 @@ export async function band($: EngineInterface, e: any): Promise<BandPart | null>
         label={t('Weitermachen', 'Continue')}
         plain
         onPress={async () => {
-          await $.prompt.fill({ text: t(`Lies ${FILE} (die Übergabe der letzten Sitzung) und mach dort weiter, wo sie aufgehört hat. Fass zuerst in zwei Sätzen zusammen, wo wir stehen.`, `Read ${FILE} (the last session's handoff) and continue where it stopped. First sum up in two sentences where we stand.`), mode: 'replace' })
+          await $.prompt.fill({ text: `Read ${FILE} (the last session's handoff) and continue where it stopped. First sum up in two sentences where we stand.${lang === 'en' ? '' : ' Answer in German.'}`, mode: 'replace' })
           await update($, note, x => (x ? { ...x, isDismissed: true } : x))
         }}
       />,

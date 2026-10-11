@@ -28,7 +28,7 @@ const tick = atom({ plugin: 'mod-box', key: 'cm_tick' } as const, 0)
 const TICK_MS = 15_000
 
 // Display language and options (module level: band() runs from the band manager).
-let lang: 'de' | 'en' = 'de'
+let lang: 'de' | 'en' = 'en'
 const t = (de: string, en: string) => (lang === 'en' ? en : de)
 let ttlMs = 60 * 60_000
 let showLimits = true
@@ -48,7 +48,7 @@ export const register: Register = (on, options) => {
   ttlMs = (Number(options.ttlMinutes) || 60) * 60_000
   showLimits = options.limits !== 'off'
   keepWarmMs = (Number(options.keepWarmHours) || 3) * 60 * 60_000
-  lang = options.language === 'en' ? 'en' : 'de'
+  lang = options.language === 'de' ? 'de' : 'en'
 
   // Cache Tax runs inside: the guard (stop|warn|off) and auto keep-warm after a paid cold write.
   const guard = options.guard === 'warn' ? 'warn' : options.guard === 'off' ? 'off' : 'refuse'

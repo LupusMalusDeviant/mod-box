@@ -78,6 +78,7 @@ declare module 'claude-code' {
       open: string[]
       report: ImportReport | null
       expanded: string[]
+      fresh: string[]
       updates: UpdateInfo[] | null
       usage: Record<string, ModUsage>
       errors: HookError[]

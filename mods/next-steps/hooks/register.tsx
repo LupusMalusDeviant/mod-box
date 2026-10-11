@@ -21,10 +21,10 @@ const steps = atom({ plugin: 'mod-box', key: 'ns_steps' } as const, null as Next
 const active = atom({ plugin: 'mod-box', key: 'ns_active' } as const, false)
 
 // Mod Box: options.language ('de' | 'en') sets the language of the suggestions.
-let language = 'de'
+let language = 'en'
 
 export const register: Register = (on, options) => {
-  language = String(options?.language || 'de')
+  language = String(options?.language || 'en')
   // The turn a suggestion may still be shown for. A submit or a new turn moves it on.
   let latest = ''
   let submits = 0

@@ -17,7 +17,7 @@ const note = atom({ plugin: 'mod-box', key: 'hu_note' } as const, null as HeadsU
 const MODEL = 'haiku'
 
 // Display language (options.language: de | en)
-let lang: 'de' | 'en' = 'de'
+let lang: 'de' | 'en' = 'en'
 const t = (de: string, en: string) => (lang === 'en' ? en : de)
 const MIN_ANSWER = 400 // short answers hide nothing
 const MAX_KEPT = 240
@@ -34,7 +34,7 @@ export const register: Register = (on, options) => {
   })
 
   const language = String(options?.language || 'de')
-  lang = language === 'en' ? 'en' : 'de'
+  lang = language === 'de' ? 'de' : 'en'
   let latest = ''
 
   on('prompt.submit', {}, async ($, e, next) => {
@@ -112,7 +112,7 @@ export async function band($: EngineInterface, e: any): Promise<BandPart | null>
         label={t('Mehr dazu', 'Tell me more')}
         plain
         onPress={async () => {
-          await $.prompt.fill({ text: t(`Erklär mir den Hinweis genauer: ${n.text}`, `Explain this point in more detail: ${n.text}`), mode: 'replace' })
+          await $.prompt.fill({ text: `Explain this point in more detail: ${n.text}${lang === 'en' ? '' : ' Answer in German.'}`, mode: 'replace' })
           await update($, note, () => null)
         }}
       />,

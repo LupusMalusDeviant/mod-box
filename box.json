@@ -102,43 +102,31 @@
     "default": {
       "en": "Default",
       "de": "Standard",
-      "set": "defaults"
+      "rule": "defaults"
     },
     "lean": {
       "en": "Lean",
       "de": "Sparsam",
-      "set": {
-        "all": false,
-        "on": [
-          "blastRadius",
-          "secretGuard",
-          "cacheMeter",
-          "replayTheater",
-          "visibleCompact",
-          "ciWatch",
-          "signGuard"
+      "rule": {
+        "tokens": [
+          "none",
+          "optional"
         ]
       }
     },
     "guards": {
       "en": "Guards only",
       "de": "Nur Wächter",
-      "set": {
-        "all": false,
-        "on": [
-          "blastRadius",
-          "secretGuard",
-          "ciWatch",
-          "signGuard"
+      "rule": {
+        "group": [
+          "guards"
         ]
       }
     },
     "all": {
       "en": "Everything on",
       "de": "Alles an",
-      "set": {
-        "all": true
-      }
+      "rule": "all"
     }
   },
   "mods": [
@@ -161,7 +149,23 @@
           "en": "open the window (also: profiles, sources, diag)",
           "de": "Fenster öffnen (auch: profiles, sources, diag)"
         }
-      ]
+      ],
+      "compat": {
+        "surfaces": [
+          "terminal",
+          "desktop",
+          "vscode"
+        ],
+        "os": [
+          "windows",
+          "mac",
+          "linux"
+        ],
+        "needs": [
+          "node",
+          "git"
+        ]
+      }
     },
     {
       "id": "blast-radius",
@@ -176,6 +180,24 @@
         "url": "https://github.com/anthropics/claude-code-playground",
         "path": "claude-code/mods/blast-radius",
         "license": "Apache-2.0"
+      },
+      "tokens": "none",
+      "compat": {
+        "surfaces": [
+          "terminal",
+          "desktop",
+          "vscode",
+          "mobile"
+        ],
+        "os": [
+          "windows",
+          "mac",
+          "linux"
+        ],
+        "needs": [
+          "bash",
+          "git"
+        ]
       }
     },
     {
@@ -248,7 +270,24 @@
           "en": "exceptions: last finds and both allow lists",
           "de": "Ausnahmen: letzte Funde und beide Listen"
         }
-      ]
+      ],
+      "tokens": "none",
+      "compat": {
+        "surfaces": [
+          "terminal",
+          "desktop",
+          "vscode",
+          "mobile"
+        ],
+        "os": [
+          "windows",
+          "mac",
+          "linux"
+        ],
+        "needs": [
+          "git"
+        ]
+      }
     },
     {
       "id": "ci-watch",
@@ -350,7 +389,25 @@
           "en": "stop watching",
           "de": "Beobachten beenden"
         }
-      ]
+      ],
+      "tokens": "none",
+      "compat": {
+        "surfaces": [
+          "terminal",
+          "desktop",
+          "vscode",
+          "mobile"
+        ],
+        "os": [
+          "windows",
+          "mac",
+          "linux"
+        ],
+        "needs": [
+          "gh",
+          "git"
+        ]
+      }
     },
     {
       "id": "sign-guard",
@@ -416,7 +473,23 @@
         "prefix": "sg",
         "contract": "mods/sign-guard/types/contract.d.ts"
       },
-      "band": true
+      "band": true,
+      "tokens": "none",
+      "compat": {
+        "surfaces": [
+          "terminal",
+          "desktop",
+          "vscode",
+          "mobile"
+        ],
+        "os": [
+          "windows"
+        ],
+        "needs": [
+          "powershell",
+          "signScript"
+        ]
+      }
     },
     {
       "id": "savvy-progress",
@@ -460,7 +533,22 @@
           "en": "agents panel",
           "de": "Agenten-Panel"
         }
-      ]
+      ],
+      "tokens": "none",
+      "compat": {
+        "surfaces": [
+          "terminal",
+          "desktop",
+          "vscode",
+          "mobile"
+        ],
+        "os": [
+          "windows",
+          "mac",
+          "linux"
+        ],
+        "needs": []
+      }
     },
     {
       "id": "filetree",
@@ -577,7 +665,22 @@
           "en": "open the file tree",
           "de": "Dateibaum öffnen"
         }
-      ]
+      ],
+      "tokens": "none",
+      "compat": {
+        "surfaces": [
+          "terminal",
+          "desktop"
+        ],
+        "os": [
+          "windows",
+          "mac",
+          "linux"
+        ],
+        "needs": [
+          "git"
+        ]
+      }
     },
     {
       "id": "replay-theater",
@@ -599,7 +702,22 @@
           "en": "step through the last turn's edits",
           "de": "Änderungen der letzten Runde durchblättern"
         }
-      ]
+      ],
+      "tokens": "none",
+      "compat": {
+        "surfaces": [
+          "terminal",
+          "desktop",
+          "vscode",
+          "mobile"
+        ],
+        "os": [
+          "windows",
+          "mac",
+          "linux"
+        ],
+        "needs": []
+      }
     },
     {
       "id": "next-steps",
@@ -624,6 +742,21 @@
         "url": "https://github.com/hamzafer/claude-code-mods",
         "path": "mods/next-steps",
         "license": "MIT"
+      },
+      "tokens": "always",
+      "compat": {
+        "surfaces": [
+          "terminal",
+          "desktop",
+          "vscode",
+          "mobile"
+        ],
+        "os": [
+          "windows",
+          "mac",
+          "linux"
+        ],
+        "needs": []
       }
     },
     {
@@ -760,7 +893,22 @@
           "en": "cache costs of this session",
           "de": "Cache-Kosten dieser Sitzung"
         }
-      ]
+      ],
+      "tokens": "optional",
+      "compat": {
+        "surfaces": [
+          "terminal",
+          "desktop",
+          "vscode",
+          "mobile"
+        ],
+        "os": [
+          "windows",
+          "mac",
+          "linux"
+        ],
+        "needs": []
+      }
     },
     {
       "id": "handoff",
@@ -812,7 +960,22 @@
           "en": "write the handoff note",
           "de": "Übergabe-Notiz schreiben"
         }
-      ]
+      ],
+      "tokens": "optional",
+      "compat": {
+        "surfaces": [
+          "terminal",
+          "desktop",
+          "vscode",
+          "mobile"
+        ],
+        "os": [
+          "windows",
+          "mac",
+          "linux"
+        ],
+        "needs": []
+      }
     },
     {
       "id": "visible-compact",
@@ -854,7 +1017,21 @@
           "en": "before/after of the last /compact",
           "de": "Vorher/Nachher des letzten /compact"
         }
-      ]
+      ],
+      "tokens": "none",
+      "compat": {
+        "surfaces": [
+          "terminal",
+          "desktop",
+          "vscode"
+        ],
+        "os": [
+          "windows",
+          "mac",
+          "linux"
+        ],
+        "needs": []
+      }
     },
     {
       "id": "heads-up",
@@ -875,7 +1052,22 @@
         "prefix": "hu",
         "contract": "mods/heads-up/types/contract.d.ts"
       },
-      "band": true
+      "band": true,
+      "tokens": "always",
+      "compat": {
+        "surfaces": [
+          "terminal",
+          "desktop",
+          "vscode",
+          "mobile"
+        ],
+        "os": [
+          "windows",
+          "mac",
+          "linux"
+        ],
+        "needs": []
+      }
     },
     {
       "id": "catch-me-up",
@@ -901,7 +1093,22 @@
           "en": "live summary pane",
           "de": "Seitenleiste mit Zusammenfassung"
         }
-      ]
+      ],
+      "tokens": "always",
+      "compat": {
+        "surfaces": [
+          "terminal",
+          "desktop",
+          "vscode",
+          "mobile"
+        ],
+        "os": [
+          "windows",
+          "mac",
+          "linux"
+        ],
+        "needs": []
+      }
     }
   ]
 }

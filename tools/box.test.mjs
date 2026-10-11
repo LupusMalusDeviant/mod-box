@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
-import { errorsOf, parseLink, prefixMembers, rewrite } from './box.mjs'
+import { analyze, errorsOf, parseLink, prefixMembers, rewrite, ruleSays } from './box.mjs'
 
 test('parseLink: short form, GitHub tree, other git URLs', () => {
   assert.deepEqual(parseLink('hamzafer/claude-code-mods'), { clone: 'https://github.com/hamzafer/claude-code-mods.git', ref: null, sub: '' })
@@ -94,4 +94,30 @@ test('mergeText: Windows line endings do not count as a difference', () => {
   const r = mergeText('a\r\nb\r\nc\r\n', 'a\nb\nc\n', 'a\nb\nC\n')
   assert.equal(r.conflicts, 0)
   assert.equal(r.text, 'a\nb\nC\n')
+})
+
+test('ruleSays: profiles as rules reach new mods too', () => {
+  const guard = { toggle: 'newGuard', group: 'guards', tokens: 'none', default: false }
+  const chatty = { toggle: 'chatty', group: 'watchers', tokens: 'always', default: true }
+  assert.equal(ruleSays('defaults', guard), false)
+  assert.equal(ruleSays('defaults', chatty), true)
+  assert.equal(ruleSays('all', guard), true)
+  assert.equal(ruleSays({ group: ['guards'] }, guard), true)
+  assert.equal(ruleSays({ group: ['guards'] }, chatty), false)
+  assert.equal(ruleSays({ tokens: ['none', 'optional'] }, chatty), false)
+  assert.equal(ruleSays({ all: false, on: ['chatty'] }, chatty), true)
+})
+
+test('analyze: a first guess at group, tokens, commands and where it runs', () => {
+  const guard = analyze("on('tool.call', {}, async ($, e, next) => ({ deny: 'no' })); await $.process.run(['gh', 'pr']); $.command.register({ name: 'guardme' })")
+  assert.equal(guard.group, 'guards')
+  assert.equal(guard.tokens, 'none')
+  assert.deepEqual(guard.commands, ['/guardme'])
+  assert.deepEqual(guard.compat.needs, ['gh'])
+  const pane = analyze("on('ui.render', { component: 'Pane' }, x); const { Box, Raster } = $.ui.resolve(e)")
+  assert.equal(pane.group, 'display')
+  assert.deepEqual(pane.compat.surfaces, ['terminal'])
+  const win = analyze("await $.process.run(['powershell', '-c']); await $.model.complete({})")
+  assert.deepEqual(win.compat.os, ['windows'])
+  assert.equal(win.tokens, 'always')
 })

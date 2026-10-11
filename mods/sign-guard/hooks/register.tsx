@@ -26,7 +26,7 @@ let scriptOption = ''
 let subject = ''
 
 // Display language (options.language: de | en)
-let lang: 'de' | 'en' = 'de'
+let lang: 'de' | 'en' = 'en'
 const t = (de: string, en: string) => (lang === 'en' ? en : de)
 
 export const BUILD =
@@ -47,7 +47,7 @@ export const register: Register = (on, options) => {
   const scriptOpt = String(options.script ?? '').trim()
   scriptOption = scriptOpt
   subject = String(options.subject ?? '').trim()
-  lang = options.language === 'en' ? 'en' : 'de'
+  lang = options.language === 'de' ? 'de' : 'en'
 
   on('tool.call', { tool: 'Bash' }, async ($, e, next) => {
     const cmd = String(e.command ?? '')

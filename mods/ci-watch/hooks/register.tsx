@@ -27,7 +27,7 @@ let withSound = false
 export const PR_CREATE = /(?:^|[;&|(]\s*)gh\s+pr\s+create\b/
 export const PR_URL = /https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/pull\/(\d+)/
 // Display language (options.language: de | en)
-let lang: 'de' | 'en' = 'de'
+let lang: 'de' | 'en' = 'en'
 const t = (de: string, en: string) => (lang === 'en' ? en : de)
 let timer: Timer | null = null
 
@@ -233,7 +233,7 @@ export const register: Register = (on, options) => {
   intervalMs = Math.max(5, Number(options.intervalSec) || 20) * 1000
   onRed = String(options.onRed || 'both')
   withSound = options.sound === 'on'
-  lang = options.language === 'en' ? 'en' : 'de'
+  lang = options.language === 'de' ? 'de' : 'en'
 
   on('session.start', {}, async ($, e, next) => {
     const r = await next(e)
@@ -375,27 +375,19 @@ function fmt(ms: number): string {
   return s >= 60 ? `${Math.floor(s / 60)}m${String(s % 60).padStart(2, '0')}s` : `${s}s`
 }
 
+// The request Claude gets is English; only the answer follows the language setting.
 export function analyse(w: CiWatch, f: { id: number; name: string; url: string }): string {
   const what = w.pr ? `PR #${w.pr.number} (${w.pr.url})` : `${w.branch}@${w.sha.slice(0, 7)}`
+  const answerIn = lang === 'en' ? '' : ' Answer in German.'
   if (!f.id) {
     // A check outside GitHub Actions: no log through gh, only its link.
-    return lang === 'en'
-      ? `CI is red for ${what}: check "${f.name}" (${f.url}) failed; it does not run in GitHub Actions. Open its details, name the cause and whether it lies in the code, in the setup or in something external, then propose the fix before anything else happens.`
-      : `Die CI ist rot für ${what}: Der Check "${f.name}" (${f.url}) ist gescheitert; er läuft nicht in GitHub Actions. Sieh dir seine Details an, benenne die Ursache und ob sie am Code, an der Vorrichtung oder an etwas Fremdem liegt, und schlag die Korrektur vor, bevor irgendetwas anderes passiert.`
-  }
-  if (lang === 'en') {
-    return (
-      `CI is red: run "${f.name}" for ${w.branch}@${w.sha.slice(0, 7)} (${f.url}). ` +
-      `Read the logs of the failed step (gh run view ${f.id} --log-failed), name the cause ` +
-      'and say whether it lies in the code, in the fixture or in something external. If external: should the test withstand it? ' +
-      'Then propose the fix, before anything else happens.'
-    )
+    return `CI is red for ${what}: check "${f.name}" (${f.url}) failed; it does not run in GitHub Actions. Open its details, name the cause and whether it lies in the code, in the setup or in something external, then propose the fix before anything else happens.${answerIn}`
   }
   return (
-    `Die CI ist rot: Lauf "${f.name}" für ${w.branch}@${w.sha.slice(0, 7)} (${f.url}). ` +
-    `Lies die Protokolle des fehlgeschlagenen Schritts (gh run view ${f.id} --log-failed), benenne die Ursache ` +
-    'und sag, ob sie am Code liegt, an der Vorrichtung oder an etwas Fremdem. Ist sie fremd: sollte der Test das aushalten? ' +
-    'Schlag dann die Korrektur vor, bevor irgendetwas anderes passiert.'
+    `CI is red: run "${f.name}" for ${w.branch}@${w.sha.slice(0, 7)} (${f.url}). ` +
+    `Read the logs of the failed step (gh run view ${f.id} --log-failed), name the cause ` +
+    'and say whether it lies in the code, in the fixture or in something external. If external: should the test withstand it? ' +
+    `Then propose the fix, before anything else happens.${answerIn}`
   )
 }
 

@@ -21,7 +21,7 @@ Answer `y` to add the marketplace, then pick a scope. To try it from a clone wit
 **`/mod-box`** opens the window. `/mod-box profiles`, `sources` and `diag` open it on a given tab. The window speaks English by default, or German with the `language` setting.
 
 - **Mods**: the mods as cards, one per group. ● means a mod is on, ○ means off; click a mod to switch it. ⚙ opens its description, its token cost and its options. The window has two columns when it is wide enough.
-- **Profiles**: set all switches at once: *Default*, *Lean* (nothing that costs tokens), *Guards only*, *Everything on*.
+- **Profiles**: set all switches at once: *Default*, *Lean* (nothing that always costs tokens), *Guards only*, *Everything on*. Profiles are rules, not lists (see [Profiles and new mods](#profiles-and-new-mods)).
 - **Sources**: connected Claude marketplaces show up here by themselves, and you can add your own git links (a marketplace, a plugin repo or a collection of mods, as `owner/repo` or a URL). The **Import** button fetches a mod with function hooks, rewrites it for the box and validates it. The imported mod starts switched off, and if validation fails, the box stays as it was. **Updates of the originals** checks the copied mods against their upstream repos (see below).
 
 - **Health**: shows four things:
@@ -77,11 +77,37 @@ CI Watch, Sign Guard, Cache Meter, Handoff Note and Heads-up hand their displays
 - **Display**, per mod, chooses band, status line or off.
 - **Order** is set with arrows in the Mods tab.
 
+## Profiles and new mods
+
+Each mod in `box.json` carries attributes: `group` (guards, display, context, watchers), `tokens` (none, optional, always), `default`, and `compat` (see below). A profile is a rule over them: *Default* takes each mod's `default`, *Lean* takes `tokens: none | optional`, *Guards only* takes `group: guards`, *Everything on* takes all. So a new mod lands in the right profiles as soon as it is classified.
+
+The window remembers the profile you applied last. At the next session start it gives every mod that is new since then the switch that profile wants, and marks it **new**. If you have changed switches by hand since, the header says *(changed)*; new mods still follow the profile.
+
+**Foreign code waits for trust.** A mod imported from another repo starts switched off, and profiles leave it off until you trust it: **Trust** under its ⚙, or switch it on by hand once. Imported mods show 🔒 until then, 📦 after.
+
+## Where a mod runs
+
+Each mod declares where it works: the surfaces (terminal, desktop app, VS Code, mobile), the operating systems, and the programs it needs (`git`, `gh` signed in, Node.js, Git Bash, PowerShell, a signing script). The window compares that with the session you are in (surface, OS, and the environment check under **Health**) and puts a ⚠ with the reason next to a mod that would not, or not fully, run here. ⚙ shows the full list.
+
+## Adding mods with Claude
+
+The box ships the skill **mod-box-add**. Ask Claude something like *"add the mod from owner/repo to the Mod Box"*, and it:
+
+- checks the license;
+- imports the mod with `tools/box.mjs import`;
+- reads the code and classifies it: group, tokens, where it runs, what it needs, its commands (`tools/box.mjs analyze <id>` gives a first guess to start from);
+- writes the texts in English and German;
+- marks the changed files and adds the credits;
+- runs build, validation and tests;
+- reports back in the language set in the box.
+
+All instructions the box gives Claude (the skill, the prompts of the mods) are English. Only the language Claude answers in follows the setting.
+
 ## How the box is built
 
 - **`box.json`** is the single source: mods, switches, options (English, with `_de` translations), groups, state prefixes and profiles.
 - **`node tools/box.mjs build`** generates `hooks/register.ts`, the type contracts, the `userConfig` in `.claude-plugin/plugin.json` and the window's catalog. Don't edit those by hand.
-- **`tools/box.mjs`** also has `catalog`, `import`, `remove`, `validate`, `updates`, `diff <id>`, `update <id>` and `release` (build, validate, raise the version). The window calls exactly these.
+- **`tools/box.mjs`** also has `catalog`, `import`, `analyze <id|dir>`, `remove`, `validate`, `updates`, `diff <id>`, `update <id>` and `release` (build, validate, raise the version). The window calls exactly these.
 
 An imported mod is rewritten so the box can drive it like the others:
 
