@@ -4,7 +4,7 @@
 // options with a secret, profiles, update with a diff, adopt, uninstall. Needs Claude Code on this
 // machine; nothing touches your real profile.
 import assert from 'node:assert/strict'
-import { execFileSync } from 'node:child_process'
+import { execFileSync, execSync } from 'node:child_process'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
@@ -36,7 +36,16 @@ function findExe() {
     if (fs.existsSync(e)) found.push([v, e])
   }
   found.sort((a, b) => a[0].localeCompare(b[0], undefined, { numeric: true }))
-  return found.pop()?.[1] ?? 'claude'
+  if (found.length) return found.pop()[1]
+  // npm install -g (as in CI): the binary inside the package, not the .cmd shim
+  try {
+    const root = execSync('npm root -g', { encoding: 'utf8' }).trim()
+    const e = path.join(root, '@anthropic-ai', 'claude-code', 'bin', process.platform === 'win32' ? 'claude.exe' : 'claude')
+    if (fs.existsSync(e)) return e
+  } catch {
+    // no npm
+  }
+  return 'claude'
 }
 
 before(() => {

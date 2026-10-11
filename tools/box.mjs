@@ -13,7 +13,7 @@
 //       If the check fails, everything is rolled back.
 //   node tools/box.mjs remove <id>
 //       Removes an imported mod again.
-import { execFileSync } from 'node:child_process'
+import { execFileSync, execSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import crypto from 'node:crypto'
 import fs from 'node:fs'
@@ -1033,6 +1033,18 @@ function duplicates() {
 }
 
 // Find the newest Claude Code (the desktop app often ships a newer one than PATH).
+// Installed with npm: on Windows only a .cmd shim is on PATH, which Node does not start without a
+// shell, so the binary in the package is taken directly.
+function npmClaude() {
+  try {
+    const root = execSync('npm root -g', { encoding: 'utf8', timeout: 20_000, stdio: ['ignore', 'pipe', 'ignore'] }).trim()
+    const exe = path.join(root, '@anthropic-ai', 'claude-code', 'bin', process.platform === 'win32' ? 'claude.exe' : 'claude')
+    return fs.existsSync(exe) ? exe : null
+  } catch {
+    return null
+  }
+}
+
 function findClaude() {
   const found = []
   const appdata = process.env.APPDATA
@@ -1049,7 +1061,7 @@ function findClaude() {
       }
     }
   }
-  for (const exe of [path.join(os.homedir(), '.local', 'bin', process.platform === 'win32' ? 'claude.exe' : 'claude'), 'claude']) {
+  for (const exe of [path.join(os.homedir(), '.local', 'bin', process.platform === 'win32' ? 'claude.exe' : 'claude'), npmClaude(), 'claude'].filter(Boolean)) {
     try {
       const out = execFileSync(exe, ['--version'], { encoding: 'utf8', timeout: 20_000, stdio: ['ignore', 'pipe', 'ignore'] })
       const v = /(\d+\.\d+\.\d+)/.exec(out)?.[1]
