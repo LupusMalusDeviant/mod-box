@@ -1,0 +1,14 @@
+{
+  "name": "fx-required",
+  "version": "1.0.0",
+  "description": "A required option without default.",
+  "license": "MIT",
+  "userConfig": {
+    "endpoint": {
+      "type": "string",
+      "title": "Endpoint",
+      "description": "Required URL",
+      "required": true
+    }
+  }
+}

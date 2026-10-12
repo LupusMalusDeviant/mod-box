@@ -1,0 +1,8 @@
+{
+  "fx-lang": {
+    "command": "fx-language-server",
+    "extensionToLanguage": {
+      ".fx": "fx"
+    }
+  }
+}

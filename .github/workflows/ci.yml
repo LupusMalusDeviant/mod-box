@@ -40,3 +40,9 @@ jobs:
 
       - name: Tool tests
         run: node --test tools/box.test.mjs
+
+      - name: Lifecycle of foreign mods (inspect, import, rollback, update, remove)
+        run: node --test tools/lifecycle.test.mjs
+
+      - name: Native plugin management (isolated Claude Code profile)
+        run: node --test tools/native.test.mjs

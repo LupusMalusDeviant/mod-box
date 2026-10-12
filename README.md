@@ -52,7 +52,10 @@ The own mods and the forks with real changes are also available one by one, with
 
 ## Safety
 
-- Mods run inside your Claude Code session with the rights of a plugin: they can read and write files and run commands. Only import mods from sources you trust. Imported mods start switched off and stay off in every profile until you trust them.
+- Mods run inside your Claude Code session with the rights of a plugin: they can read and write files and run commands. Only add mods from sources you trust. Foreign mods, integrated or natively managed, start switched off and stay off in every profile until you trust them. Trust is your decision, not a sandbox.
+- Looking is safe: inspecting a plugin, the Sources tab and its list of parts read files only and run nothing.
+- Secrets stay in Claude Code's credential store. The box never shows, logs or reads back a sensitive option; the window only says whether it is set.
+- Validation is not an audit: `claude plugin validate` proves that a plugin loads, not that it is harmless.
 - Secret Guard and Blast Radius are guards, not guarantees.
 - The box writes to `~/.claude/settings.json` only where you ask it to: switches and options (in `pluginConfigs`, where the desktop app does not list plugin rows in `/config`) and the auto-compact window when you set it.
 - The box sends none of your data anywhere. It only fetches from git sources you add, and CI Watch talks to GitHub through your own `gh`. Mods that call a model (Next Steps, Heads-up, Catch Me Up, the handoff note, keep-warm) say so and show their token use.
@@ -153,8 +156,9 @@ Each mod declares where it works: the surfaces (terminal, desktop app, VS Code, 
 
 The box ships the skill **mod-box-add**. Ask Claude something like *"add the mod from owner/repo to the Mod Box"*, and it:
 
+- inspects the plugin and tells you its verdict (integrated, managed natively, blocked);
 - checks the license;
-- imports the mod with `tools/box.mjs import`;
+- imports the mod with `tools/box.mjs import`, or installs it natively with `tools/box.mjs native install`;
 - reads the code and classifies it: group, tokens, where it runs, what it needs, its commands (`tools/box.mjs analyze <id>` gives a first guess to start from);
 - writes the texts in English and German;
 - marks the changed files and adds the credits;
@@ -163,25 +167,40 @@ The box ships the skill **mod-box-add**. Ask Claude something like *"add the mod
 
 All instructions the box gives Claude (the skill, the prompts of the mods) are English. Only the language Claude answers in follows the setting.
 
+## Any plugin: integrated, managed natively, or not supported
+
+Not every plugin can live inside the box. Before anything changes, the box reads the plugin (nothing of it runs) and gives one of these verdicts, shown in the **Sources** tab:
+
+- ◆ **integrated**: plain function-hook mods are copied into the box. They get a box switch, the band, profiles and box options. All hook modules, media and data files come along; option types are kept; `$.store` keys get the mod's prefix.
+- 🔌 **managed natively**: plugins with skills, slash-command files, agents, MCP or LSP servers, classic hooks, dependencies, secrets or `${CLAUDE_PLUGIN_ROOT}` stay plugins of their own. The box installs them through Claude Code (`claude plugin install`), shows their parts and token cost, switches, configures, updates (with a diff) and removes them, all in the same window. Plugins without a marketplace go through the box's local marketplace. A plugin you installed yourself comes under the box with **Adopt**.
+- ⛔ **blocked**: a command or tool name is already taken, or there is no license. Integration waits until that is settled; the native way often still works.
+- ✗ **not supported**: for example a plugin whose hook module is missing.
+
+The setting **Import strategy** chooses between *automatic* (integrate where nothing is lost, otherwise native) and *always native*. Trust and profiles work the same way for both kinds: a natively managed plugin is installed switched off, profiles skip it until you trust it, and once trusted it follows the profile rules by its group and token use.
+
+The full matrix of what is handled how, before and after, the platform limits and the real plugins it was tested with are in [docs/capabilities.md](docs/capabilities.md).
+
 ## How the box is built
 
 - **`box.json`** is the single source: mods, switches, options (English, with `_de` translations), groups, state prefixes and profiles.
 - **`node tools/box.mjs build`** generates `hooks/register.ts`, the type contracts, the `userConfig` in `.claude-plugin/plugin.json` and the window's catalog. Don't edit those by hand.
-- **`tools/box.mjs`** also has `export <id>... --out <folder>` (the standalone plugins of claude-mods), `catalog`, `import`, `analyze <id|dir>`, `remove`, `validate`, `updates`, `diff <id>`, `update <id>` and `release` (build, validate, raise the version). The window calls exactly these.
+- **`tools/box.mjs`** also has `export <id>... --out <folder>` (the standalone plugins of claude-mods), `catalog`, `inspect`, `import`, `reimport`, `analyze <id|dir>`, `remove`, `validate`, `updates [<id>]`, `diff <id>`, `update <id>`, `native <action>` (list, details, options, set, install, adopt, trust, untrust, enable, disable, update, uninstall, profile) and `release` (build, validate, raise the version). The window calls exactly these.
 
 An imported mod is rewritten so the box can drive it like the others:
 
 - its `$.state` keys move under `mod-box` with a prefix;
 - each hook without a matcher gets `{}`, because a plugin may register an event only once without one;
-- `$.plugin.root` paths point into `mods/<id>/`;
+- `$.plugin.root` and `asset:` paths point into `mods/<id>/`, and the files outside `hooks/` come along;
+- literal `$.store` keys get the mod's prefix;
+- every hook module is registered, behind the one switch;
 - `mcp__<old>__` tool names become `mcp__mod-box__`;
-- its options become box options.
+- its options become box options with their types; required ones keep the mod off until they are set.
 
 After that, `claude plugin validate` runs, and a failure rolls everything back.
 
 ### Updates of the originals
 
-Each copied mod keeps a baseline in `mods/<id>/upstream.json`: the original repo, the commit our copy is based on, and the original files at that commit. **Check for updates** fetches the originals and compares them. **Apply** merges the changes in three ways per file (baseline, new original, our version) with `git merge-file`. The box's own rewrites are applied to both originals first, so they never count as a difference. If both sides changed the same lines, nothing is changed.
+Each copied mod keeps a baseline in `mods/<id>/upstream.json`: the original repo, the commit our copy is based on, and the original files at that commit. **Check for updates** fetches the originals and compares them. **Apply** merges the changes in three ways per file (baseline, new original, our version) with `git merge-file`. The box's own rewrites are applied to both originals first, so they never count as a difference. If both sides changed the same lines, nothing is changed. A mod imported from a plain folder uses a hash of the folder as its version. Binary files are compared by hash and taken whole, or reported as a conflict if they were changed here. A failed update is rolled back.
 
 ## Checking
 
@@ -200,6 +219,12 @@ claude plugin test .
 ```bash
 node --test tools/box.test.mjs
 ```
+
+```bash
+node --test tools/lifecycle.test.mjs tools/native.test.mjs
+```
+
+The last two run the whole lifecycle of foreign plugins against fixtures in `tools/fixtures/plugins`: a throwaway copy of the box, and a throwaway Claude Code profile (`CLAUDE_CONFIG_DIR`), so your own setup is never touched.
 
 ## Credits
 

@@ -1,0 +1,6 @@
+{
+  "name": "fx-store",
+  "version": "1.0.0",
+  "description": "Keeps values in $.store under common keys.",
+  "license": "MIT"
+}

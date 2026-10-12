@@ -74,6 +74,29 @@
           "off": "aus"
         }
       }
+    },
+    {
+      "key": "importStrategy",
+      "type": "string",
+      "title": "Import strategy",
+      "title_de": "Import-Strategie",
+      "description": "automatic: plain function-hook mods are integrated into the box (switch, band, profiles); everything else is managed natively, as a plugin of its own. always native: every plugin is managed natively; the box switches, configures, updates and removes it.",
+      "description_de": "automatisch: reine Function-Hook-Mods werden in die Box integriert (Schalter, Band, Profile); alles andere wird nativ verwaltet, als eigenes Plugin. immer nativ: jedes Plugin wird nativ verwaltet; die Box schaltet, konfiguriert, aktualisiert und entfernt es.",
+      "default": "auto",
+      "options": [
+        "auto",
+        "native"
+      ],
+      "labels": {
+        "de": {
+          "auto": "automatisch",
+          "native": "immer nativ"
+        },
+        "en": {
+          "auto": "automatic",
+          "native": "always native"
+        }
+      }
     }
   ],
   "groups": {

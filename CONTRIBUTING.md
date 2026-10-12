@@ -17,7 +17,7 @@ Thanks for helping. A few things keep the box working as one plugin.
 
 ## Adding a mod
 
-Ask Claude: *"add the mod from owner/repo to the Mod Box"*. The bundled skill `skills/mod-box-add/SKILL.md` describes every step: license check, import, classification, texts, the "Modified for mod-box" notice, credits, tests. Doing it by hand, follow the same steps.
+Ask Claude: *"add the mod from owner/repo to the Mod Box"*. The bundled skill `skills/mod-box-add/SKILL.md` describes every step: inspection and verdict, license check, import or native install, classification, texts, the "Modified for mod-box" notice, credits, tests. What the box can integrate and what it manages natively is in `docs/capabilities.md`. Doing it by hand, follow the same steps.
 
 ## Standalone plugins
 
@@ -39,4 +39,8 @@ claude plugin test .
 
 ```bash
 node --test tools/box.test.mjs
+```
+
+```bash
+node --test tools/lifecycle.test.mjs tools/native.test.mjs
 ```

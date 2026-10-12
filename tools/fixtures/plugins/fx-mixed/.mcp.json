@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "fx-server": {
+      "command": "node",
+      "args": [
+        "${CLAUDE_PLUGIN_ROOT}/server.js"
+      ]
+    }
+  }
+}
