@@ -295,6 +295,113 @@ export const CATALOG: CatalogMod[] = [
     }
   },
   {
+    "id": "package-guard",
+    "toggle": "packageGuard",
+    "default": true,
+    "band": true,
+    "title": {
+      "en": "Package Guard",
+      "de": "Paket-Wächter"
+    },
+    "description": {
+      "en": "Before Claude installs or runs a package (npm, pnpm, yarn, bun, npx, pip, uv, poetry, pipx, cargo), asks the public registry about it. Holds the command when the package does not exist (a made-up name), is under 14 days old, or looks like a well-known package and is young or thin (typosquatting). Allow in the band or with /pkg-allow.",
+      "de": "Bevor Claude ein Paket installiert oder ausführt (npm, pnpm, yarn, bun, npx, pip, uv, poetry, pipx, cargo), fragt er die öffentliche Registry. Hält den Befehl an, wenn es das Paket nicht gibt (erfundener Name), es jünger als 14 Tage ist oder einem bekannten Paket ähnelt und jung oder dünn ist (Typosquatting). Erlauben im Band oder mit /pkg-allow."
+    },
+    "group": "guards",
+    "costs": null,
+    "params": [
+      {
+        "key": "packageMode",
+        "type": "string",
+        "multiple": false,
+        "title": {
+          "en": "Package Guard: mode",
+          "de": "Paket-Wächter: Modus"
+        },
+        "description": {
+          "en": "block: hold the command until the package is allowed. warn: only warn and let it through.",
+          "de": "block: Befehl anhalten, bis das Paket erlaubt ist. warn: nur warnen und durchlassen."
+        },
+        "labels": {
+          "de": {
+            "block": "anhalten",
+            "warn": "nur warnen"
+          },
+          "en": {
+            "block": "hold",
+            "warn": "warn only"
+          }
+        },
+        "options": [
+          "block",
+          "warn"
+        ],
+        "default": "block"
+      },
+      {
+        "key": "packageGuardShow",
+        "type": "string",
+        "multiple": false,
+        "title": {
+          "en": "Package Guard: display",
+          "de": "Paket-Wächter: Anzeige"
+        },
+        "description": {
+          "en": "band: above the prompt. status: in the status line. off: not shown (the mod keeps working).",
+          "de": "Band: über dem Prompt. Statuszeile: in der Statuszeile. aus: nicht angezeigt (der Mod arbeitet weiter)."
+        },
+        "labels": {
+          "de": {
+            "band": "Band",
+            "status": "Statuszeile",
+            "off": "aus"
+          },
+          "en": {
+            "band": "band",
+            "status": "status line",
+            "off": "off"
+          }
+        },
+        "options": [
+          "band",
+          "status",
+          "off"
+        ],
+        "default": "band"
+      }
+    ],
+    "imported": false,
+    "upstream": "package-guard",
+    "source": null,
+    "commands": [
+      {
+        "name": "/pkg-allow [name]",
+        "text": {
+          "en": "allow a held package",
+          "de": "ein angehaltenes Paket erlauben"
+        }
+      }
+    ],
+    "tokens": "none",
+    "needs": [],
+    "compat": {
+      "surfaces": [
+        "terminal",
+        "desktop",
+        "vscode",
+        "mobile"
+      ],
+      "os": [
+        "windows",
+        "mac",
+        "linux"
+      ],
+      "needs": [
+        "node"
+      ]
+    }
+  },
+  {
     "id": "ci-watch",
     "toggle": "ciWatch",
     "default": true,
@@ -1630,6 +1737,10 @@ export const PROFILES: CatalogProfile[] = [
         true
       ],
       [
+        "packageGuard",
+        true
+      ],
+      [
         "ciWatch",
         true
       ],
@@ -1696,6 +1807,10 @@ export const PROFILES: CatalogProfile[] = [
       ],
       [
         "secretGuard",
+        true
+      ],
+      [
+        "packageGuard",
         true
       ],
       [
@@ -1768,6 +1883,10 @@ export const PROFILES: CatalogProfile[] = [
         true
       ],
       [
+        "packageGuard",
+        true
+      ],
+      [
         "ciWatch",
         true
       ],
@@ -1834,6 +1953,10 @@ export const PROFILES: CatalogProfile[] = [
       ],
       [
         "secretGuard",
+        true
+      ],
+      [
+        "packageGuard",
         true
       ],
       [

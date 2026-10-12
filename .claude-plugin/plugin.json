@@ -1,7 +1,7 @@
 {
   "name": "mod-box",
   "version": "0.4.1",
-  "description": "15 Claude Code mods in one plugin, each switchable on its own; /mod-box opens the window to switch, configure and import mods.",
+  "description": "16 Claude Code mods in one plugin, each switchable on its own; /mod-box opens the window to switch, configure and import mods.",
   "author": {
     "name": "Lupus Malus Deviant"
   },
@@ -64,6 +64,12 @@
       "type": "boolean",
       "title": "Secret Guard",
       "description": "Stops before Claude writes API keys, tokens, private keys or a non-ignored .env into files, git add or commits. Exceptions for test keys and example files: /secret-allow.",
+      "default": true
+    },
+    "packageGuard": {
+      "type": "boolean",
+      "title": "Package Guard",
+      "description": "Before Claude installs or runs a package (npm, pnpm, yarn, bun, npx, pip, uv, poetry, pipx, cargo), asks the public registry about it. Holds the command when the package does not exist (a made-up name), is under 14 days old, or looks like a well-known package and is young or thin (typosquatting). Allow in the band or with /pkg-allow.",
       "default": true
     },
     "ciWatch": {
@@ -163,6 +169,27 @@
       ],
       "title": "Secret Guard: let placeholders pass",
       "description": "on: values with EXAMPLE, DUMMY, FAKE, PLACEHOLDER, REDACTED, SAMPLE, xxxxxx … are no secret (this covers the AWS documentation keys)."
+    },
+    "packageMode": {
+      "type": "string",
+      "default": "block",
+      "options": [
+        "block",
+        "warn"
+      ],
+      "title": "Package Guard: mode",
+      "description": "block: hold the command until the package is allowed. warn: only warn and let it through."
+    },
+    "packageGuardShow": {
+      "type": "string",
+      "default": "band",
+      "options": [
+        "band",
+        "status",
+        "off"
+      ],
+      "title": "Package Guard: display",
+      "description": "band: above the prompt. status: in the status line. off: not shown (the mod keeps working)."
     },
     "ciInterval": {
       "type": "string",

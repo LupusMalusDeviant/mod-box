@@ -28,6 +28,12 @@ export const HOOKS: Record<string, string[]> = {
     "tool.call",
     "ui.render"
   ],
+  "packageGuard": [
+    "command.run",
+    "session.start",
+    "tool.call",
+    "ui.render"
+  ],
   "ciWatch": [
     "command.run",
     "session.start",

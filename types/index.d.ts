@@ -130,6 +130,25 @@ export type BlockedFind = {
   stopped: boolean
 }
 
+// ---- package-guard ----
+
+export type PackageInfo = {
+  exists?: boolean
+  created?: string | null
+  versions?: number
+  latest?: string | null
+  repo?: string | null
+  downloads?: number | null
+  error?: string
+}
+
+export type PackageHold = {
+  command: string
+  packages: Array<{ eco: 'npm' | 'pypi' | 'crates'; name: string; runs: boolean; reasons: string[]; repo: string | null }>
+  at: number
+  isDismissed: boolean
+}
+
 // ---- ci-watch ----
 
 export type CiRun = {
@@ -450,6 +469,10 @@ declare module 'claude-code' {
       sw_blocked: BlockedFind[]
       sw_project: string[]
       sw_global: string[]
+
+      // package-guard
+      pg_hold: PackageHold | null
+      pg_allowed: string[]
 
       // ci-watch
       ci_watch: CiWatch | null

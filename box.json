@@ -313,6 +313,76 @@
       }
     },
     {
+      "id": "package-guard",
+      "toggle": "packageGuard",
+      "title": "Package Guard",
+      "title_de": "Paket-Wächter",
+      "group": "guards",
+      "description": "Before Claude installs or runs a package (npm, pnpm, yarn, bun, npx, pip, uv, poetry, pipx, cargo), asks the public registry about it. Holds the command when the package does not exist (a made-up name), is under 14 days old, or looks like a well-known package and is young or thin (typosquatting). Allow in the band or with /pkg-allow.",
+      "description_de": "Bevor Claude ein Paket installiert oder ausführt (npm, pnpm, yarn, bun, npx, pip, uv, poetry, pipx, cargo), fragt er die öffentliche Registry. Hält den Befehl an, wenn es das Paket nicht gibt (erfundener Name), es jünger als 14 Tage ist oder einem bekannten Paket ähnelt und jung oder dünn ist (Typosquatting). Erlauben im Band oder mit /pkg-allow.",
+      "default": true,
+      "entry": "mods/package-guard/hooks/register.tsx",
+      "pass": {
+        "language": "language"
+      },
+      "options": [
+        {
+          "key": "packageMode",
+          "field": "mode",
+          "type": "string",
+          "default": "block",
+          "options": [
+            "block",
+            "warn"
+          ],
+          "title": "Package Guard: mode",
+          "title_de": "Paket-Wächter: Modus",
+          "description": "block: hold the command until the package is allowed. warn: only warn and let it through.",
+          "description_de": "block: Befehl anhalten, bis das Paket erlaubt ist. warn: nur warnen und durchlassen.",
+          "labels": {
+            "de": {
+              "block": "anhalten",
+              "warn": "nur warnen"
+            },
+            "en": {
+              "block": "hold",
+              "warn": "warn only"
+            }
+          }
+        }
+      ],
+      "state": {
+        "from": "package-guard",
+        "prefix": "pg",
+        "contract": "mods/package-guard/types/contract.d.ts"
+      },
+      "band": true,
+      "commands": [
+        {
+          "name": "/pkg-allow [name]",
+          "en": "allow a held package",
+          "de": "ein angehaltenes Paket erlauben"
+        }
+      ],
+      "tokens": "none",
+      "compat": {
+        "surfaces": [
+          "terminal",
+          "desktop",
+          "vscode",
+          "mobile"
+        ],
+        "os": [
+          "windows",
+          "mac",
+          "linux"
+        ],
+        "needs": [
+          "node"
+        ]
+      }
+    },
+    {
       "id": "ci-watch",
       "toggle": "ciWatch",
       "title": "CI Watch",
