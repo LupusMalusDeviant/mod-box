@@ -1,4 +1,4 @@
-// Modified for mod-box (https://github.com/LupusMalusDeviant/mod-box): state, matchers and paths rewritten for the single plugin.
+// Modified for mod-box (https://github.com/LupusMalusDeviant/mod-box): state, matchers and paths rewritten for the single plugin; a Features tab for the Codebase Map.
 // Original: https://github.com/data-goblin/claude-code-filetree (commit bf8de32).
 import { type BuiltinToolResults, type EngineInterface, type Register, type Timer, update } from 'claude-code'
 import { LINUX_LAUNCH, openCommand, openWithCommand } from './open'
