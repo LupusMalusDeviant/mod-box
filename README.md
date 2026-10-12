@@ -14,7 +14,7 @@ Claude Code mods are small hook modules that change how Claude Code behaves and 
 **Highlights**
 
 - **One window** (`/mod-box`): every mod as a card with a switch, its options, commands and token cost; profiles; sources; health.
-- **Guards**: Blast Radius holds destructive shell commands, Secret Guard stops keys and `.env` files before they reach a file or commit, CI Watch follows every push and pull request to the end.
+- **Guards**: Blast Radius holds destructive shell commands, Secret Guard stops keys and `.env` files before they reach a file or commit, Package Guard holds installs of made-up, brand-new or typosquatted packages, CI Watch follows every push and pull request to the end.
 - **Saves money and limits**: Cache Meter shows the warm cache and plan limits and stops a send to a cold cache with its price; Subagent Saver runs search subagents on Sonnet instead of your main model; auto-compact can kick in earlier.
 - **Grows with you**: import mods from any git repo or marketplace, or ask Claude to add one with the bundled `mod-box-add` skill. Profiles are rules, so new mods land in the right ones; foreign code stays off until you trust it.
 - **Knows where it runs**: each mod declares surfaces, systems and tools it needs; the window warns when one would not work here.
@@ -56,7 +56,7 @@ The own mods and the forks with real changes are also available one by one, with
 - Looking is safe: inspecting a plugin, the Sources tab and its list of parts read files only and run nothing.
 - Secrets stay in Claude Code's credential store. The box never shows, logs or reads back a sensitive option; the window only says whether it is set.
 - Validation is not an audit: `claude plugin validate` proves that a plugin loads, not that it is harmless.
-- Secret Guard and Blast Radius are guards, not guarantees.
+- Secret Guard, Package Guard and Blast Radius are guards, not guarantees.
 - The box writes to `~/.claude/settings.json` only where you ask it to: switches and options (in `pluginConfigs`, where the desktop app does not list plugin rows in `/config`) and the auto-compact window when you set it.
 - The box sends none of your data anywhere. It only fetches from git sources you add, and CI Watch talks to GitHub through your own `gh`. Mods that call a model (Next Steps, Catch Me Up, the handoff note, keep-warm) say so and show their token use.
 
@@ -93,6 +93,7 @@ The same window runs in terminal Claude Code, as a side pane next to the convers
 | Switch | Mod | Default | What it does | Costs tokens? |
 |---|---|---|---|---|
 | `blastRadius` | Blast Radius | on | Holds risky shell commands (`rm -rf`, `git reset --hard`, `git clean`, force push, migrations) and shows what they would hit. | no |
+| `packageGuard` | Package Guard | on | Before an install or `npx`/`uvx` run (npm, pnpm, yarn, bun, pip, uv, poetry, pipx, cargo) asks the public registry; holds the command when the package does not exist, is under 14 days old, was removed as malware, or looks like a well-known package and is young or thin. Mode *block* or *warn*; allow in the band or with `/pkg-allow`. Sends only the package name to the registry. | no |
 | `secretGuard` | Secret Guard | on | Stops before an API key, token, private key or non-ignored `.env` file gets into a file, `git add` or a commit. Mode *block* or *warn*; exceptions via `/secret-allow`. | no |
 | `ciWatch` | CI Watch | on | Follows the GitHub Actions runs after each `git push` (via `gh`) to the end. For an open pull request it watches every check and says whether the PR is ready to merge. When a run turns red, it shows the failed step's log and/or puts an analysis request into the prompt; it can also play a sound. `/ci` shows the state. A system notification when a run ends (default: red only), since Claude Code notifies only at the end of a turn. In the desktop app, a new PR's checks are left to the app's own CI bar. | no |
 | `signGuard` | Sign Guard | off | Spots Windows builds and signs the new `.exe`, `.msi` and `.msix` files with your own script (`<script> -Exe <file>`). Mode *ask* or *auto*. | no |
@@ -101,8 +102,10 @@ The same window runs in terminal Claude Code, as a side pane next to the convers
 | `replayTheater` | Replay Theater | on | Steps through the last turn's edits (`/replay`). | no |
 | `nextSteps` | Next Steps | off | Suggests 2–3 next prompts. Claude Code has one built-in suggestion (Tab); this offers two or three. | a Haiku call per answer |
 | `cacheMeter` | Cache Meter (with Cache Tax) | on | Shows the time left on the warm cache, the hit rate, the context as weather and the plan limits, with compact and keep-warm buttons. It also stops a send to a cold cache once and names its cost, and the cost of compacting first instead. **Auto-compact at** sets Claude Code's `autoCompactWindow`: on 1M-context models Claude otherwise compacts only at about 967k tokens. | only keep-warm requests, when on |
-| `subagentSaver` | Subagent Saver | on | Search subagents (Explore) that got no model of their own run on Sonnet (or Haiku) instead of inheriting the main model. An explicit model, forks, teammates and plugin agents stay untouched; the band shows how many were routed. With Claude Code's own `CLAUDE_CODE_SUBAGENT_MODEL` set, it stays out. | no |
+| `readGuard` | Read Guard | on | Holds a whole-file `Read` (no offset/limit) above the limit (default 50 KB), of a lockfile, minified code or a source map, and the same via `cat`, `type` or `Get-Content`; tells Claude the size, a token estimate and a better way (Grep, offset/limit). A second try at the same file goes through. Claude Code itself stops a Read only at about 25,000 tokens. | no |
+| `subagentSaver` | Subagent Saver | on | Search subagents (Explore) that got no model of their own run on Sonnet (or Haiku) instead of inheriting the main model. An explicit model, forks, teammates and plugin agents stay untouched; the band shows how many were routed. | no |
 | `handoff` | Handoff Note | on | `/handoff` writes `.claude/handoff.local.md`, and a new session offers to continue from it. | one request over the warm cache |
+| `pet` | Desktop Pet | off | Windows only: a little cardboard box on the desktop, always on top, that says in a speech bubble what Claude is doing (file read or changed, command running, what a guard held) and sums up each turn. Drag it anywhere; right-click for quiet time. Built once with the C# compiler that ships with Windows into `%LOCALAPPDATA%\mod-box\pet`, signed with the Sign Guard script when one is set. | only with summary *haiku* |
 | `visibleCompact` | Visible Compact | on | Before/after view of `/compact` (`/show-last-compact`). | no |
 | `catchMeUp` | Catch Me Up | off | Live summary of the session (`/catch-me-up`). | Haiku calls after turns |
 | `codebaseMap` | Codebase Map | off | Feature map from `docs/blueprints` with live highlighting of the features Claude edits, a freshness band and a `CLAUDE.md` pointer; mapper instructions with machine-checked edges load only when you ask for blueprint work (`/codebase-map`). | only blueprint runs you ask for; about 500 tokens per session for the `CLAUDE.md` pointer |
@@ -114,12 +117,14 @@ The same window runs in terminal Claude Code, as a side pane next to the convers
 | Command | Mod | What it does |
 |---|---|---|
 | `/mod-box [profiles|sources|diag]` | Mod Box | opens the window, optionally on a tab |
+| `/pkg-allow [name]` | Package Guard | allows a held package for this session |
 | `/secret-allow` | Secret Guard | the exception list: last finds, project and global entries |
 | `/ci` · `/ci pr <nr|url>` · `/ci stop` | CI Watch | state of the watched runs · watch a pull request · stop watching |
 | `/agents-info` | Savvy Progress | agents panel |
 | `/filetree` | Filetree | opens the file tree |
 | `/replay` | Replay Theater | steps through the last turn's edits |
 | `/keepwarm <6h|90m|always|off|status>` · `/cache-tax` | Cache Meter | keeps the cache warm · cache costs of this session |
+| `/pet [stop]` | Desktop Pet | shows the pet, or sends it off |
 | `/handoff` | Handoff Note | writes the handoff note |
 | `/show-last-compact` | Visible Compact | before/after of the last `/compact` |
 | `/catch-me-up` | Catch Me Up | live summary pane |
@@ -245,7 +250,7 @@ These mods come from other repositories and **were modified for the Mod Box**. E
 | Savvy Progress | [JohnnyVizz/claude-kit](https://github.com/JohnnyVizz/claude-kit/tree/main/plugins/savvy-progress) | johnnyvizz | MIT | a type fix; state and tool names rewritten |
 | Visible Compact | [nvsravank/visible-compact](https://github.com/nvsravank/visible-compact) | nvsravank | MIT | state, matchers and paths rewritten |
 
-Heads-up was retired in favour of "You Should Know", which ships with Claude Code; the window switches it under **Built into Claude Code**. **Cache Meter, Subagent Saver, Secret Guard, CI Watch, Sign Guard, Handoff Note**, the window and the tools were written for this box.
+Heads-up was retired in favour of "You Should Know", which ships with Claude Code; the window switches it under **Built into Claude Code**. **Cache Meter, Subagent Saver, Read Guard, Secret Guard, Package Guard, Desktop Pet, CI Watch, Sign Guard, Handoff Note**, the window and the tools were written for this box.
 
 ## License
 

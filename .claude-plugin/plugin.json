@@ -1,7 +1,7 @@
 {
   "name": "mod-box",
   "version": "0.4.1",
-  "description": "14 Claude Code mods in one plugin, each switchable on its own; /mod-box opens the window to switch, configure and import mods.",
+  "description": "17 Claude Code mods in one plugin, each switchable on its own; /mod-box opens the window to switch, configure and import mods.",
   "author": {
     "name": "Lupus Malus Deviant"
   },
@@ -66,6 +66,12 @@
       "description": "Stops before Claude writes API keys, tokens, private keys or a non-ignored .env into files, git add or commits. Exceptions for test keys and example files: /secret-allow.",
       "default": true
     },
+    "packageGuard": {
+      "type": "boolean",
+      "title": "Package Guard",
+      "description": "Before Claude installs or runs a package (npm, pnpm, yarn, bun, npx, pip, uv, poetry, pipx, cargo), asks the public registry about it. Holds the command when the package does not exist (a made-up name), is under 14 days old, or looks like a well-known package and is young or thin (typosquatting). Allow in the band or with /pkg-allow.",
+      "default": true
+    },
     "ciWatch": {
       "type": "boolean",
       "title": "CI Watch",
@@ -126,6 +132,12 @@
       "description": "Shows before and after of /compact side by side; /show-last-compact reopens it.",
       "default": true
     },
+    "readGuard": {
+      "type": "boolean",
+      "title": "Read Guard",
+      "description": "Holds a whole-file Read (no offset/limit) of a file above the limit, a lockfile, minified code or a source map, and the same via cat, type or Get-Content in the shell; tells Claude the size, a token estimate and a better way (Grep, offset/limit). A second try at the same file goes through. Claude Code itself stops only at about 25,000 tokens.",
+      "default": true
+    },
     "catchMeUp": {
       "type": "boolean",
       "title": "Catch Me Up",
@@ -136,6 +148,12 @@
       "type": "boolean",
       "title": "Codebase Map",
       "description": "Feature map of the codebase from docs/blueprints: dependency graph with live highlighting of the features Claude edits, a freshness band, a CLAUDE.md pointer for agents and mapper instructions (machine-checked edges, optional Confluence mirror) that load only when you ask for blueprint work. Costs tokens: Only when you ask for blueprint work: creating a blueprint reads the whole repo once (hundreds of thousands of tokens on a large repo), an update reads only the changed features. While a blueprint exists, the CLAUDE.md pointer adds about 500 tokens per session (switch off with the CLAUDE.md option)..",
+      "default": false
+    },
+    "pet": {
+      "type": "boolean",
+      "title": "Desktop Pet",
+      "description": "A little cardboard box on the Windows desktop, always on top, that says in a speech bubble what Claude is doing: the file it reads or changes, the command that runs, what a guard held, and a short summary at the end of a turn. Drag it anywhere, right-click for quiet time. Built once with the C# compiler that ships with Windows and signed with the Sign Guard script when one is set. /pet shows it, /pet stop sends it off.",
       "default": false
     },
     "secretMode": {
@@ -157,6 +175,27 @@
       ],
       "title": "Secret Guard: let placeholders pass",
       "description": "on: values with EXAMPLE, DUMMY, FAKE, PLACEHOLDER, REDACTED, SAMPLE, xxxxxx … are no secret (this covers the AWS documentation keys)."
+    },
+    "packageMode": {
+      "type": "string",
+      "default": "block",
+      "options": [
+        "block",
+        "warn"
+      ],
+      "title": "Package Guard: mode",
+      "description": "block: hold the command until the package is allowed. warn: only warn and let it through."
+    },
+    "packageGuardShow": {
+      "type": "string",
+      "default": "band",
+      "options": [
+        "band",
+        "status",
+        "off"
+      ],
+      "title": "Package Guard: display",
+      "description": "band: above the prompt. status: in the status line. off: not shown (the mod keeps working)."
     },
     "ciInterval": {
       "type": "string",
@@ -457,6 +496,38 @@
       "title": "Visible Compact: storage",
       "description": "temp: the OS temp folder. home: ~/.claude/visible-compact, kept."
     },
+    "readLimit": {
+      "type": "string",
+      "default": "50",
+      "options": [
+        "20",
+        "50",
+        "100",
+        "off"
+      ],
+      "title": "Read Guard: limit (KB)",
+      "description": "Files above this size are held when read whole. off: only lockfiles, minified files and source maps."
+    },
+    "readMode": {
+      "type": "string",
+      "default": "block",
+      "options": [
+        "block",
+        "warn"
+      ],
+      "title": "Read Guard: mode",
+      "description": "block: hold the first try and tell Claude a better way. warn: only a notice."
+    },
+    "readShell": {
+      "type": "string",
+      "default": "on",
+      "options": [
+        "on",
+        "off"
+      ],
+      "title": "Read Guard: shell too",
+      "description": "on: also cat, type and Get-Content of a whole file."
+    },
     "codebaseMapClaudeMd": {
       "type": "string",
       "title": "Codebase Map: CLAUDE.md pointer",
@@ -466,6 +537,28 @@
         "auto",
         "off"
       ]
+    },
+    "petBubble": {
+      "type": "string",
+      "default": "9",
+      "options": [
+        "5",
+        "9",
+        "15",
+        "30"
+      ],
+      "title": "Desktop Pet: bubble stays … seconds",
+      "description": "How long news stays in the bubble. Questions and errors stay until the next news."
+    },
+    "petSummary": {
+      "type": "string",
+      "default": "off",
+      "options": [
+        "off",
+        "haiku"
+      ],
+      "title": "Desktop Pet: summary at the end",
+      "description": "off: the first sentences of the answer (no tokens). haiku: Haiku puts a longer answer in one sentence."
     }
   },
   "homepage": "https://github.com/LupusMalusDeviant/mod-box",

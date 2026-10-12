@@ -295,6 +295,113 @@ export const CATALOG: CatalogMod[] = [
     }
   },
   {
+    "id": "package-guard",
+    "toggle": "packageGuard",
+    "default": true,
+    "band": true,
+    "title": {
+      "en": "Package Guard",
+      "de": "Paket-Wächter"
+    },
+    "description": {
+      "en": "Before Claude installs or runs a package (npm, pnpm, yarn, bun, npx, pip, uv, poetry, pipx, cargo), asks the public registry about it. Holds the command when the package does not exist (a made-up name), is under 14 days old, or looks like a well-known package and is young or thin (typosquatting). Allow in the band or with /pkg-allow.",
+      "de": "Bevor Claude ein Paket installiert oder ausführt (npm, pnpm, yarn, bun, npx, pip, uv, poetry, pipx, cargo), fragt er die öffentliche Registry. Hält den Befehl an, wenn es das Paket nicht gibt (erfundener Name), es jünger als 14 Tage ist oder einem bekannten Paket ähnelt und jung oder dünn ist (Typosquatting). Erlauben im Band oder mit /pkg-allow."
+    },
+    "group": "guards",
+    "costs": null,
+    "params": [
+      {
+        "key": "packageMode",
+        "type": "string",
+        "multiple": false,
+        "title": {
+          "en": "Package Guard: mode",
+          "de": "Paket-Wächter: Modus"
+        },
+        "description": {
+          "en": "block: hold the command until the package is allowed. warn: only warn and let it through.",
+          "de": "block: Befehl anhalten, bis das Paket erlaubt ist. warn: nur warnen und durchlassen."
+        },
+        "labels": {
+          "de": {
+            "block": "anhalten",
+            "warn": "nur warnen"
+          },
+          "en": {
+            "block": "hold",
+            "warn": "warn only"
+          }
+        },
+        "options": [
+          "block",
+          "warn"
+        ],
+        "default": "block"
+      },
+      {
+        "key": "packageGuardShow",
+        "type": "string",
+        "multiple": false,
+        "title": {
+          "en": "Package Guard: display",
+          "de": "Paket-Wächter: Anzeige"
+        },
+        "description": {
+          "en": "band: above the prompt. status: in the status line. off: not shown (the mod keeps working).",
+          "de": "Band: über dem Prompt. Statuszeile: in der Statuszeile. aus: nicht angezeigt (der Mod arbeitet weiter)."
+        },
+        "labels": {
+          "de": {
+            "band": "Band",
+            "status": "Statuszeile",
+            "off": "aus"
+          },
+          "en": {
+            "band": "band",
+            "status": "status line",
+            "off": "off"
+          }
+        },
+        "options": [
+          "band",
+          "status",
+          "off"
+        ],
+        "default": "band"
+      }
+    ],
+    "imported": false,
+    "upstream": "package-guard",
+    "source": null,
+    "commands": [
+      {
+        "name": "/pkg-allow [name]",
+        "text": {
+          "en": "allow a held package",
+          "de": "ein angehaltenes Paket erlauben"
+        }
+      }
+    ],
+    "tokens": "none",
+    "needs": [],
+    "compat": {
+      "surfaces": [
+        "terminal",
+        "desktop",
+        "vscode",
+        "mobile"
+      ],
+      "os": [
+        "windows",
+        "mac",
+        "linux"
+      ],
+      "needs": [
+        "node"
+      ]
+    }
+  },
+  {
     "id": "ci-watch",
     "toggle": "ciWatch",
     "default": true,
@@ -1498,6 +1605,121 @@ export const CATALOG: CatalogMod[] = [
     }
   },
   {
+    "id": "read-guard",
+    "toggle": "readGuard",
+    "default": true,
+    "band": false,
+    "title": {
+      "en": "Read Guard",
+      "de": "Lese-Wächter"
+    },
+    "description": {
+      "en": "Holds a whole-file Read (no offset/limit) of a file above the limit, a lockfile, minified code or a source map, and the same via cat, type or Get-Content in the shell; tells Claude the size, a token estimate and a better way (Grep, offset/limit). A second try at the same file goes through. Claude Code itself stops only at about 25,000 tokens.",
+      "de": "Hält ein Read der ganzen Datei (ohne offset/limit) an, wenn sie über der Grenze liegt, ein Lockfile, minifizierter Code oder eine Source-Map ist, ebenso cat, type oder Get-Content in der Shell; nennt Claude Grösse, Token-Schätzung und einen besseren Weg (Grep, offset/limit). Ein zweiter Versuch an derselben Datei geht durch. Claude Code selbst stoppt erst bei etwa 25.000 Tokens."
+    },
+    "group": "context",
+    "costs": null,
+    "params": [
+      {
+        "key": "readLimit",
+        "type": "string",
+        "multiple": false,
+        "title": {
+          "en": "Read Guard: limit (KB)",
+          "de": "Lese-Wächter: Grenze (KB)"
+        },
+        "description": {
+          "en": "Files above this size are held when read whole. off: only lockfiles, minified files and source maps.",
+          "de": "Dateien über dieser Grösse werden angehalten, wenn sie ganz gelesen werden. aus: nur Lockfiles, minifizierte Dateien und Source-Maps."
+        },
+        "labels": {
+          "de": {
+            "off": "aus"
+          }
+        },
+        "options": [
+          "20",
+          "50",
+          "100",
+          "off"
+        ],
+        "default": "50"
+      },
+      {
+        "key": "readMode",
+        "type": "string",
+        "multiple": false,
+        "title": {
+          "en": "Read Guard: mode",
+          "de": "Lese-Wächter: Modus"
+        },
+        "description": {
+          "en": "block: hold the first try and tell Claude a better way. warn: only a notice.",
+          "de": "block: den ersten Versuch anhalten und Claude einen besseren Weg nennen. warn: nur ein Hinweis."
+        },
+        "labels": {
+          "de": {
+            "block": "anhalten",
+            "warn": "nur warnen"
+          },
+          "en": {
+            "block": "hold",
+            "warn": "warn only"
+          }
+        },
+        "options": [
+          "block",
+          "warn"
+        ],
+        "default": "block"
+      },
+      {
+        "key": "readShell",
+        "type": "string",
+        "multiple": false,
+        "title": {
+          "en": "Read Guard: shell too",
+          "de": "Lese-Wächter: auch Shell"
+        },
+        "description": {
+          "en": "on: also cat, type and Get-Content of a whole file.",
+          "de": "an: auch cat, type und Get-Content einer ganzen Datei."
+        },
+        "labels": {
+          "de": {
+            "on": "an",
+            "off": "aus"
+          }
+        },
+        "options": [
+          "on",
+          "off"
+        ],
+        "default": "on"
+      }
+    ],
+    "imported": false,
+    "upstream": "read-guard",
+    "source": null,
+    "commands": [],
+    "tokens": "none",
+    "needs": [],
+    "compat": {
+      "surfaces": [
+        "terminal",
+        "desktop",
+        "vscode",
+        "mobile"
+      ],
+      "os": [
+        "windows",
+        "mac",
+        "linux"
+      ],
+      "needs": []
+    }
+  },
+  {
     "id": "catch-me-up",
     "toggle": "catchMeUp",
     "default": false,
@@ -1614,6 +1836,102 @@ export const CATALOG: CatalogMod[] = [
         "node"
       ]
     }
+  },
+  {
+    "id": "pet",
+    "toggle": "pet",
+    "default": false,
+    "band": false,
+    "title": {
+      "en": "Desktop Pet",
+      "de": "Desktop-Pet"
+    },
+    "description": {
+      "en": "A little cardboard box on the Windows desktop, always on top, that says in a speech bubble what Claude is doing: the file it reads or changes, the command that runs, what a guard held, and a short summary at the end of a turn. Drag it anywhere, right-click for quiet time. Built once with the C# compiler that ships with Windows and signed with the Sign Guard script when one is set. /pet shows it, /pet stop sends it off.",
+      "de": "Eine kleine Pappbox auf dem Windows-Desktop, immer im Vordergrund, die in einer Sprechblase sagt, was Claude gerade tut: welche Datei er liest oder ändert, welcher Befehl läuft, was ein Wächter angehalten hat, und am Ende des Turns eine kurze Zusammenfassung. Frei verschiebbar, Rechtsklick für Ruhe. Wird einmal mit dem C#-Compiler von Windows gebaut und mit dem Skript des Signier-Wächters signiert, wenn eines gesetzt ist. /pet zeigt es, /pet stop verabschiedet es."
+    },
+    "group": "display",
+    "costs": null,
+    "params": [
+      {
+        "key": "petBubble",
+        "type": "string",
+        "multiple": false,
+        "title": {
+          "en": "Desktop Pet: bubble stays … seconds",
+          "de": "Desktop-Pet: Blase bleibt … Sekunden"
+        },
+        "description": {
+          "en": "How long news stays in the bubble. Questions and errors stay until the next news.",
+          "de": "Wie lange eine Nachricht in der Blase bleibt. Fragen und Fehler bleiben bis zur nächsten."
+        },
+        "labels": {},
+        "options": [
+          "5",
+          "9",
+          "15",
+          "30"
+        ],
+        "default": "9"
+      },
+      {
+        "key": "petSummary",
+        "type": "string",
+        "multiple": false,
+        "title": {
+          "en": "Desktop Pet: summary at the end",
+          "de": "Desktop-Pet: Zusammenfassung am Ende"
+        },
+        "description": {
+          "en": "off: the first sentences of the answer (no tokens). haiku: Haiku puts a longer answer in one sentence.",
+          "de": "aus: die ersten Sätze der Antwort (keine Tokens). haiku: Haiku fasst eine längere Antwort in einem Satz."
+        },
+        "labels": {
+          "de": {
+            "off": "aus"
+          }
+        },
+        "options": [
+          "off",
+          "haiku"
+        ],
+        "default": "off"
+      }
+    ],
+    "imported": false,
+    "upstream": "pet",
+    "source": null,
+    "commands": [
+      {
+        "name": "/pet",
+        "text": {
+          "en": "show the desktop pet",
+          "de": "das Desktop-Pet zeigen"
+        }
+      },
+      {
+        "name": "/pet stop",
+        "text": {
+          "en": "send it off",
+          "de": "es verabschieden"
+        }
+      }
+    ],
+    "tokens": "optional",
+    "needs": [],
+    "compat": {
+      "surfaces": [
+        "terminal",
+        "desktop",
+        "vscode"
+      ],
+      "os": [
+        "windows"
+      ],
+      "needs": [
+        "powershell"
+      ]
+    }
   }
 ]
 export const PROFILES: CatalogProfile[] = [
@@ -1630,6 +1948,10 @@ export const PROFILES: CatalogProfile[] = [
       ],
       [
         "secretGuard",
+        true
+      ],
+      [
+        "packageGuard",
         true
       ],
       [
@@ -1673,11 +1995,19 @@ export const PROFILES: CatalogProfile[] = [
         true
       ],
       [
+        "readGuard",
+        true
+      ],
+      [
         "catchMeUp",
         false
       ],
       [
         "codebaseMap",
+        false
+      ],
+      [
+        "pet",
         false
       ]
     ]
@@ -1698,6 +2028,10 @@ export const PROFILES: CatalogProfile[] = [
         true
       ],
       [
+        "packageGuard",
+        true
+      ],
+      [
         "ciWatch",
         true
       ],
@@ -1738,11 +2072,19 @@ export const PROFILES: CatalogProfile[] = [
         true
       ],
       [
+        "readGuard",
+        true
+      ],
+      [
         "catchMeUp",
         false
       ],
       [
         "codebaseMap",
+        true
+      ],
+      [
+        "pet",
         true
       ]
     ]
@@ -1763,6 +2105,10 @@ export const PROFILES: CatalogProfile[] = [
         true
       ],
       [
+        "packageGuard",
+        true
+      ],
+      [
         "ciWatch",
         true
       ],
@@ -1803,11 +2149,19 @@ export const PROFILES: CatalogProfile[] = [
         false
       ],
       [
+        "readGuard",
+        false
+      ],
+      [
         "catchMeUp",
         false
       ],
       [
         "codebaseMap",
+        false
+      ],
+      [
+        "pet",
         false
       ]
     ]
@@ -1828,6 +2182,10 @@ export const PROFILES: CatalogProfile[] = [
         true
       ],
       [
+        "packageGuard",
+        true
+      ],
+      [
         "ciWatch",
         true
       ],
@@ -1868,11 +2226,19 @@ export const PROFILES: CatalogProfile[] = [
         true
       ],
       [
+        "readGuard",
+        true
+      ],
+      [
         "catchMeUp",
         true
       ],
       [
         "codebaseMap",
+        true
+      ],
+      [
+        "pet",
         true
       ]
     ]

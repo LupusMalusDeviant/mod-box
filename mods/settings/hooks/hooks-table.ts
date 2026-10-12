@@ -28,6 +28,12 @@ export const HOOKS: Record<string, string[]> = {
     "tool.call",
     "ui.render"
   ],
+  "packageGuard": [
+    "command.run",
+    "session.start",
+    "tool.call",
+    "ui.render"
+  ],
   "ciWatch": [
     "command.run",
     "session.start",
@@ -106,6 +112,10 @@ export const HOOKS: Record<string, string[]> = {
     "session.start",
     "ui.render"
   ],
+  "readGuard": [
+    "session.start",
+    "tool.call"
+  ],
   "catchMeUp": [
     "classic.SessionStart",
     "command.run",
@@ -120,5 +130,13 @@ export const HOOKS: Record<string, string[]> = {
     "tool.call",
     "turn.complete",
     "ui.render"
+  ],
+  "pet": [
+    "command.run",
+    "session.end",
+    "session.start",
+    "tool.call",
+    "turn.complete",
+    "turn.start"
   ]
 }
