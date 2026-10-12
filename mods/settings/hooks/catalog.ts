@@ -15,8 +15,8 @@ export const SETTINGS: CatalogField[] = [
       "de": "Sprache"
     },
     "description": {
-      "en": "Language of the Mod Box window and of the texts its mods write (Next Steps, Catch Me Up, Heads-up, handoff note).",
-      "de": "Sprache des Mod-Box-Fensters und der Texte, die seine Mods schreiben (Next Steps, Catch Me Up, Heads-up, Übergabe-Notiz)."
+      "en": "Language of the Mod Box window and of the texts its mods write (Next Steps, Catch Me Up, handoff note).",
+      "de": "Sprache des Mod-Box-Fensters und der Texte, die seine Mods schreiben (Next Steps, Catch Me Up, Übergabe-Notiz)."
     },
     "labels": {
       "de": {
@@ -43,8 +43,8 @@ export const SETTINGS: CatalogField[] = [
       "de": "Band-Anordnung"
     },
     "description": {
-      "en": "compact: calm displays share one line; urgent ones (CI red, heads-up, sign offer) always get their own line. lines: one line per display.",
-      "de": "kompakt: ruhige Anzeigen teilen sich eine Zeile; dringende (CI rot, Heads-up, Signier-Angebot) bekommen immer eine eigene. Zeilen: jede Anzeige in eigener Zeile."
+      "en": "compact: calm displays share one line; urgent ones (CI red, sign offer) always get their own line. lines: one line per display.",
+      "de": "kompakt: ruhige Anzeigen teilen sich eine Zeile; dringende (CI rot, Signier-Angebot) bekommen immer eine eigene. Zeilen: jede Anzeige in eigener Zeile."
     },
     "labels": {
       "de": {
@@ -76,7 +76,7 @@ export const SETTINGS: CatalogField[] = [
     },
     "labels": {},
     "options": null,
-    "default": "ciWatch,signGuard,headsUp,handoff,cacheMeter"
+    "default": "ciWatch,signGuard,handoff,cacheMeter"
   },
   {
     "key": "diagnose",
@@ -494,6 +494,65 @@ export const CATALOG: CatalogMod[] = [
         "default": "off"
       },
       {
+        "key": "ciNotify",
+        "type": "string",
+        "multiple": false,
+        "title": {
+          "en": "CI Watch: system notification",
+          "de": "CI-Wächter: Systembenachrichtigung"
+        },
+        "description": {
+          "en": "When a watched run ends, through your notification channel (preferredNotifChannel): off, only red, or always. Claude Code notifies at the end of a turn; CI usually ends later.",
+          "de": "Wenn ein überwachter Lauf endet, über deinen Benachrichtigungskanal (preferredNotifChannel): aus, nur rot oder immer. Claude Code meldet sich am Ende eines Turns; die CI endet meist später."
+        },
+        "labels": {
+          "de": {
+            "off": "aus",
+            "red": "nur rot",
+            "always": "immer"
+          },
+          "en": {
+            "off": "off",
+            "red": "red only",
+            "always": "always"
+          }
+        },
+        "options": [
+          "off",
+          "red",
+          "always"
+        ],
+        "default": "red"
+      },
+      {
+        "key": "ciPrOnDesktop",
+        "type": "string",
+        "multiple": false,
+        "title": {
+          "en": "CI Watch: PR checks in the desktop app",
+          "de": "CI-Wächter: PR-Checks in der Desktop-App"
+        },
+        "description": {
+          "en": "app: in the desktop app a new PR is watched by the app itself (CI bar, auto-fix), so nothing is reported twice; pushes are still watched here. box: CI Watch follows the PR as in the terminal.",
+          "de": "app: In der Desktop-App überwacht die App einen neuen PR selbst (CI-Leiste, Auto-Fix), damit nichts doppelt gemeldet wird; Pushes überwacht weiter der Wächter. box: Der Wächter folgt dem PR wie im Terminal."
+        },
+        "labels": {
+          "de": {
+            "app": "Desktop-App",
+            "box": "CI-Wächter"
+          },
+          "en": {
+            "app": "desktop app",
+            "box": "CI Watch"
+          }
+        },
+        "options": [
+          "app",
+          "box"
+        ],
+        "default": "app"
+      },
+      {
         "key": "ciWatchShow",
         "type": "string",
         "multiple": false,
@@ -777,8 +836,8 @@ export const CATALOG: CatalogMod[] = [
       "de": "Filetree"
     },
     "description": {
-      "en": "File tree side pane (/filetree); files light up when Claude reads or writes them. With the Codebase Map on, a Features tab shows its features, what Claude is editing and the blueprint actions.",
-      "de": "Dateibaum-Seitenleiste (/filetree); Dateien leuchten auf, wenn Claude sie liest oder schreibt. Mit eingeschalteter Codebase-Karte zeigt ein Reiter „Features“ deren Features, was Claude gerade bearbeitet, und die Blueprint-Aktionen."
+      "en": "File tree side pane (/filetree); files light up when Claude reads or writes them. Right-click (or o) opens \"Open with\": default app, the editors, IDEs and browsers found, preview, show in folder, copy path. With the Codebase Map on, a Features tab shows its features, what Claude is editing and the blueprint actions.",
+      "de": "Dateibaum-Seitenleiste (/filetree); Dateien leuchten auf, wenn Claude sie liest oder schreibt. Rechtsklick (oder o) öffnet „Öffnen mit“: Standard-App, gefundene Editoren, IDEs und Browser, Vorschau, im Ordner zeigen, Pfad kopieren. Mit eingeschalteter Codebase-Karte zeigt ein Reiter „Features“ deren Features, was Claude gerade bearbeitet, und die Blueprint-Aktionen."
     },
     "group": "display",
     "costs": null,
@@ -894,6 +953,22 @@ export const CATALOG: CatalogMod[] = [
         "labels": {},
         "options": null,
         "default": ""
+      },
+      {
+        "key": "filetreeOpenWith",
+        "type": "string",
+        "multiple": false,
+        "title": {
+          "en": "Filetree: open with (programs)",
+          "de": "Filetree: Öffnen mit (Programme)"
+        },
+        "description": {
+          "en": "Extra programs for the right-click menu, besides the ones found: \"Name=command; Name2=command\". {path} is the file, {dir} its folder.",
+          "de": "Weitere Programme für das Rechtsklick-Menü, zusätzlich zu den gefundenen: \"Name=Befehl; Name2=Befehl\". {path} ist die Datei, {dir} ihr Ordner."
+        },
+        "labels": {},
+        "options": null,
+        "default": ""
       }
     ],
     "imported": false,
@@ -980,8 +1055,8 @@ export const CATALOG: CatalogMod[] = [
       "de": "Next Steps"
     },
     "description": {
-      "en": "After each answer, 2-3 likely next prompts (1-3 drafts one, 0 dismisses).",
-      "de": "Nach jeder Antwort 2-3 Vorschläge für den nächsten Prompt (1-3 übernimmt, 0 schließt)."
+      "en": "After each answer, 2-3 likely next prompts (1-3 drafts one, 0 dismisses). Claude Code has one built-in suggestion (Tab); this mod offers two or three.",
+      "de": "Nach jeder Antwort 2-3 Vorschläge für den nächsten Prompt (1-3 übernimmt, 0 schließt). Claude Code hat einen eingebauten Vorschlag (Tab); dieser Mod bietet zwei bis drei."
     },
     "group": "display",
     "costs": {
@@ -1255,8 +1330,8 @@ export const CATALOG: CatalogMod[] = [
       "de": "Subagenten-Sparer"
     },
     "description": {
-      "en": "Search subagents (Explore) that were given no model of their own run on a cheaper one instead of the main model. An explicit model, forks, teammates and plugin agents stay untouched.",
-      "de": "Such-Subagenten (Explore) ohne eigenes Modell laufen auf einem günstigeren statt dem Hauptmodell. Ein ausdrücklich gewähltes Modell, Forks, Teammates und Plugin-Agenten bleiben unberührt."
+      "en": "Search subagents (Explore) that were given no model of their own run on a cheaper one instead of the main model. An explicit model, forks, teammates and plugin agents stay untouched. With Claude Code's own CLAUDE_CODE_SUBAGENT_MODEL set (for all subagents), the mod stays out.",
+      "de": "Such-Subagenten (Explore) ohne eigenes Modell laufen auf einem günstigeren statt dem Hauptmodell. Ein ausdrücklich gewähltes Modell, Forks, Teammates und Plugin-Agenten bleiben unberührt. Ist Claude Codes eigenes CLAUDE_CODE_SUBAGENT_MODEL gesetzt (für alle Subagents), hält sich der Mod heraus."
     },
     "group": "context",
     "costs": null,
@@ -1645,78 +1720,6 @@ export const CATALOG: CatalogMod[] = [
     }
   },
   {
-    "id": "heads-up",
-    "toggle": "headsUp",
-    "default": false,
-    "band": true,
-    "title": {
-      "en": "Heads-up (You Should Know)",
-      "de": "Heads-up (You Should Know)"
-    },
-    "description": {
-      "en": "A second model reads longer answers and raises one easily missed but important point.",
-      "de": "Ein zweites Modell liest längere Antworten und hebt einen leicht überlesenen, wichtigen Hinweis hervor."
-    },
-    "group": "watchers",
-    "costs": {
-      "en": "a small Haiku call per longer answer",
-      "de": "ein kleiner Haiku-Aufruf je längerer Antwort"
-    },
-    "params": [
-      {
-        "key": "headsUpShow",
-        "type": "string",
-        "multiple": false,
-        "title": {
-          "en": "Heads-up (You Should Know): display",
-          "de": "Heads-up (You Should Know): Anzeige"
-        },
-        "description": {
-          "en": "band: above the prompt. status: in the status line. off: not shown (the mod keeps working).",
-          "de": "Band: über dem Prompt. Statuszeile: in der Statuszeile. aus: nicht angezeigt (der Mod arbeitet weiter)."
-        },
-        "labels": {
-          "de": {
-            "band": "Band",
-            "status": "Statuszeile",
-            "off": "aus"
-          },
-          "en": {
-            "band": "band",
-            "status": "status line",
-            "off": "off"
-          }
-        },
-        "options": [
-          "band",
-          "status",
-          "off"
-        ],
-        "default": "band"
-      }
-    ],
-    "imported": false,
-    "upstream": "heads-up",
-    "source": null,
-    "commands": [],
-    "tokens": "always",
-    "needs": [],
-    "compat": {
-      "surfaces": [
-        "terminal",
-        "desktop",
-        "vscode",
-        "mobile"
-      ],
-      "os": [
-        "windows",
-        "mac",
-        "linux"
-      ],
-      "needs": []
-    }
-  },
-  {
     "id": "catch-me-up",
     "toggle": "catchMeUp",
     "default": false,
@@ -1996,10 +1999,6 @@ export const PROFILES: CatalogProfile[] = [
         true
       ],
       [
-        "headsUp",
-        false
-      ],
-      [
         "catchMeUp",
         false
       ],
@@ -2075,10 +2074,6 @@ export const PROFILES: CatalogProfile[] = [
       [
         "readGuard",
         true
-      ],
-      [
-        "headsUp",
-        false
       ],
       [
         "catchMeUp",
@@ -2158,10 +2153,6 @@ export const PROFILES: CatalogProfile[] = [
         false
       ],
       [
-        "headsUp",
-        false
-      ],
-      [
         "catchMeUp",
         false
       ],
@@ -2236,10 +2227,6 @@ export const PROFILES: CatalogProfile[] = [
       ],
       [
         "readGuard",
-        true
-      ],
-      [
-        "headsUp",
         true
       ],
       [

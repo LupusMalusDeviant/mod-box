@@ -96,6 +96,7 @@ export const HOOKS: Record<string, string[]> = {
   ],
   "subagentSaver": [
     "agent.spawn",
+    "session.start",
     "ui.render"
   ],
   "handoff": [
@@ -114,12 +115,6 @@ export const HOOKS: Record<string, string[]> = {
   "readGuard": [
     "session.start",
     "tool.call"
-  ],
-  "headsUp": [
-    "prompt.submit",
-    "turn.complete",
-    "turn.start",
-    "ui.render"
   ],
   "catchMeUp": [
     "classic.SessionStart",

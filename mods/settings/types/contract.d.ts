@@ -49,6 +49,16 @@ export type NativeField = {
   value: unknown
 }
 
+export type BuiltinMod = {
+  id: string
+  name: string
+  description: string
+  enabled: boolean
+  isDefault: boolean
+  switchable: boolean
+  note: string | null
+}
+
 export type NativeInfo = {
   components: Record<string, { count: number; names: string[] }> | null
   alwaysOn: string | null
@@ -124,6 +134,7 @@ declare module 'claude-code' {
       report: ImportReport | null
       expanded: string[]
       natives: NativePlugin[] | null
+      builtins: BuiltinMod[] | null
       nativeInfo: Record<string, NativeInfo>
       fresh: string[]
       updates: UpdateInfo[] | null

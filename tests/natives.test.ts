@@ -43,6 +43,11 @@ function engine(on: any) {
         { key: 'apiKey', type: 'string', title: 'API key', description: '', sensitive: true, required: false, options: null, default: null, set: true, value: null },
         { key: 'mode', type: 'string', title: 'Mode', description: '', sensitive: false, required: false, options: ['fast', 'slow'], default: 'fast', set: true, value: 'fast' },
       ] }
+    else if (cmd === 'native' && action === 'builtins')
+      out = { ok: true, builtins: [
+        { id: 'cc-plugin-you-should-know@builtin', name: 'you-should-know', description: 'You should know: a side agent watches your back.', enabled: false, isDefault: true, switchable: true, note: null },
+        { id: 'cc-plugin-telemetry@builtin', name: 'telemetry', description: 'Telemetry: analytics events.', enabled: true, isDefault: true, switchable: false, note: 'analytics' },
+      ] }
     else if (cmd === 'native') out = { ok: true, restart: true }
     return { value: { exitCode: 0, stdout: JSON.stringify(out) + '\n', stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
   })
@@ -111,5 +116,18 @@ describe('Natively managed plugins in the window', () => {
     expect(calls.some(c => c[2] === 'native' && c[3] === 'profile')).toBe(true)
     await ui.press({ key: 'nad-csharp-lsp@claude-plugins-official' })
     expect(calls.some(c => c[2] === 'native' && c[3] === 'adopt' && c[4] === 'csharp-lsp@claude-plugins-official')).toBe(true)
+  })
+
+  test('Claude Code\'s built-in mods: listed, switchable ones switched through the CLI', DE, async ($: any, on: any) => {
+    const calls = engine(on)
+    const ui = await open($)
+    await new Promise(done => (globalThis as any).setTimeout(done, 50))
+    expect(await ui.find({ type: 'Text', text: /Eingebaut in Claude Code/ })).toBeDefined()
+    expect(await ui.find({ key: 'bt-you-should-know' })).toBeDefined()
+    // telemetry follows the analytics setting: shown, but no switch
+    expect(await ui.find({ key: 'bt-telemetry' })).toBeUndefined()
+    await ui.press({ key: 'bt-you-should-know' })
+    await new Promise(done => (globalThis as any).setTimeout(done, 50))
+    expect(calls.some(c => c.includes('builtin-on') && c.includes('you-should-know'))).toBe(true)
   })
 })

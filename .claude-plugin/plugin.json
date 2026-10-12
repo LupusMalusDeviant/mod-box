@@ -1,7 +1,7 @@
 {
   "name": "mod-box",
   "version": "0.4.1",
-  "description": "18 Claude Code mods in one plugin, each switchable on its own; /mod-box opens the window to switch, configure and import mods.",
+  "description": "17 Claude Code mods in one plugin, each switchable on its own; /mod-box opens the window to switch, configure and import mods.",
   "author": {
     "name": "Lupus Malus Deviant"
   },
@@ -11,7 +11,7 @@
     "language": {
       "type": "string",
       "title": "Language",
-      "description": "Language of the Mod Box window and of the texts its mods write (Next Steps, Catch Me Up, Heads-up, handoff note).",
+      "description": "Language of the Mod Box window and of the texts its mods write (Next Steps, Catch Me Up, handoff note).",
       "default": "en",
       "options": [
         "de",
@@ -21,7 +21,7 @@
     "bandLayout": {
       "type": "string",
       "title": "Band layout",
-      "description": "compact: calm displays share one line; urgent ones (CI red, heads-up, sign offer) always get their own line. lines: one line per display.",
+      "description": "compact: calm displays share one line; urgent ones (CI red, sign offer) always get their own line. lines: one line per display.",
       "default": "compact",
       "options": [
         "compact",
@@ -32,7 +32,7 @@
       "type": "string",
       "title": "Band order",
       "description": "Order of the displays above the prompt (switch keys, comma separated). The window sets it with arrows.",
-      "default": "ciWatch,signGuard,headsUp,handoff,cacheMeter"
+      "default": "ciWatch,signGuard,handoff,cacheMeter"
     },
     "diagnose": {
       "type": "string",
@@ -93,7 +93,7 @@
     "filetree": {
       "type": "boolean",
       "title": "Filetree",
-      "description": "File tree side pane (/filetree); files light up when Claude reads or writes them. With the Codebase Map on, a Features tab shows its features, what Claude is editing and the blueprint actions.",
+      "description": "File tree side pane (/filetree); files light up when Claude reads or writes them. Right-click (or o) opens \"Open with\": default app, the editors, IDEs and browsers found, preview, show in folder, copy path. With the Codebase Map on, a Features tab shows its features, what Claude is editing and the blueprint actions.",
       "default": true
     },
     "replayTheater": {
@@ -105,7 +105,7 @@
     "nextSteps": {
       "type": "boolean",
       "title": "Next Steps",
-      "description": "After each answer, 2-3 likely next prompts (1-3 drafts one, 0 dismisses). Costs tokens: a small Haiku call per answer.",
+      "description": "After each answer, 2-3 likely next prompts (1-3 drafts one, 0 dismisses). Claude Code has one built-in suggestion (Tab); this mod offers two or three. Costs tokens: a small Haiku call per answer.",
       "default": false
     },
     "cacheMeter": {
@@ -117,7 +117,7 @@
     "subagentSaver": {
       "type": "boolean",
       "title": "Subagent Saver",
-      "description": "Search subagents (Explore) that were given no model of their own run on a cheaper one instead of the main model. An explicit model, forks, teammates and plugin agents stay untouched.",
+      "description": "Search subagents (Explore) that were given no model of their own run on a cheaper one instead of the main model. An explicit model, forks, teammates and plugin agents stay untouched. With Claude Code's own CLAUDE_CODE_SUBAGENT_MODEL set (for all subagents), the mod stays out.",
       "default": true
     },
     "handoff": {
@@ -137,12 +137,6 @@
       "title": "Read Guard",
       "description": "Holds a whole-file Read (no offset/limit) of a file above the limit, a lockfile, minified code or a source map, and the same via cat, type or Get-Content in the shell; tells Claude the size, a token estimate and a better way (Grep, offset/limit). A second try at the same file goes through. Claude Code itself stops only at about 25,000 tokens.",
       "default": true
-    },
-    "headsUp": {
-      "type": "boolean",
-      "title": "Heads-up (You Should Know)",
-      "description": "A second model reads longer answers and raises one easily missed but important point. Costs tokens: a small Haiku call per longer answer.",
-      "default": false
     },
     "catchMeUp": {
       "type": "boolean",
@@ -235,6 +229,27 @@
       ],
       "title": "CI Watch: sound",
       "description": "on: a short sound when the runs are green or red (Windows: system sounds)."
+    },
+    "ciNotify": {
+      "type": "string",
+      "default": "red",
+      "options": [
+        "off",
+        "red",
+        "always"
+      ],
+      "title": "CI Watch: system notification",
+      "description": "When a watched run ends, through your notification channel (preferredNotifChannel): off, only red, or always. Claude Code notifies at the end of a turn; CI usually ends later."
+    },
+    "ciPrOnDesktop": {
+      "type": "string",
+      "default": "app",
+      "options": [
+        "app",
+        "box"
+      ],
+      "title": "CI Watch: PR checks in the desktop app",
+      "description": "app: in the desktop app a new PR is watched by the app itself (CI bar, auto-fix), so nothing is reported twice; pushes are still watched here. box: CI Watch follows the PR as in the terminal."
     },
     "ciWatchShow": {
       "type": "string",
@@ -339,6 +354,12 @@
       "default": "",
       "title": "Filetree: open with",
       "description": "Empty: default app. preview: show in the pane. Anything else is a command; {path} is the file, {dir} its folder."
+    },
+    "filetreeOpenWith": {
+      "type": "string",
+      "default": "",
+      "title": "Filetree: open with (programs)",
+      "description": "Extra programs for the right-click menu, besides the ones found: \"Name=command; Name2=command\". {path} is the file, {dir} its folder."
     },
     "cacheMeterTtl": {
       "type": "string",
@@ -506,17 +527,6 @@
       ],
       "title": "Read Guard: shell too",
       "description": "on: also cat, type and Get-Content of a whole file."
-    },
-    "headsUpShow": {
-      "type": "string",
-      "default": "band",
-      "options": [
-        "band",
-        "status",
-        "off"
-      ],
-      "title": "Heads-up (You Should Know): display",
-      "description": "band: above the prompt. status: in the status line. off: not shown (the mod keeps working)."
     },
     "codebaseMapClaudeMd": {
       "type": "string",

@@ -675,7 +675,7 @@ function analyzeCmd(target) {
 // ---------------------------------------------------------------- Standalone exports
 
 // The mods offered on their own (own mods, and forks with real changes), and where forks come from.
-const EXPORTS = ['cache-meter', 'subagent-saver', 'secret-guard', 'ci-watch', 'sign-guard', 'handoff', 'heads-up', 'blast-radius']
+const EXPORTS = ['cache-meter', 'subagent-saver', 'secret-guard', 'ci-watch', 'sign-guard', 'handoff', 'blast-radius']
 const EXPORT_REPO = 'LupusMalusDeviant/claude-mods'
 const FORK_ORIGINS = {
   'blast-radius': {
@@ -930,6 +930,11 @@ function nativeCmd(a) {
   switch (action) {
     case 'list':
       return { ok: true, plugins: native.list(exe, { self: box.plugin }) }
+    case 'builtins':
+      return { ok: true, builtins: native.builtins(exe, { refresh: a.refresh === true }) }
+    case 'builtin-on':
+    case 'builtin-off':
+      return native.setBuiltin(exe, id, action === 'builtin-on')
     case 'details':
       return { ok: true, id, ...native.details(exe, id) }
     case 'options':

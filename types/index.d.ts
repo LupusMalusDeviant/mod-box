@@ -54,6 +54,16 @@ export type NativeField = {
   value: unknown
 }
 
+export type BuiltinMod = {
+  id: string
+  name: string
+  description: string
+  enabled: boolean
+  isDefault: boolean
+  switchable: boolean
+  note: string | null
+}
+
 export type NativeInfo = {
   components: Record<string, { count: number; names: string[] }> | null
   alwaysOn: string | null
@@ -406,10 +416,6 @@ export type CompactMeta = {
   chunks: Record<Side, number>
 }
 
-// ---- heads-up ----
-
-export type HeadsUp = { turnId: string; text: string }
-
 // ---- codebase-map ----
 
 export type BlueprintStatus =
@@ -454,6 +460,7 @@ declare module 'claude-code' {
       mb_report: ImportReport | null
       mb_expanded: string[]
       mb_natives: NativePlugin[] | null
+      mb_builtins: BuiltinMod[] | null
       mb_nativeInfo: Record<string, NativeInfo>
       mb_fresh: string[]
       mb_updates: UpdateInfo[] | null
@@ -491,6 +498,9 @@ declare module 'claude-code' {
       ft_theme: Theme
       ft_activity: Activity[]
       ft_view: FileView
+      // Mod Box: the file or folder whose "Open with" menu is open ('' = none), and the programs found (id → path)
+      ft_menu: string
+      ft_apps: Record<string, string> | null
 
       // next-steps
       ns_steps: NextSteps | null; ns_active: boolean
@@ -511,9 +521,6 @@ declare module 'claude-code' {
       vc_view: ViewMode
       vc_pages: Record<Side, number>
       vc_theme: VisibleCompactTheme
-
-      // heads-up
-      hu_note: HeadsUp | null
 
       // codebase-map
       cm2_status: BlueprintStatus | null

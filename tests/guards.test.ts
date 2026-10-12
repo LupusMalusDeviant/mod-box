@@ -111,12 +111,19 @@ describe('CI watch', () => {
       if (cmd.startsWith('gh run view 8')) return ok('step 1\nError: expected 2, got 3\n')
       return undefined
     })
+    const notes: string[] = []
+    on('ui.notify', (_$: any, e: any) => {
+      notes.push(`${e.options?.title ?? e.title ?? ''}: ${e.text}`)
+      return { value: { isSent: true, channel: 'terminal' } }
+    })
     await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/repo' })
     await $.tool.call({ tool: 'Bash', command: 'git push origin main' })
     await wait(50)
     const ui = await $.ui.mount({ plugin: 'mod-box', surface: 'terminal', component: 'AbovePrompt', props: { hasSurvey: false, isWorking: false, maxRows: 10, bodyColumns: 160 } })
     expect(await ui.find({ type: 'Text', text: /rot in Tests/ })).toBeDefined()
     expect(((ran as any).filled as string[]).join('\n')).toContain('gh run view 8 --log-failed')
+    // red ends with a system notification (default: red only)
+    expect(notes.join('\n')).toMatch(/Tests \(failure\)/)
   })
 
   test('summary', () => {
