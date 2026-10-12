@@ -17,6 +17,7 @@ import { register as m11 } from '../mods/handoff/hooks/register' // handoff
 import { register as m12 } from '../mods/visible-compact/hooks/register' // visible-compact
 import { register as m13 } from '../mods/heads-up/hooks/register' // heads-up
 import { register as m14 } from '../mods/catch-me-up/hooks/register.js' // catch-me-up
+import { register as m15 } from '../mods/codebase-map/hooks/register' // codebase-map
 
 export function isOn(options: Record<string, unknown>, key: string, fallback: boolean): boolean {
   const v = options[key]
@@ -51,7 +52,7 @@ export const register: Register = (on, options) => {
   if (isOn(o, "ciWatch", true)) (m3 as any)(on, { "intervalSec": opt(o, "ciInterval", "20"), "onRed": opt(o, "ciOnRed", "both"), "sound": opt(o, "ciSound", "off"), "language": opt(o, "language", "en") })
   if (isOn(o, "signGuard", false)) (m4 as any)(on, { "mode": opt(o, "signMode", "ask"), "script": opt(o, "signScript", ""), "subject": opt(o, "signSubject", ""), "language": opt(o, "language", "en") })
   if (isOn(o, "savvyProgress", true)) (m5 as any)(on, { "language": opt(o, "savvyLanguage", "auto") })
-  if (isOn(o, "filetree", true)) (m6 as any)(on, { "activity": opt(o, "filetreeActivity", "reads and writes"), "glyphs": opt(o, "filetreeGlyphs", "auto"), "follow": opt(o, "filetreeFollow", "on"), "column": opt(o, "filetreeColumn", "date"), "open": opt(o, "filetreeOpen", "") })
+  if (isOn(o, "filetree", true)) (m6 as any)(on, { "activity": opt(o, "filetreeActivity", "reads and writes"), "glyphs": opt(o, "filetreeGlyphs", "auto"), "follow": opt(o, "filetreeFollow", "on"), "column": opt(o, "filetreeColumn", "date"), "open": opt(o, "filetreeOpen", ""), "language": opt(o, "language", "en"), "codebaseMap": opt(o, "codebaseMap", "") })
   if (isOn(o, "replayTheater", true)) (m7 as any)(on, {  })
   if (isOn(o, "nextSteps", false)) (m8 as any)(on, { "language": opt(o, "language", "en") })
   if (isOn(o, "cacheMeter", true)) (m9 as any)(on, { "ttlMinutes": opt(o, "cacheMeterTtl", "60"), "limits": opt(o, "cacheMeterLimits", "on"), "guard": opt(o, "cacheMeterGuard", "refuse"), "keepWarmHours": opt(o, "cacheMeterKeepWarm", "3"), "autoWarm": opt(o, "cacheMeterAutoWarm", "off"), "autoCompact": opt(o, "cacheMeterAutoCompact", "auto"), "language": opt(o, "language", "en") })
@@ -60,4 +61,5 @@ export const register: Register = (on, options) => {
   if (isOn(o, "visibleCompact", true)) (m12 as any)(on, { "storage": opt(o, "compactStorage", "temp") })
   if (isOn(o, "headsUp", false)) (m13 as any)(on, { "language": opt(o, "language", "en") })
   if (isOn(o, "catchMeUp", false)) (m14 as any)(on, { "language": opt(o, "language", "en") })
+  if (isOn(o, "codebaseMap", false)) (m15 as any)(on, { "claudeMd": opt(o, "codebaseMapClaudeMd", "auto"), "language": opt(o, "language", "en") })
 }

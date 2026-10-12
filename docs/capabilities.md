@@ -50,7 +50,7 @@ The setting **Import strategy** (`importStrategy` in `box.json`, also in the win
 - **auto** (default): plain function-hook mods are integrated, everything else is managed natively.
 - **native**: every plugin is managed natively; the box only switches, configures, updates and removes it.
 
-Both are built and tested. Which one becomes the default is still to be decided.
+Both are built and tested. **auto** is the default; **native** is there for anyone who wants every plugin kept separate.
 
 ## Security
 

@@ -64,12 +64,19 @@ export type Theme = {
   bg: string
 }
 
+// Mod Box: the pane's tab (files or the Codebase Map's features) and the feature opened there.
+export type FileView = {
+  tab: 'files' | 'features'
+  feature: string
+}
+
 declare module 'claude-code' {
   interface PluginState {
     filetree: {
       tree: FileTree
       theme: Theme
       activity: Activity[]
+      view: FileView
     }
   }
 }

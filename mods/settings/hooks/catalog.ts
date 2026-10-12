@@ -670,8 +670,8 @@ export const CATALOG: CatalogMod[] = [
       "de": "Filetree"
     },
     "description": {
-      "en": "File tree side pane (/filetree); files light up when Claude reads or writes them.",
-      "de": "Dateibaum-Seitenleiste (/filetree); Dateien leuchten auf, wenn Claude sie liest oder schreibt."
+      "en": "File tree side pane (/filetree); files light up when Claude reads or writes them. With the Codebase Map on, a Features tab shows its features, what Claude is editing and the blueprint actions.",
+      "de": "Dateibaum-Seitenleiste (/filetree); Dateien leuchten auf, wenn Claude sie liest oder schreibt. Mit eingeschalteter Codebase-Karte zeigt ein Reiter „Features“ deren Features, was Claude gerade bearbeitet, und die Blueprint-Aktionen."
     },
     "group": "display",
     "costs": null,
@@ -1541,6 +1541,76 @@ export const CATALOG: CatalogMod[] = [
       ],
       "needs": []
     }
+  },
+  {
+    "id": "codebase-map",
+    "toggle": "codebaseMap",
+    "default": false,
+    "band": false,
+    "title": {
+      "en": "Codebase Map",
+      "de": "Codebase-Karte"
+    },
+    "description": {
+      "en": "Feature map of the codebase from docs/blueprints: dependency graph with live highlighting of the features Claude edits, a freshness band, a CLAUDE.md pointer for agents and mapper instructions (machine-checked edges, optional Confluence mirror) that load only when you ask for blueprint work.",
+      "de": "Feature-Karte der Codebase aus docs/blueprints: Abhängigkeitsgraph mit Live-Hervorhebung der Features, die Claude bearbeitet, ein Aktualitäts-Band, ein CLAUDE.md-Verweis für Agenten und die Mapper-Anleitung (maschinell geprüfte Kanten, optional Confluence-Spiegel), die nur bei Blueprint-Arbeit geladen wird."
+    },
+    "group": "display",
+    "costs": {
+      "en": "Only when you ask for blueprint work: creating a blueprint reads the whole repo once (hundreds of thousands of tokens on a large repo), an update reads only the changed features. While a blueprint exists, the CLAUDE.md pointer adds about 500 tokens per session (switch off with the CLAUDE.md option).",
+      "de": "Nur wenn du Blueprint-Arbeit verlangst: Ein neuer Blueprint liest das ganze Repo einmal (bei großen Repos Hunderttausende Tokens), ein Update nur die geänderten Features. Solange ein Blueprint existiert, kostet der CLAUDE.md-Verweis rund 500 Tokens je Session (abschaltbar über die CLAUDE.md-Option)."
+    },
+    "params": [
+      {
+        "key": "codebaseMapClaudeMd",
+        "type": "string",
+        "multiple": false,
+        "title": {
+          "en": "Codebase Map: CLAUDE.md pointer",
+          "de": "Codebase-Karte: CLAUDE.md-Verweis"
+        },
+        "description": {
+          "en": "auto: keeps a pointer block to docs/blueprints in CLAUDE.md of repos with a blueprint; off: never writes CLAUDE.md and removes the block at the next session start.",
+          "de": "auto: hält in Repos mit Blueprint einen Verweis-Block auf docs/blueprints in der CLAUDE.md; off: schreibt nie in die CLAUDE.md und entfernt den Block beim nächsten Session-Start."
+        },
+        "labels": {},
+        "options": [
+          "auto",
+          "off"
+        ],
+        "default": "auto"
+      }
+    ],
+    "imported": true,
+    "upstream": "codebase-map",
+    "source": "https://github.com/LupusMalusDeviant/codebase-map",
+    "commands": [
+      {
+        "name": "/codebase-map [create|update|check|publish]",
+        "text": {
+          "en": "open the map; with an argument, prepare the blueprint prompt",
+          "de": "Karte öffnen; mit Argument den Blueprint-Prompt vorbereiten"
+        }
+      }
+    ],
+    "tokens": "optional",
+    "needs": [],
+    "compat": {
+      "surfaces": [
+        "terminal",
+        "desktop",
+        "vscode"
+      ],
+      "os": [
+        "windows",
+        "mac",
+        "linux"
+      ],
+      "needs": [
+        "git",
+        "node"
+      ]
+    }
   }
 ]
 export const PROFILES: CatalogProfile[] = [
@@ -1605,6 +1675,10 @@ export const PROFILES: CatalogProfile[] = [
       ],
       [
         "catchMeUp",
+        false
+      ],
+      [
+        "codebaseMap",
         false
       ]
     ]
@@ -1671,6 +1745,10 @@ export const PROFILES: CatalogProfile[] = [
       [
         "catchMeUp",
         false
+      ],
+      [
+        "codebaseMap",
+        true
       ]
     ]
   },
@@ -1736,6 +1814,10 @@ export const PROFILES: CatalogProfile[] = [
       [
         "catchMeUp",
         false
+      ],
+      [
+        "codebaseMap",
+        false
       ]
     ]
   },
@@ -1800,6 +1882,10 @@ export const PROFILES: CatalogProfile[] = [
       ],
       [
         "catchMeUp",
+        true
+      ],
+      [
+        "codebaseMap",
         true
       ]
     ]
