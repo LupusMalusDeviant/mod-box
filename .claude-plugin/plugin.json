@@ -87,7 +87,7 @@
     "filetree": {
       "type": "boolean",
       "title": "Filetree",
-      "description": "File tree side pane (/filetree); files light up when Claude reads or writes them. With the Codebase Map on, a Features tab shows its features, what Claude is editing and the blueprint actions.",
+      "description": "File tree side pane (/filetree); files light up when Claude reads or writes them. Right-click (or o) opens \"Open with\": default app, the editors, IDEs and browsers found, preview, show in folder, copy path. With the Codebase Map on, a Features tab shows its features, what Claude is editing and the blueprint actions.",
       "default": true
     },
     "replayTheater": {
@@ -300,6 +300,12 @@
       "default": "",
       "title": "Filetree: open with",
       "description": "Empty: default app. preview: show in the pane. Anything else is a command; {path} is the file, {dir} its folder."
+    },
+    "filetreeOpenWith": {
+      "type": "string",
+      "default": "",
+      "title": "Filetree: open with (programs)",
+      "description": "Extra programs for the right-click menu, besides the ones found: \"Name=command; Name2=command\". {path} is the file, {dir} its folder."
     },
     "cacheMeterTtl": {
       "type": "string",

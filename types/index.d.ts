@@ -468,6 +468,9 @@ declare module 'claude-code' {
       ft_theme: Theme
       ft_activity: Activity[]
       ft_view: FileView
+      // Mod Box: the file or folder whose "Open with" menu is open ('' = none), and the programs found (id → path)
+      ft_menu: string
+      ft_apps: Record<string, string> | null
 
       // next-steps
       ns_steps: NextSteps | null; ns_active: boolean

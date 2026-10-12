@@ -578,8 +578,8 @@
       "toggle": "filetree",
       "title": "Filetree",
       "group": "display",
-      "description": "File tree side pane (/filetree); files light up when Claude reads or writes them. With the Codebase Map on, a Features tab shows its features, what Claude is editing and the blueprint actions.",
-      "description_de": "Dateibaum-Seitenleiste (/filetree); Dateien leuchten auf, wenn Claude sie liest oder schreibt. Mit eingeschalteter Codebase-Karte zeigt ein Reiter „Features“ deren Features, was Claude gerade bearbeitet, und die Blueprint-Aktionen.",
+      "description": "File tree side pane (/filetree); files light up when Claude reads or writes them. Right-click (or o) opens \"Open with\": default app, the editors, IDEs and browsers found, preview, show in folder, copy path. With the Codebase Map on, a Features tab shows its features, what Claude is editing and the blueprint actions.",
+      "description_de": "Dateibaum-Seitenleiste (/filetree); Dateien leuchten auf, wenn Claude sie liest oder schreibt. Rechtsklick (oder o) öffnet „Öffnen mit“: Standard-App, gefundene Editoren, IDEs und Browser, Vorschau, im Ordner zeigen, Pfad kopieren. Mit eingeschalteter Codebase-Karte zeigt ein Reiter „Features“ deren Features, was Claude gerade bearbeitet, und die Blueprint-Aktionen.",
       "default": true,
       "entry": "mods/filetree/hooks/register.tsx",
       "options": [
@@ -671,6 +671,16 @@
           "title_de": "Filetree: Öffnen mit",
           "description": "Empty: default app. preview: show in the pane. Anything else is a command; {path} is the file, {dir} its folder.",
           "description_de": "Leer: Standard-App. preview: in der Leiste anzeigen. Sonst ein Befehl; {path} ist die Datei, {dir} ihr Ordner."
+        },
+        {
+          "key": "filetreeOpenWith",
+          "field": "openWith",
+          "type": "string",
+          "default": "",
+          "title": "Filetree: open with (programs)",
+          "title_de": "Filetree: Öffnen mit (Programme)",
+          "description": "Extra programs for the right-click menu, besides the ones found: \"Name=command; Name2=command\". {path} is the file, {dir} its folder.",
+          "description_de": "Weitere Programme für das Rechtsklick-Menü, zusätzlich zu den gefundenen: \"Name=Befehl; Name2=Befehl\". {path} ist die Datei, {dir} ihr Ordner."
         }
       ],
       "state": {
