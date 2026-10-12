@@ -58,7 +58,7 @@ The own mods and the forks with real changes are also available one by one, with
 - Validation is not an audit: `claude plugin validate` proves that a plugin loads, not that it is harmless.
 - Secret Guard and Blast Radius are guards, not guarantees.
 - The box writes to `~/.claude/settings.json` only where you ask it to: switches and options (in `pluginConfigs`, where the desktop app does not list plugin rows in `/config`) and the auto-compact window when you set it.
-- The box sends none of your data anywhere. It only fetches from git sources you add, and CI Watch talks to GitHub through your own `gh`. Mods that call a model (Next Steps, Heads-up, Catch Me Up, the handoff note, keep-warm) say so and show their token use.
+- The box sends none of your data anywhere. It only fetches from git sources you add, and CI Watch talks to GitHub through your own `gh`. Mods that call a model (Next Steps, Catch Me Up, the handoff note, keep-warm) say so and show their token use.
 
 ## The window
 
@@ -104,7 +104,6 @@ The same window runs in terminal Claude Code, as a side pane next to the convers
 | `subagentSaver` | Subagent Saver | on | Search subagents (Explore) that got no model of their own run on Sonnet (or Haiku) instead of inheriting the main model. An explicit model, forks, teammates and plugin agents stay untouched; the band shows how many were routed. With Claude Code's own `CLAUDE_CODE_SUBAGENT_MODEL` set, it stays out. | no |
 | `handoff` | Handoff Note | on | `/handoff` writes `.claude/handoff.local.md`, and a new session offers to continue from it. | one request over the warm cache |
 | `visibleCompact` | Visible Compact | on | Before/after view of `/compact` (`/show-last-compact`). | no |
-| `headsUp` | Heads-up | off | Points out one easily missed but important thing in a long answer. | a Haiku call per long answer |
 | `catchMeUp` | Catch Me Up | off | Live summary of the session (`/catch-me-up`). | Haiku calls after turns |
 | `codebaseMap` | Codebase Map | off | Feature map from `docs/blueprints` with live highlighting of the features Claude edits, a freshness band and a `CLAUDE.md` pointer; mapper instructions with machine-checked edges load only when you ask for blueprint work (`/codebase-map`). | only blueprint runs you ask for; about 500 tokens per session for the `CLAUDE.md` pointer |
 
@@ -132,9 +131,9 @@ The window lists them too: next to each mod's name, and in full under ⚙.
 
 <p align="center"><img src="docs/images/band.png" alt="The band: warm cache, hit rate, context as weather, plan limits" width="760"><br><img src="docs/images/band-ci.png" alt="The band with a green CI run on its own line" width="760"></p>
 
-CI Watch, Sign Guard, Cache Meter, Handoff Note and Heads-up hand their displays to the box, which draws them all in one band above the prompt:
+CI Watch, Sign Guard, Cache Meter and Handoff Note hand their displays to the box, which draws them all in one band above the prompt:
 
-- **Band layout** *compact* puts calm displays on one shared line, and urgent ones (red CI, a sign offer, a heads-up) on lines of their own. *lines* gives each display its own line.
+- **Band layout** *compact* puts calm displays on one shared line, and urgent ones (red CI, a sign offer) on lines of their own. *lines* gives each display its own line.
 - **Display**, per mod, chooses band, status line or off.
 - **Order** is set with arrows in the Mods tab.
 
@@ -177,6 +176,8 @@ Not every plugin can live inside the box. Before anything changes, the box reads
 - 🔌 **managed natively**: plugins with skills, slash-command files, agents, MCP or LSP servers, classic hooks, dependencies, secrets or `${CLAUDE_PLUGIN_ROOT}` stay plugins of their own. The box installs them through Claude Code (`claude plugin install`), shows their parts and token cost, switches, configures, updates (with a diff) and removes them, all in the same window. Plugins without a marketplace go through the box's local marketplace. A plugin you installed yourself comes under the box with **Adopt**.
 - ⛔ **blocked**: a command or tool name is already taken, or there is no license. Integration waits until that is settled; the native way often still works.
 - ✗ **not supported**: for example a plugin whose hook module is missing.
+
+Mods that ship with Claude Code itself (`@builtin`, such as *You should know*, a side agent that points out what you might miss) show up in the same card under **Built into Claude Code**, with a switch where Claude Code allows one. These switches apply to all projects.
 
 The setting **Import strategy** chooses between *automatic* (integrate where nothing is lost, otherwise native) and *always native*. Trust and profiles work the same way for both kinds: a natively managed plugin is installed switched off, profiles skip it until you trust it, and once trusted it follows the profile rules by its group and token use.
 
@@ -244,7 +245,7 @@ These mods come from other repositories and **were modified for the Mod Box**. E
 | Savvy Progress | [JohnnyVizz/claude-kit](https://github.com/JohnnyVizz/claude-kit/tree/main/plugins/savvy-progress) | johnnyvizz | MIT | a type fix; state and tool names rewritten |
 | Visible Compact | [nvsravank/visible-compact](https://github.com/nvsravank/visible-compact) | nvsravank | MIT | state, matchers and paths rewritten |
 
-**Heads-up** is a re-implementation inspired by "You Should Know", which ships with Claude Code (`/plugin enable cc-plugin-you-should-know@builtin`). **Cache Meter, Subagent Saver, Secret Guard, CI Watch, Sign Guard, Handoff Note**, the window and the tools were written for this box.
+Heads-up was retired in favour of "You Should Know", which ships with Claude Code; the window switches it under **Built into Claude Code**. **Cache Meter, Subagent Saver, Secret Guard, CI Watch, Sign Guard, Handoff Note**, the window and the tools were written for this box.
 
 ## License
 

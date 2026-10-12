@@ -151,6 +151,29 @@ describe('native management', () => {
     assert.equal(p.trusted, false)
   })
 
+  test('built-in mods: switched through Claude Code, in this profile\'s user settings only', () => {
+    // Which built-ins a build offers is asked once and cached; a fresh profile without sign-in is
+    // offered none, so the cache is told this one is there.
+    const first = box(['native', 'builtins'])
+    assert.equal(first.ok, true, first.error)
+    const cacheFile = path.join(env.MODBOX_HOME, 'builtins.json')
+    const cache = JSON.parse(fs.readFileSync(cacheFile, 'utf8'))
+    cache.items['cc-plugin-you-should-know'] = { available: true, description: 'You should know: a side agent.' }
+    fs.writeFileSync(cacheFile, JSON.stringify(cache))
+    const off = box(['native', 'builtins']).builtins.find(b => b.name === 'you-should-know')
+    assert.deepEqual([off.enabled, off.isDefault, off.switchable], [false, true, true])
+    const on = box(['native', 'builtin-on', 'you-should-know'])
+    assert.equal(on.ok, true, on.error)
+    const settings = JSON.parse(fs.readFileSync(path.join(env.CLAUDE_CONFIG_DIR, 'settings.json'), 'utf8'))
+    assert.equal(settings.enabledPlugins['cc-plugin-you-should-know@builtin'], true)
+    const now = box(['native', 'builtins']).builtins.find(b => b.name === 'you-should-know')
+    assert.deepEqual([now.enabled, now.isDefault], [true, false])
+    assert.equal(box(['native', 'builtin-off', 'you-should-know']).ok, true)
+    // the locked ones are not switched here
+    const locked = box(['native', 'builtin-off', 'sec-default'])
+    assert.equal(locked.ok, false)
+  })
+
   test('uninstall: gone from Claude Code and from the registry', () => {
     for (const id of ['fx-mixed@modbox-fixtures', 'fx-secret@modbox-fixtures', 'fx-classic@modbox-fixtures', 'fx-folder@mod-box-local']) {
       const r = box(['native', 'uninstall', id])

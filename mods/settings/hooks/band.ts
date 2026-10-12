@@ -5,7 +5,7 @@
 export type BandPart = {
   /** The mod's switch key, e.g. "cacheMeter". */
   id: string
-  /** Wants attention (CI red, sign offer, heads-up …): always its own line with its buttons. */
+  /** Wants attention (CI red, sign offer …): always its own line with its buttons. */
   urgent: boolean
   /** One short element for the compact line. */
   short: unknown

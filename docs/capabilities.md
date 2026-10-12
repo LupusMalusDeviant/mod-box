@@ -34,6 +34,7 @@ A Claude Code plugin can bring many kinds of parts. The box handles each one in 
 | Plugin from a marketplace (`name@market`) | not possible | **native**: install, details, options, enable/disable, update with diff, uninstall |
 | Plugin repo or folder without a marketplace | not possible | **native** through the box's own local marketplace `mod-box-local` |
 | A plugin you installed yourself | invisible to the box | **native** after *adopt* |
+| Mods built into Claude Code (`@builtin`) | invisible to the box | listed under **Built into Claude Code**; the switchable ones switched through `claude plugin enable|disable` |
 | Marketplace that runs a command to fetch the plugin | – | **native**, but the box shows the command and its SHA-256 and waits for your OK |
 | Foreign code not trusted yet | imported mods: off until trusted | the same for integrated *and* native: installed off, profiles skip it, no switching on before *Trust* |
 | Profiles and mods added later | integrated mods: by rule | integrated **and** native: by the same rule (`group`, `tokens`) |
@@ -67,6 +68,7 @@ Both are built and tested. **auto** is the default; **native** is there for anyo
 - **No masked input** in the window (the `Input` element has none). So secrets are not typed into the window: it copies `/plugin configure <id>` for you.
 - **`claude plugin details` does not count function-hook modules**, so a native mod made only of hooks shows 0 parts there; the box shows its own inventory next to it.
 - **Type errors in foreign code** are not fixed by the box. A mod that does not type-check against the current Claude Code types (seen in `md-preview` and `agent-radar`) still loads, because Claude Code strips the types. Such a mod is imported anyway; check it if it misbehaves.
+- **Built-in mods are switched for all projects.** `claude plugin enable|disable <name>@builtin` writes the user settings whatever scope is passed (checked with 2.1.295). Which built-ins exist depends on the build and the account; `claude plugin list` does not show them, so the box asks for the documented ones one by one. Telemetry follows the analytics setting and sec-default cannot be switched off; the box shows both without a switch.
 - **A native install needs a marketplace.** The box solves this with its local marketplace `mod-box-local` under `$MODBOX_HOME/local-market`.
 
 ## Tested with real plugins

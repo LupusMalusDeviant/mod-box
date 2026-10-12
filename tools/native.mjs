@@ -322,3 +322,72 @@ export function uninstall(exe, id, { prune = false, keepData = false } = {}) {
   writeRegistry(reg)
   return { ok: true, id, message: jsonLine(r.stdout)?.message ?? firstLine(r.stdout) }
 }
+
+// ---------------------------------------------------------------- built-in mods
+// Mods that ship inside Claude Code (`<name>@builtin`). `claude plugin list` does not show them,
+// so the documented ones are asked for one by one (`plugin details`; a missing one is not offered
+// to this account or build). Their switch is `claude plugin enable|disable <name>@builtin`, which
+// always writes the user's settings (enabledPlugins), whatever scope is passed; without an entry
+// there, the built-in default holds. https://code.claude.com/docs/en/plugins/mods/overview
+export const BUILTINS = [
+  { name: 'cc-plugin-you-should-know', default: false, switchable: true },
+  { name: 'cc-plugin-agents-md', default: true, switchable: true },
+  { name: 'cc-plugin-diff', default: true, switchable: true },
+  { name: 'cc-plugin-plugin-authoring', default: true, switchable: true },
+  { name: 'cc-plugin-telemetry', default: true, switchable: false, note: 'analytics' },
+  { name: 'cc-plugin-sec-default', default: true, switchable: false, note: 'locked' },
+]
+const BUILTIN_CACHE = () => path.join(HOME(), 'builtins.json')
+const userSettings = () => path.join(process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude'), 'settings.json')
+
+/** The built-in mods this build offers, with description and whether each is on. */
+export function builtins(exe, { refresh = false } = {}) {
+  let cache = null
+  try {
+    cache = JSON.parse(fs.readFileSync(BUILTIN_CACHE(), 'utf8'))
+  } catch {
+    cache = null
+  }
+  // Which built-ins exist only changes with the Claude Code build: asked once per build.
+  if (refresh || !cache || cache.exe !== exe) {
+    const items = {}
+    for (const b of BUILTINS) {
+      const r = cli(exe, ['plugin', 'details', `${b.name}@builtin`], { timeout: 60_000 })
+      items[b.name] = { available: r.code === 0, description: /Description:\s*([^\n]+)/.exec(r.stdout)?.[1]?.trim() ?? '' }
+    }
+    cache = { exe, at: new Date().toISOString(), items }
+    fs.mkdirSync(HOME(), { recursive: true })
+    fs.writeFileSync(BUILTIN_CACHE(), JSON.stringify(cache, null, 2) + '\n')
+  }
+  let enabled = {}
+  try {
+    enabled = JSON.parse(fs.readFileSync(userSettings(), 'utf8')).enabledPlugins ?? {}
+  } catch {
+    enabled = {}
+  }
+  return BUILTINS.filter(b => cache.items[b.name]?.available).map(b => {
+    const id = `${b.name}@builtin`
+    const explicit = typeof enabled[id] === 'boolean'
+    return {
+      id,
+      name: b.name.replace(/^cc-plugin-/, ''),
+      description: cache.items[b.name].description,
+      enabled: explicit ? enabled[id] : b.default,
+      isDefault: !explicit,
+      switchable: b.switchable,
+      note: b.note ?? null,
+    }
+  })
+}
+
+/** Switches a built-in mod (user settings, through Claude Code). */
+export function setBuiltin(exe, name, on) {
+  const b = BUILTINS.find(x => x.name === name || x.name === `cc-plugin-${name}`)
+  if (!b) throw new Error(`unknown built-in mod ${name}`)
+  if (!b.switchable) throw new Error(`${b.name} is not switched here (${b.note})`)
+  const r = cli(exe, ['plugin', on ? 'enable' : 'disable', `${b.name}@builtin`, '--json'])
+  const j = jsonLine(r.stdout) ?? jsonLine(r.stderr)
+  const already = /already (enabled|disabled)/i.test(`${r.stdout}${r.stderr}`)
+  if ((r.code !== 0 || (j && j.outcome && j.outcome !== 'ok')) && !already) throw new Error(j?.message ?? (firstLine(r.stderr) || firstLine(r.stdout) || 'failed'))
+  return { ok: true, id: `${b.name}@builtin`, enabled: on, unchanged: already, restart: !already }
+}

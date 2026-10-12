@@ -6,8 +6,8 @@
       "type": "string",
       "title": "Language",
       "title_de": "Sprache",
-      "description": "Language of the Mod Box window and of the texts its mods write (Next Steps, Catch Me Up, Heads-up, handoff note).",
-      "description_de": "Sprache des Mod-Box-Fensters und der Texte, die seine Mods schreiben (Next Steps, Catch Me Up, Heads-up, Übergabe-Notiz).",
+      "description": "Language of the Mod Box window and of the texts its mods write (Next Steps, Catch Me Up, handoff note).",
+      "description_de": "Sprache des Mod-Box-Fensters und der Texte, die seine Mods schreiben (Next Steps, Catch Me Up, Übergabe-Notiz).",
       "default": "en",
       "options": [
         "de",
@@ -29,8 +29,8 @@
       "type": "string",
       "title": "Band layout",
       "title_de": "Band-Anordnung",
-      "description": "compact: calm displays share one line; urgent ones (CI red, heads-up, sign offer) always get their own line. lines: one line per display.",
-      "description_de": "kompakt: ruhige Anzeigen teilen sich eine Zeile; dringende (CI rot, Heads-up, Signier-Angebot) bekommen immer eine eigene. Zeilen: jede Anzeige in eigener Zeile.",
+      "description": "compact: calm displays share one line; urgent ones (CI red, sign offer) always get their own line. lines: one line per display.",
+      "description_de": "kompakt: ruhige Anzeigen teilen sich eine Zeile; dringende (CI rot, Signier-Angebot) bekommen immer eine eigene. Zeilen: jede Anzeige in eigener Zeile.",
       "default": "compact",
       "options": [
         "compact",
@@ -54,7 +54,7 @@
       "title_de": "Band-Reihenfolge",
       "description": "Order of the displays above the prompt (switch keys, comma separated). The window sets it with arrows.",
       "description_de": "Reihenfolge der Anzeigen über dem Prompt (Schalter-Namen, mit Komma getrennt). Das Fenster setzt sie mit Pfeilen.",
-      "default": "ciWatch,signGuard,headsUp,handoff,cacheMeter"
+      "default": "ciWatch,signGuard,handoff,cacheMeter"
     },
     {
       "key": "diagnose",
@@ -1216,42 +1216,6 @@
           "terminal",
           "desktop",
           "vscode"
-        ],
-        "os": [
-          "windows",
-          "mac",
-          "linux"
-        ],
-        "needs": []
-      }
-    },
-    {
-      "id": "heads-up",
-      "toggle": "headsUp",
-      "title": "Heads-up (You Should Know)",
-      "group": "watchers",
-      "description": "A second model reads longer answers and raises one easily missed but important point.",
-      "description_de": "Ein zweites Modell liest längere Antworten und hebt einen leicht überlesenen, wichtigen Hinweis hervor.",
-      "costs": "a small Haiku call per longer answer",
-      "costs_de": "ein kleiner Haiku-Aufruf je längerer Antwort",
-      "default": false,
-      "entry": "mods/heads-up/hooks/register.tsx",
-      "pass": {
-        "language": "language"
-      },
-      "state": {
-        "from": "heads-up",
-        "prefix": "hu",
-        "contract": "mods/heads-up/types/contract.d.ts"
-      },
-      "band": true,
-      "tokens": "always",
-      "compat": {
-        "surfaces": [
-          "terminal",
-          "desktop",
-          "vscode",
-          "mobile"
         ],
         "os": [
           "windows",
