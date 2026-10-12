@@ -66,7 +66,8 @@ group('Desktop pet: in the session', () => {
     expect(ps).toHaveLength(2)
     expect(ps[0]!.at(-1)).toContain('csc')
     expect(ps[1]!.at(-1)).toContain('Start-Process')
-    expect(writes[0]!.path).toBe('C:\\Temp\\mod-box-pet.txt')
+    // Linux resolves C:\Temp against the working folder (<cwd>/C:\Temp\...): compare the end only
+    expect(writes[0]!.path.split(String.fromCharCode(92)).join('/')).toMatch(/(^|\/)C:\/Temp\/mod-box-pet\.txt$/)
     expect(writes[0]!.text).toContain('kind=hello')
 
     await $.turn.start({ text: 'fix the login', turnId: 't1' })
