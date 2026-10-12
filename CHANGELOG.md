@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.5.0
+
+- **Package Guard** (new): before an install or `npx`/`uvx` run, asks the public registry and holds made-up, brand-new, removed or typosquatted packages; allow in the band or with `/pkg-allow`.
+- **Read Guard** (new): holds whole-file reads of large files, lockfiles, minified code and source maps (also `cat`/`type`/`Get-Content`) and names a better way; the second try goes through.
+- **Desktop Pet** (new, Windows, off by default): an always-on-top box with a speech bubble that says what Claude is doing and sums up each turn.
+- **Codebase Map** (new): feature map of the repo with a freshness band, a CLAUDE.md pointer and an on-demand mapper; the Filetree shows the features in its own tab.
+- **Filetree**: right-click *Open with* (default app, found editors, IDEs and browsers by file type).
+- **Built into Claude Code**: the window lists and switches Claude Code's built-in mods. **Heads-up retired** in favour of the built-in "You should know".
+- **CI Watch** notifies on red and leaves new PRs in the desktop app to the app; **Subagent Saver** stays out when `CLAUDE_CODE_SUBAGENT_MODEL` is set.
+- **Native management**: plugins the box cannot carry (skills, agents, MCP/LSP servers, classic hooks …) stay plugins of their own, installed, switched, configured, updated and removed from the window; import inspects first and refuses what it cannot carry.
+- Updates for every original (also folders without git, media and binary files); typed option defaults; required options gate switching on.
+- claude-mods also offers Package Guard, Read Guard and Desktop Pet on their own.
+
 ## 0.4.1
 
 - `tools/box.mjs export`: standalone plugins for single mods, published as the claude-mods marketplace.
