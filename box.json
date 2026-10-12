@@ -1235,6 +1235,102 @@
       }
     },
     {
+      "id": "read-guard",
+      "toggle": "readGuard",
+      "title": "Read Guard",
+      "title_de": "Lese-Wächter",
+      "group": "context",
+      "description": "Holds a whole-file Read (no offset/limit) of a file above the limit, a lockfile, minified code or a source map, and the same via cat, type or Get-Content in the shell; tells Claude the size, a token estimate and a better way (Grep, offset/limit). A second try at the same file goes through. Claude Code itself stops only at about 25,000 tokens.",
+      "description_de": "Hält ein Read der ganzen Datei (ohne offset/limit) an, wenn sie über der Grenze liegt, ein Lockfile, minifizierter Code oder eine Source-Map ist, ebenso cat, type oder Get-Content in der Shell; nennt Claude Grösse, Token-Schätzung und einen besseren Weg (Grep, offset/limit). Ein zweiter Versuch an derselben Datei geht durch. Claude Code selbst stoppt erst bei etwa 25.000 Tokens.",
+      "default": true,
+      "entry": "mods/read-guard/hooks/register.tsx",
+      "pass": {
+        "language": "language"
+      },
+      "options": [
+        {
+          "key": "readLimit",
+          "field": "limitKb",
+          "type": "string",
+          "default": "50",
+          "options": [
+            "20",
+            "50",
+            "100",
+            "off"
+          ],
+          "title": "Read Guard: limit (KB)",
+          "title_de": "Lese-Wächter: Grenze (KB)",
+          "description": "Files above this size are held when read whole. off: only lockfiles, minified files and source maps.",
+          "description_de": "Dateien über dieser Grösse werden angehalten, wenn sie ganz gelesen werden. aus: nur Lockfiles, minifizierte Dateien und Source-Maps.",
+          "labels": {
+            "de": {
+              "off": "aus"
+            }
+          }
+        },
+        {
+          "key": "readMode",
+          "field": "mode",
+          "type": "string",
+          "default": "block",
+          "options": [
+            "block",
+            "warn"
+          ],
+          "title": "Read Guard: mode",
+          "title_de": "Lese-Wächter: Modus",
+          "description": "block: hold the first try and tell Claude a better way. warn: only a notice.",
+          "description_de": "block: den ersten Versuch anhalten und Claude einen besseren Weg nennen. warn: nur ein Hinweis.",
+          "labels": {
+            "de": {
+              "block": "anhalten",
+              "warn": "nur warnen"
+            },
+            "en": {
+              "block": "hold",
+              "warn": "warn only"
+            }
+          }
+        },
+        {
+          "key": "readShell",
+          "field": "shell",
+          "type": "string",
+          "default": "on",
+          "options": [
+            "on",
+            "off"
+          ],
+          "title": "Read Guard: shell too",
+          "title_de": "Lese-Wächter: auch Shell",
+          "description": "on: also cat, type and Get-Content of a whole file.",
+          "description_de": "an: auch cat, type und Get-Content einer ganzen Datei.",
+          "labels": {
+            "de": {
+              "on": "an",
+              "off": "aus"
+            }
+          }
+        }
+      ],
+      "tokens": "none",
+      "compat": {
+        "surfaces": [
+          "terminal",
+          "desktop",
+          "vscode",
+          "mobile"
+        ],
+        "os": [
+          "windows",
+          "mac",
+          "linux"
+        ],
+        "needs": []
+      }
+    },
+    {
       "id": "heads-up",
       "toggle": "headsUp",
       "title": "Heads-up (You Should Know)",

@@ -16,9 +16,10 @@ import { register as m10 } from '../mods/cache-meter/hooks/register' // cache-me
 import { register as m11 } from '../mods/subagent-saver/hooks/register' // subagent-saver
 import { register as m12 } from '../mods/handoff/hooks/register' // handoff
 import { register as m13 } from '../mods/visible-compact/hooks/register' // visible-compact
-import { register as m14 } from '../mods/heads-up/hooks/register' // heads-up
-import { register as m15 } from '../mods/catch-me-up/hooks/register.js' // catch-me-up
-import { register as m16 } from '../mods/codebase-map/hooks/register' // codebase-map
+import { register as m14 } from '../mods/read-guard/hooks/register' // read-guard
+import { register as m15 } from '../mods/heads-up/hooks/register' // heads-up
+import { register as m16 } from '../mods/catch-me-up/hooks/register.js' // catch-me-up
+import { register as m17 } from '../mods/codebase-map/hooks/register' // codebase-map
 
 export function isOn(options: Record<string, unknown>, key: string, fallback: boolean): boolean {
   const v = options[key]
@@ -61,7 +62,8 @@ export const register: Register = (on, options) => {
   if (isOn(o, "subagentSaver", true)) (m11 as any)(on, { "model": opt(o, "subagentSaverModel", "sonnet"), "types": opt(o, "subagentSaverTypes", "Explore"), "language": opt(o, "language", "en") })
   if (isOn(o, "handoff", true)) (m12 as any)(on, { "auto": opt(o, "handoffAuto", "off"), "language": opt(o, "language", "en"), "ttlMinutes": opt(o, "cacheMeterTtl", "60") })
   if (isOn(o, "visibleCompact", true)) (m13 as any)(on, { "storage": opt(o, "compactStorage", "temp") })
-  if (isOn(o, "headsUp", false)) (m14 as any)(on, { "language": opt(o, "language", "en") })
-  if (isOn(o, "catchMeUp", false)) (m15 as any)(on, { "language": opt(o, "language", "en") })
-  if (isOn(o, "codebaseMap", false)) (m16 as any)(on, { "claudeMd": opt(o, "codebaseMapClaudeMd", "auto"), "language": opt(o, "language", "en") })
+  if (isOn(o, "readGuard", true)) (m14 as any)(on, { "limitKb": opt(o, "readLimit", "50"), "mode": opt(o, "readMode", "block"), "shell": opt(o, "readShell", "on"), "language": opt(o, "language", "en") })
+  if (isOn(o, "headsUp", false)) (m15 as any)(on, { "language": opt(o, "language", "en") })
+  if (isOn(o, "catchMeUp", false)) (m16 as any)(on, { "language": opt(o, "language", "en") })
+  if (isOn(o, "codebaseMap", false)) (m17 as any)(on, { "claudeMd": opt(o, "codebaseMapClaudeMd", "auto"), "language": opt(o, "language", "en") })
 }

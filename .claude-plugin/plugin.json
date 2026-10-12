@@ -1,7 +1,7 @@
 {
   "name": "mod-box",
   "version": "0.4.1",
-  "description": "16 Claude Code mods in one plugin, each switchable on its own; /mod-box opens the window to switch, configure and import mods.",
+  "description": "17 Claude Code mods in one plugin, each switchable on its own; /mod-box opens the window to switch, configure and import mods.",
   "author": {
     "name": "Lupus Malus Deviant"
   },
@@ -130,6 +130,12 @@
       "type": "boolean",
       "title": "Visible Compact",
       "description": "Shows before and after of /compact side by side; /show-last-compact reopens it.",
+      "default": true
+    },
+    "readGuard": {
+      "type": "boolean",
+      "title": "Read Guard",
+      "description": "Holds a whole-file Read (no offset/limit) of a file above the limit, a lockfile, minified code or a source map, and the same via cat, type or Get-Content in the shell; tells Claude the size, a token estimate and a better way (Grep, offset/limit). A second try at the same file goes through. Claude Code itself stops only at about 25,000 tokens.",
       "default": true
     },
     "headsUp": {
@@ -462,6 +468,38 @@
       ],
       "title": "Visible Compact: storage",
       "description": "temp: the OS temp folder. home: ~/.claude/visible-compact, kept."
+    },
+    "readLimit": {
+      "type": "string",
+      "default": "50",
+      "options": [
+        "20",
+        "50",
+        "100",
+        "off"
+      ],
+      "title": "Read Guard: limit (KB)",
+      "description": "Files above this size are held when read whole. off: only lockfiles, minified files and source maps."
+    },
+    "readMode": {
+      "type": "string",
+      "default": "block",
+      "options": [
+        "block",
+        "warn"
+      ],
+      "title": "Read Guard: mode",
+      "description": "block: hold the first try and tell Claude a better way. warn: only a notice."
+    },
+    "readShell": {
+      "type": "string",
+      "default": "on",
+      "options": [
+        "on",
+        "off"
+      ],
+      "title": "Read Guard: shell too",
+      "description": "on: also cat, type and Get-Content of a whole file."
     },
     "headsUpShow": {
       "type": "string",

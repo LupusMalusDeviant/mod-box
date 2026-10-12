@@ -1530,6 +1530,121 @@ export const CATALOG: CatalogMod[] = [
     }
   },
   {
+    "id": "read-guard",
+    "toggle": "readGuard",
+    "default": true,
+    "band": false,
+    "title": {
+      "en": "Read Guard",
+      "de": "Lese-Wächter"
+    },
+    "description": {
+      "en": "Holds a whole-file Read (no offset/limit) of a file above the limit, a lockfile, minified code or a source map, and the same via cat, type or Get-Content in the shell; tells Claude the size, a token estimate and a better way (Grep, offset/limit). A second try at the same file goes through. Claude Code itself stops only at about 25,000 tokens.",
+      "de": "Hält ein Read der ganzen Datei (ohne offset/limit) an, wenn sie über der Grenze liegt, ein Lockfile, minifizierter Code oder eine Source-Map ist, ebenso cat, type oder Get-Content in der Shell; nennt Claude Grösse, Token-Schätzung und einen besseren Weg (Grep, offset/limit). Ein zweiter Versuch an derselben Datei geht durch. Claude Code selbst stoppt erst bei etwa 25.000 Tokens."
+    },
+    "group": "context",
+    "costs": null,
+    "params": [
+      {
+        "key": "readLimit",
+        "type": "string",
+        "multiple": false,
+        "title": {
+          "en": "Read Guard: limit (KB)",
+          "de": "Lese-Wächter: Grenze (KB)"
+        },
+        "description": {
+          "en": "Files above this size are held when read whole. off: only lockfiles, minified files and source maps.",
+          "de": "Dateien über dieser Grösse werden angehalten, wenn sie ganz gelesen werden. aus: nur Lockfiles, minifizierte Dateien und Source-Maps."
+        },
+        "labels": {
+          "de": {
+            "off": "aus"
+          }
+        },
+        "options": [
+          "20",
+          "50",
+          "100",
+          "off"
+        ],
+        "default": "50"
+      },
+      {
+        "key": "readMode",
+        "type": "string",
+        "multiple": false,
+        "title": {
+          "en": "Read Guard: mode",
+          "de": "Lese-Wächter: Modus"
+        },
+        "description": {
+          "en": "block: hold the first try and tell Claude a better way. warn: only a notice.",
+          "de": "block: den ersten Versuch anhalten und Claude einen besseren Weg nennen. warn: nur ein Hinweis."
+        },
+        "labels": {
+          "de": {
+            "block": "anhalten",
+            "warn": "nur warnen"
+          },
+          "en": {
+            "block": "hold",
+            "warn": "warn only"
+          }
+        },
+        "options": [
+          "block",
+          "warn"
+        ],
+        "default": "block"
+      },
+      {
+        "key": "readShell",
+        "type": "string",
+        "multiple": false,
+        "title": {
+          "en": "Read Guard: shell too",
+          "de": "Lese-Wächter: auch Shell"
+        },
+        "description": {
+          "en": "on: also cat, type and Get-Content of a whole file.",
+          "de": "an: auch cat, type und Get-Content einer ganzen Datei."
+        },
+        "labels": {
+          "de": {
+            "on": "an",
+            "off": "aus"
+          }
+        },
+        "options": [
+          "on",
+          "off"
+        ],
+        "default": "on"
+      }
+    ],
+    "imported": false,
+    "upstream": "read-guard",
+    "source": null,
+    "commands": [],
+    "tokens": "none",
+    "needs": [],
+    "compat": {
+      "surfaces": [
+        "terminal",
+        "desktop",
+        "vscode",
+        "mobile"
+      ],
+      "os": [
+        "windows",
+        "mac",
+        "linux"
+      ],
+      "needs": []
+    }
+  },
+  {
     "id": "heads-up",
     "toggle": "headsUp",
     "default": false,
@@ -1781,6 +1896,10 @@ export const PROFILES: CatalogProfile[] = [
         true
       ],
       [
+        "readGuard",
+        true
+      ],
+      [
         "headsUp",
         false
       ],
@@ -1851,6 +1970,10 @@ export const PROFILES: CatalogProfile[] = [
       ],
       [
         "visibleCompact",
+        true
+      ],
+      [
+        "readGuard",
         true
       ],
       [
@@ -1927,6 +2050,10 @@ export const PROFILES: CatalogProfile[] = [
         false
       ],
       [
+        "readGuard",
+        false
+      ],
+      [
         "headsUp",
         false
       ],
@@ -1997,6 +2124,10 @@ export const PROFILES: CatalogProfile[] = [
       ],
       [
         "visibleCompact",
+        true
+      ],
+      [
+        "readGuard",
         true
       ],
       [

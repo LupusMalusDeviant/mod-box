@@ -111,6 +111,10 @@ export const HOOKS: Record<string, string[]> = {
     "session.start",
     "ui.render"
   ],
+  "readGuard": [
+    "session.start",
+    "tool.call"
+  ],
   "headsUp": [
     "prompt.submit",
     "turn.complete",
