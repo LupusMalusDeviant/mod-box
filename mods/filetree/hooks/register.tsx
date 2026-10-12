@@ -7,6 +7,7 @@ import type { Activity, FileNode, FileTree, FileView, Theme } from '../types'
 import { BRANCH_ICON, chainOf, type GitAction, gitActions, readOnly, readTargets, resolve, TONES } from './git'
 import type { RowSpec, RowsProps, Seg } from './rows'
 import { CHEVRON_CLOSED, CHEVRON_OPEN, fileIcon, GIT_COLOR } from './icons'
+import { APPS, type AppKind, detectCommand, kindsFor, launchCommand, readDetected, readExtraApps, revealCommand } from './apps'
 import { TEXT as MAP_TEXT } from '../../codebase-map/hooks/i18n'
 import {
   ancestorsOf,
@@ -38,6 +39,64 @@ import {
 const TREE = { plugin: 'mod-box', key: 'ft_tree' } as const
 const THEME = { plugin: 'mod-box', key: 'ft_theme' } as const
 const VIEW = { plugin: 'mod-box', key: 'ft_view' } as const
+const MENU = { plugin: 'mod-box', key: 'ft_menu' } as const
+const APPS_FOUND = { plugin: 'mod-box', key: 'ft_apps' } as const
+let extraApps: { label: string; command: string }[] = []
+let detecting: Promise<void> | null = null
+
+// Mod Box: "Open with". The programs are looked for once per session, at the first menu.
+function findApps($: EngineInterface): Promise<void> {
+  detecting ??= (async () => {
+    const os = await osName($)
+    const { argv, env } = detectCommand(os)
+    let found: Record<string, string> = {}
+    try {
+      const run = await $.process.run(argv, { timeoutMs: 20_000, ...(env ? { env } : {}) })
+      found = readDetected(os, run.stdout)
+    } catch {
+      found = {}
+    }
+    await $.state.set(APPS_FOUND, found)
+  })()
+  return detecting
+}
+
+async function openMenu($: EngineInterface, id: string): Promise<void> {
+  await $.state.set(MENU, id)
+  void findApps($)
+}
+
+async function closeMenu($: EngineInterface): Promise<void> {
+  await $.state.set(MENU, '')
+}
+
+async function runOpen($: EngineInterface, what: string, cmd: { argv: string[]; env?: Record<string, string> }): Promise<void> {
+  try {
+    const run = await $.process.run(cmd.argv, { timeoutMs: 15_000, ...(cmd.env ? { env: cmd.env } : {}) })
+    if (run.exitCode !== 0) $.ui.toast(`${tx('Konnte nicht öffnen', 'Could not open')} (${what}): ${run.stderr.trim().split('\n')[0] || `exit ${run.exitCode}`}`)
+  } catch {
+    $.ui.toast(`${tx('Konnte nicht öffnen', 'Could not open')} (${what})`)
+  }
+}
+
+async function openWithApp($: EngineInterface, appId: string, path: string): Promise<void> {
+  const target = ((await $.state.get(APPS_FOUND)).value ?? {})[appId]
+  const app = APPS.find(a => a.id === appId)
+  await closeMenu($)
+  if (!target || !app) return
+  await runOpen($, app.label, launchCommand(await osName($), target, path, LINUX_LAUNCH))
+}
+
+async function openWithExtra($: EngineInterface, index: number, path: string): Promise<void> {
+  const extra = extraApps[index]
+  await closeMenu($)
+  if (!extra) return
+  const os = await osName($)
+  const native = (p: string) => (os === 'win32' ? p.replace(/\//g, '\\') : p)
+  const argv = openWithCommand(extra.command, native(path), native(dirname(path)))
+  if (!argv) return
+  await runOpen($, extra.label, { argv: os === 'linux' ? ['sh', '-c', LINUX_LAUNCH, 'sh', ...argv] : argv })
+}
 
 // Mod Box: the Features tab reads the Codebase Map's state (mod codebase-map, prefix cm2). Its
 // shapes are checked here instead of imported, so the file tree also works without that mod.
@@ -1087,6 +1146,7 @@ export const register: Register = (on, options) => {
   followClaude = options?.follow !== 'off'
   sizeDefault = options?.column === 'size'
   openWithSetting = typeof options?.open === 'string' ? options.open : ''
+  extraApps = readExtraApps(typeof options?.openWith === 'string' ? options.openWith : '')
   on('session.start', {}, async ($, e, next) => {
     await $.command.register({ name: 'filetree', description: 'Show the file tree; args: [path] (no path = cwd)' })
     const windows = (await $.env.get('OS')) === 'Windows_NT'
@@ -1189,11 +1249,19 @@ export const register: Register = (on, options) => {
 
   on('ui.message', {}, async ($, e, next) => {
     if (e.requestId !== PANE || e.element !== 'rows' || !e.data || typeof e.data !== 'object') return next(e)
-    const data = e.data as { press?: unknown; key?: unknown; ctrl?: unknown; shift?: unknown; scrollTo?: unknown; copy?: unknown }
+    const data = e.data as { press?: unknown; key?: unknown; ctrl?: unknown; shift?: unknown; scrollTo?: unknown; copy?: unknown; menu?: unknown }
     void sync($)
     const t = await get($)
     if (typeof data.copy === 'string') {
       await copyPath($, data.copy, Boolean(data.shift), e.surface)
+      return {}
+    }
+    if (typeof data.menu === 'string') {
+      await openMenu($, data.menu)
+      return {}
+    }
+    if (data.key === 'escape' && (await $.state.get(MENU)).value) {
+      await closeMenu($)
       return {}
     }
     if (typeof data.scrollTo === 'number') {
@@ -1231,6 +1299,7 @@ export const register: Register = (on, options) => {
     else if (data.key === 'home') await move(-rows.length)
     else if (data.key === 'end') await move(rows.length)
     else if (cur && (data.key === 'y' || data.key === 'Y')) await copyPath($, cur.id, data.key === 'Y' || Boolean(data.shift), e.surface)
+    else if (cur && data.key === 'o') await openMenu($, cur.id)
     else if (cur && (data.key === 'right' || data.key === 'l') && cur.kind === 'dir' && !t.expanded.includes(cur.id)) await toggle($, cur)
     else if (cur && (data.key === 'left' || data.key === 'h')) {
       if (cur.kind === 'dir' && t.expanded.includes(cur.id)) await toggle($, cur)
@@ -1713,6 +1782,39 @@ export const register: Register = (on, options) => {
           module="./rows.tsx"
           props={{ rows: specs, active: t.cursor, activeBg: theme.selection, hoverBg: faint(theme.selection), tones: SHIMMER, pointer, ...(bar ? { bar } : {}) } satisfies RowsProps}
         />
+        {await (async () => {
+          const target = (await $.state.get(MENU)).value ?? ''
+          if (!target) return null
+          const node = t.nodes.find(n => n.id === target)
+          const isDir = node ? node.kind === 'dir' : target === t.root
+          const found = (await $.state.get(APPS_FOUND)).value ?? null
+          const kinds: AppKind[] = kindsFor(target, isDir)
+          const apps = found === null ? [] : kinds.flatMap(k => APPS.filter(a => a.kind === k && found[a.id]))
+          const KIND: Record<AppKind, string> = { editor: tx('Editor', 'Editor'), ide: 'IDE', browser: 'Browser' }
+          const name = target !== t.root && inside(t.root, target) ? relative(t.root, target) : shortPath(target)
+          const item = (key: string, label: string, run: () => Promise<void>) => <Button key={`ow-${key}`} plain label={label} onPress={() => void run()} />
+          return (
+            <Box flexDirection="column" borderStyle="round" borderColor={theme.accent} paddingX={1}>
+              <Box flexDirection="row">
+                <Box flexShrink={1} flexGrow={1}>
+                  <Text bold wrap="truncate-start">{`${tx('Öffnen mit', 'Open with')} · ${name}`}</Text>
+                </Box>
+                <Button key="ow-close" plain dimColor label="×" onPress={() => void closeMenu($)} />
+              </Box>
+              <Box flexDirection="row" flexWrap="wrap" columnGap={2}>
+                {!isDir ? item('default', tx('Standard-App', 'Default app'), async () => { await closeMenu($); await openFile($, target, true) }) : null}
+                {apps.map(a => item(a.id, `${a.label} (${KIND[a.kind]})`, () => openWithApp($, a.id, target)))}
+                {extraApps.map((x, i) => item(`x${i}`, x.label, () => openWithExtra($, i, target)))}
+                {!isDir ? item('preview', tx('Vorschau', 'Preview'), async () => { await closeMenu($); await showPreview($, target) }) : null}
+                {item('reveal', isDir ? tx('Im Dateimanager', 'In file manager') : tx('Im Ordner zeigen', 'Show in folder'), async () => { await closeMenu($); await runOpen($, 'explorer', revealCommand(await osName($), target, isDir)) })}
+                {item('copy', tx('Pfad kopieren', 'Copy path'), async () => { await closeMenu($); await copyPath($, target, false, e.surface) })}
+                {item('copy-abs', tx('Absoluten Pfad kopieren', 'Copy full path'), async () => { await closeMenu($); await copyPath($, target, true, e.surface) })}
+              </Box>
+              {found === null ? <Text color={theme.muted}>{tx('suche Programme …', 'looking for programs …')}</Text> : null}
+              {found !== null && apps.length === 0 && !extraApps.length ? <Text color={theme.muted}>{tx(`Kein passender Editor, keine IDE oder Browser gefunden; eigene unter ⚙ "Öffnen mit (Programme)".`, `No fitting editor, IDE or browser found; add your own under ⚙ "Open with (programs)".`)}</Text> : null}
+            </Box>
+          )
+        })()}
         <Box flexGrow={1} />
         {(t.selected || latest) && (
           <Box flexDirection="row">

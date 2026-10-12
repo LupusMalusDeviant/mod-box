@@ -77,6 +77,9 @@ declare module 'claude-code' {
       theme: Theme
       activity: Activity[]
       view: FileView
+      // Mod Box: the file or folder whose "Open with" menu is open ('' = none), and the programs found (id → path)
+      menu: string
+      apps: Record<string, string> | null
     }
   }
 }

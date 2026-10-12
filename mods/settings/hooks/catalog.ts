@@ -670,8 +670,8 @@ export const CATALOG: CatalogMod[] = [
       "de": "Filetree"
     },
     "description": {
-      "en": "File tree side pane (/filetree); files light up when Claude reads or writes them. With the Codebase Map on, a Features tab shows its features, what Claude is editing and the blueprint actions.",
-      "de": "Dateibaum-Seitenleiste (/filetree); Dateien leuchten auf, wenn Claude sie liest oder schreibt. Mit eingeschalteter Codebase-Karte zeigt ein Reiter „Features“ deren Features, was Claude gerade bearbeitet, und die Blueprint-Aktionen."
+      "en": "File tree side pane (/filetree); files light up when Claude reads or writes them. Right-click (or o) opens \"Open with\": default app, the editors, IDEs and browsers found, preview, show in folder, copy path. With the Codebase Map on, a Features tab shows its features, what Claude is editing and the blueprint actions.",
+      "de": "Dateibaum-Seitenleiste (/filetree); Dateien leuchten auf, wenn Claude sie liest oder schreibt. Rechtsklick (oder o) öffnet „Öffnen mit“: Standard-App, gefundene Editoren, IDEs und Browser, Vorschau, im Ordner zeigen, Pfad kopieren. Mit eingeschalteter Codebase-Karte zeigt ein Reiter „Features“ deren Features, was Claude gerade bearbeitet, und die Blueprint-Aktionen."
     },
     "group": "display",
     "costs": null,
@@ -783,6 +783,22 @@ export const CATALOG: CatalogMod[] = [
         "description": {
           "en": "Empty: default app. preview: show in the pane. Anything else is a command; {path} is the file, {dir} its folder.",
           "de": "Leer: Standard-App. preview: in der Leiste anzeigen. Sonst ein Befehl; {path} ist die Datei, {dir} ihr Ordner."
+        },
+        "labels": {},
+        "options": null,
+        "default": ""
+      },
+      {
+        "key": "filetreeOpenWith",
+        "type": "string",
+        "multiple": false,
+        "title": {
+          "en": "Filetree: open with (programs)",
+          "de": "Filetree: Öffnen mit (Programme)"
+        },
+        "description": {
+          "en": "Extra programs for the right-click menu, besides the ones found: \"Name=command; Name2=command\". {path} is the file, {dir} its folder.",
+          "de": "Weitere Programme für das Rechtsklick-Menü, zusätzlich zu den gefundenen: \"Name=Befehl; Name2=Befehl\". {path} ist die Datei, {dir} ihr Ordner."
         },
         "labels": {},
         "options": null,
