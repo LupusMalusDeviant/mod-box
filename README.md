@@ -105,6 +105,7 @@ The same window runs in terminal Claude Code, as a side pane next to the convers
 | `readGuard` | Read Guard | on | Holds a whole-file `Read` (no offset/limit) above the limit (default 50 KB), of a lockfile, minified code or a source map, and the same via `cat`, `type` or `Get-Content`; tells Claude the size, a token estimate and a better way (Grep, offset/limit). A second try at the same file goes through. Claude Code itself stops a Read only at about 25,000 tokens. | no |
 | `subagentSaver` | Subagent Saver | on | Search subagents (Explore) that got no model of their own run on Sonnet (or Haiku) instead of inheriting the main model. An explicit model, forks, teammates and plugin agents stay untouched; the band shows how many were routed. | no |
 | `handoff` | Handoff Note | on | `/handoff` writes `.claude/handoff.local.md`, and a new session offers to continue from it. | one request over the warm cache |
+| `pet` | Desktop Pet | off | Windows only: a little cardboard box on the desktop, always on top, that says in a speech bubble what Claude is doing (file read or changed, command running, what a guard held) and sums up each turn. Drag it anywhere; right-click for quiet time. Built once with the C# compiler that ships with Windows into `%LOCALAPPDATA%\mod-box\pet`, signed with the Sign Guard script when one is set. | only with summary *haiku* |
 | `visibleCompact` | Visible Compact | on | Before/after view of `/compact` (`/show-last-compact`). | no |
 | `headsUp` | Heads-up | off | Points out one easily missed but important thing in a long answer. | a Haiku call per long answer |
 | `catchMeUp` | Catch Me Up | off | Live summary of the session (`/catch-me-up`). | Haiku calls after turns |
@@ -124,6 +125,7 @@ The same window runs in terminal Claude Code, as a side pane next to the convers
 | `/filetree` | Filetree | opens the file tree |
 | `/replay` | Replay Theater | steps through the last turn's edits |
 | `/keepwarm <6h|90m|always|off|status>` · `/cache-tax` | Cache Meter | keeps the cache warm · cache costs of this session |
+| `/pet [stop]` | Desktop Pet | shows the pet, or sends it off |
 | `/handoff` | Handoff Note | writes the handoff note |
 | `/show-last-compact` | Visible Compact | before/after of the last `/compact` |
 | `/catch-me-up` | Catch Me Up | live summary pane |

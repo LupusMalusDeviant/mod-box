@@ -1833,6 +1833,102 @@ export const CATALOG: CatalogMod[] = [
         "node"
       ]
     }
+  },
+  {
+    "id": "pet",
+    "toggle": "pet",
+    "default": false,
+    "band": false,
+    "title": {
+      "en": "Desktop Pet",
+      "de": "Desktop-Pet"
+    },
+    "description": {
+      "en": "A little cardboard box on the Windows desktop, always on top, that says in a speech bubble what Claude is doing: the file it reads or changes, the command that runs, what a guard held, and a short summary at the end of a turn. Drag it anywhere, right-click for quiet time. Built once with the C# compiler that ships with Windows and signed with the Sign Guard script when one is set. /pet shows it, /pet stop sends it off.",
+      "de": "Eine kleine Pappbox auf dem Windows-Desktop, immer im Vordergrund, die in einer Sprechblase sagt, was Claude gerade tut: welche Datei er liest oder ändert, welcher Befehl läuft, was ein Wächter angehalten hat, und am Ende des Turns eine kurze Zusammenfassung. Frei verschiebbar, Rechtsklick für Ruhe. Wird einmal mit dem C#-Compiler von Windows gebaut und mit dem Skript des Signier-Wächters signiert, wenn eines gesetzt ist. /pet zeigt es, /pet stop verabschiedet es."
+    },
+    "group": "display",
+    "costs": null,
+    "params": [
+      {
+        "key": "petBubble",
+        "type": "string",
+        "multiple": false,
+        "title": {
+          "en": "Desktop Pet: bubble stays … seconds",
+          "de": "Desktop-Pet: Blase bleibt … Sekunden"
+        },
+        "description": {
+          "en": "How long news stays in the bubble. Questions and errors stay until the next news.",
+          "de": "Wie lange eine Nachricht in der Blase bleibt. Fragen und Fehler bleiben bis zur nächsten."
+        },
+        "labels": {},
+        "options": [
+          "5",
+          "9",
+          "15",
+          "30"
+        ],
+        "default": "9"
+      },
+      {
+        "key": "petSummary",
+        "type": "string",
+        "multiple": false,
+        "title": {
+          "en": "Desktop Pet: summary at the end",
+          "de": "Desktop-Pet: Zusammenfassung am Ende"
+        },
+        "description": {
+          "en": "off: the first sentences of the answer (no tokens). haiku: Haiku puts a longer answer in one sentence.",
+          "de": "aus: die ersten Sätze der Antwort (keine Tokens). haiku: Haiku fasst eine längere Antwort in einem Satz."
+        },
+        "labels": {
+          "de": {
+            "off": "aus"
+          }
+        },
+        "options": [
+          "off",
+          "haiku"
+        ],
+        "default": "off"
+      }
+    ],
+    "imported": false,
+    "upstream": "pet",
+    "source": null,
+    "commands": [
+      {
+        "name": "/pet",
+        "text": {
+          "en": "show the desktop pet",
+          "de": "das Desktop-Pet zeigen"
+        }
+      },
+      {
+        "name": "/pet stop",
+        "text": {
+          "en": "send it off",
+          "de": "es verabschieden"
+        }
+      }
+    ],
+    "tokens": "optional",
+    "needs": [],
+    "compat": {
+      "surfaces": [
+        "terminal",
+        "desktop",
+        "vscode"
+      ],
+      "os": [
+        "windows"
+      ],
+      "needs": [
+        "powershell"
+      ]
+    }
   }
 ]
 export const PROFILES: CatalogProfile[] = [
@@ -1909,6 +2005,10 @@ export const PROFILES: CatalogProfile[] = [
       ],
       [
         "codebaseMap",
+        false
+      ],
+      [
+        "pet",
         false
       ]
     ]
@@ -1987,6 +2087,10 @@ export const PROFILES: CatalogProfile[] = [
       [
         "codebaseMap",
         true
+      ],
+      [
+        "pet",
+        true
       ]
     ]
   },
@@ -2064,6 +2168,10 @@ export const PROFILES: CatalogProfile[] = [
       [
         "codebaseMap",
         false
+      ],
+      [
+        "pet",
+        false
       ]
     ]
   },
@@ -2140,6 +2248,10 @@ export const PROFILES: CatalogProfile[] = [
       ],
       [
         "codebaseMap",
+        true
+      ],
+      [
+        "pet",
         true
       ]
     ]

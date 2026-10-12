@@ -135,5 +135,13 @@ export const HOOKS: Record<string, string[]> = {
     "tool.call",
     "turn.complete",
     "ui.render"
+  ],
+  "pet": [
+    "command.run",
+    "session.end",
+    "session.start",
+    "tool.call",
+    "turn.complete",
+    "turn.start"
   ]
 }
