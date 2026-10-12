@@ -1,0 +1,2 @@
+# Skills and hooks must keep LF line endings on every OS (CRLF breaks skill frontmatter parsing).
+* text=auto eol=lf

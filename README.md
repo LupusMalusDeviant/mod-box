@@ -4,7 +4,7 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 ![Claude Code 2.1.287+](https://img.shields.io/badge/Claude%20Code-2.1.287%2B-d97757)
 
-**One mod to manage your Claude Code mods: switch, configure and profile them in one window. It ships with my best-of selection of fourteen mods, and takes any others you add.**
+**One mod to manage your Claude Code mods: switch, configure and profile them in one window. It ships with my best-of selection of fifteen mods, and takes any others you add.**
 
 Claude Code mods are small hook modules that change how Claude Code behaves and looks: a guard that stops `rm -rf` before it runs, a meter that shows when the prompt cache goes cold, a watcher that follows your CI after every push. There are a lot of good ones scattered over GitHub. The Mod Box collects them, makes them work together, and gives you one place to switch them, configure them and add more.
 
@@ -106,6 +106,7 @@ The same window runs in terminal Claude Code, as a side pane next to the convers
 | `visibleCompact` | Visible Compact | on | Before/after view of `/compact` (`/show-last-compact`). | no |
 | `headsUp` | Heads-up | off | Points out one easily missed but important thing in a long answer. | a Haiku call per long answer |
 | `catchMeUp` | Catch Me Up | off | Live summary of the session (`/catch-me-up`). | Haiku calls after turns |
+| `codebaseMap` | Codebase Map | off | Feature map from `docs/blueprints` with live highlighting of the features Claude edits, a freshness band and a `CLAUDE.md` pointer; mapper instructions with machine-checked edges load only when you ask for blueprint work (`/codebase-map`). | only blueprint runs you ask for; about 500 tokens per session for the `CLAUDE.md` pointer |
 
 <p align="center"><img src="docs/images/cache-meter.png" alt="Cache Meter opened: commands, token cost and options" width="500"></p>
 
@@ -123,6 +124,7 @@ The same window runs in terminal Claude Code, as a side pane next to the convers
 | `/handoff` | Handoff Note | writes the handoff note |
 | `/show-last-compact` | Visible Compact | before/after of the last `/compact` |
 | `/catch-me-up` | Catch Me Up | live summary pane |
+| `/codebase-map [create\|update\|check\|publish]` | Codebase Map | opens the feature map; with an argument, prepares the blueprint prompt |
 
 The window lists them too: next to each mod's name, and in full under ⚙.
 
@@ -236,6 +238,7 @@ These mods come from other repositories and **were modified for the Mod Box**. E
 | Replay Theater | [anthropics/claude-code-playground](https://github.com/anthropics/claude-code-playground/tree/main/claude-code/mods/replay-theater) | Anthropic PBC | Apache-2.0 | state, matchers and paths rewritten |
 | Cache Tax | [karanb192/cache-tax](https://github.com/karanb192/cache-tax) | Karan Bansal | MIT | embedded into Cache Meter (guard and auto-warm options, exported helpers, token usage) |
 | Catch Me Up | [oliverow/catch-me-up](https://github.com/oliverow/catch-me-up) | Oliver Wang | MIT | language option, token usage, state rewritten |
+| Codebase Map | [LupusMalusDeviant/codebase-map](https://github.com/LupusMalusDeviant/codebase-map) | Lupus Malus Deviant | MIT | state, matchers and paths rewritten |
 | Filetree | [data-goblin/claude-code-filetree](https://github.com/data-goblin/claude-code-filetree) | Kurt Buhler | MIT | state, matchers and paths rewritten |
 | Next Steps | [hamzafer/claude-code-mods](https://github.com/hamzafer/claude-code-mods/tree/main/mods/next-steps) | Hamza Zafar | MIT | language option, token usage, state rewritten |
 | Savvy Progress | [JohnnyVizz/claude-kit](https://github.com/JohnnyVizz/claude-kit/tree/main/plugins/savvy-progress) | johnnyvizz | MIT | a type fix; state and tool names rewritten |

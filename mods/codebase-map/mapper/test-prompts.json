@@ -1,0 +1,41 @@
+{
+  "target": "mapper/INSTRUCTIONS.md",
+  "trigger": "MAPPER_TRIGGER in hooks/i18n.ts adds the hint to read INSTRUCTIONS.md; the section 'When they do not apply' decides whether the model follows it.",
+  "prompts": [
+    {
+      "prompt": "kannst du mir für das Repo hier einen Codebase-Blueprint erstellen? Wir haben zwei neue Kollegen, die Überblick brauchen. Feature-Level reicht, mit Abhängigkeiten zwischen den Features",
+      "should_trigger": true,
+      "note": "Happy path: 'Blueprint' plus repo scope plus feature level"
+    },
+    {
+      "prompt": "unsere Codebase ist gewachsen und keiner hat mehr Überblick. Mach mir bitte pro Feature eine .md damit ich den Bauplan sehe, mit Mermaid für die Dependencies",
+      "should_trigger": true,
+      "note": "Colloquial variant: 'Bauplan' plus one .md per feature plus Mermaid"
+    },
+    {
+      "prompt": "ich brauche für unser neues B2B-Portal ein richtig gutes README, das externe Entwickler abholt: Features, Setup und API-Keys vorstellen, mit Screenshots",
+      "should_trigger": false,
+      "note": "README for users, not an engineering blueprint; MAPPER_TRIGGER does not match"
+    },
+    {
+      "prompt": "wir haben seit dem letzten Blueprint einiges gemerged, aktualisiere bitte den Blueprint",
+      "should_trigger": true,
+      "note": "Re-run: incremental update via diff against the commit stamp"
+    },
+    {
+      "prompt": "ist unser Codebase-Blueprint eigentlich noch aktuell?",
+      "should_trigger": true,
+      "note": "Quick path: staleness check without writing"
+    },
+    {
+      "prompt": "publish the blueprint to Confluence under https://example.atlassian.net/wiki/spaces/DOC/pages/123",
+      "should_trigger": true,
+      "note": "Step 7: Confluence mirror"
+    },
+    {
+      "prompt": "register a new Flask blueprint for the /admin routes",
+      "should_trigger": false,
+      "note": "MAPPER_TRIGGER matches, but the prompt means a Flask Blueprint; INSTRUCTIONS.md says to ignore the hint"
+    }
+  ]
+}

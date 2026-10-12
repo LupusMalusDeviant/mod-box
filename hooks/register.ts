@@ -17,6 +17,7 @@ import { register as m11 } from '../mods/handoff/hooks/register' // handoff
 import { register as m12 } from '../mods/visible-compact/hooks/register' // visible-compact
 import { register as m13 } from '../mods/heads-up/hooks/register' // heads-up
 import { register as m14 } from '../mods/catch-me-up/hooks/register.js' // catch-me-up
+import { register as m15 } from '../mods/codebase-map/hooks/register' // codebase-map
 
 export function isOn(options: Record<string, unknown>, key: string, fallback: boolean): boolean {
   const v = options[key]
@@ -60,4 +61,5 @@ export const register: Register = (on, options) => {
   if (isOn(o, "visibleCompact", true)) (m12 as any)(on, { "storage": opt(o, "compactStorage", "temp") })
   if (isOn(o, "headsUp", false)) (m13 as any)(on, { "language": opt(o, "language", "en") })
   if (isOn(o, "catchMeUp", false)) (m14 as any)(on, { "language": opt(o, "language", "en") })
+  if (isOn(o, "codebaseMap", false)) (m15 as any)(on, { "claudeMd": opt(o, "codebaseMapClaudeMd", "auto"), "language": opt(o, "language", "en") })
 }

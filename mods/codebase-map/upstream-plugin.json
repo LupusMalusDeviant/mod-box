@@ -1,0 +1,46 @@
+{
+  "name": "codebase-map",
+  "version": "0.4.0",
+  "description": "Feature-level codebase blueprints with a live map inside Claude Code: on-demand mapper instructions with machine-checked edges, an interactive feature map with live highlighting, a freshness band, a CLAUDE.md pointer and an optional Confluence mirror.",
+  "author": {
+    "name": "Lupus Malus Deviant"
+  },
+  "homepage": "https://github.com/LupusMalusDeviant/codebase-map",
+  "repository": "https://github.com/LupusMalusDeviant/codebase-map",
+  "license": "MIT",
+  "keywords": [
+    "blueprint",
+    "codebase",
+    "documentation",
+    "architecture",
+    "dependency-map",
+    "feature-map",
+    "mermaid",
+    "confluence",
+    "onboarding",
+    "context-engineering"
+  ],
+  "types": "./types/index.d.ts",
+  "userConfig": {
+    "claudeMd": {
+      "type": "string",
+      "title": "CLAUDE.md pointer",
+      "description": "auto: keeps a pointer block to docs/blueprints in CLAUDE.md of repos with a blueprint; off: never writes CLAUDE.md and removes the block at the next session start.",
+      "default": "auto",
+      "options": [
+        "auto",
+        "off"
+      ]
+    },
+    "language": {
+      "type": "string",
+      "title": "Language",
+      "description": "de: map, band, CLAUDE.md block and blueprint in German; en: everything in English.",
+      "default": "de",
+      "options": [
+        "de",
+        "en"
+      ]
+    }
+  }
+}

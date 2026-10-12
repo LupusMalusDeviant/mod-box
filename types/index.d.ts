@@ -385,6 +385,36 @@ export type CompactMeta = {
 
 export type HeadsUp = { turnId: string; text: string }
 
+// ---- codebase-map ----
+
+export type BlueprintStatus =
+  | { kind: 'fresh'; head: string }
+  | { kind: 'behind'; head: string; stamp: string; commits: number; files: number }
+  | { kind: 'unknown-stamp'; head: string; stamp: string }
+  | { kind: 'no-stamp'; head: string }
+
+export type MapFeature = {
+  slug: string
+  name: string
+  summary: string
+  files: string[]
+  deps: string[]
+  // Pfad-Globs aus dem INDEX-Abschnitt "Zuordnung"; leer bei älteren Blueprints.
+  globs: string[]
+}
+
+// Spiegelung nach Confluence (publish-on-confluence): Opt-in im INDEX-Frontmatter, Seiten-ID nach dem ersten Publish.
+export type MapConfluence = { isOptedIn: boolean; pageId: string | null }
+
+export type MapData = { features: MapFeature[]; confluence: MapConfluence }
+
+export type MapActivity = {
+  id: string
+  slug: string | null
+  file: string
+  agentId: string | null
+}
+
 declare module 'claude-code' {
   interface PluginState {
     'mod-box': {
@@ -454,6 +484,15 @@ declare module 'claude-code' {
 
       // heads-up
       hu_note: HeadsUp | null
+
+      // codebase-map
+      cm2_status: BlueprintStatus | null
+      cm2_dismissedAt: string | null
+      cm2_map: MapData | null
+      cm2_selected: string | null
+      cm2_active: MapActivity[]
+      cm2_touched: { [slug: string]: string[] }
+      cm2_unassigned: string[]
     }
   }
 }

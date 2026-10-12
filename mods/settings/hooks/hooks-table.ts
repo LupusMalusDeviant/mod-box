@@ -117,5 +117,13 @@ export const HOOKS: Record<string, string[]> = {
     "session.start",
     "turn.complete",
     "ui.render"
+  ],
+  "codebaseMap": [
+    "command.run",
+    "prompt.submit",
+    "session.start",
+    "tool.call",
+    "turn.complete",
+    "ui.render"
   ]
 }

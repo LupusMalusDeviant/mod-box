@@ -1,7 +1,7 @@
 {
   "name": "mod-box",
   "version": "0.4.1",
-  "description": "14 Claude Code mods in one plugin, each switchable on its own; /mod-box opens the window to switch, configure and import mods.",
+  "description": "15 Claude Code mods in one plugin, each switchable on its own; /mod-box opens the window to switch, configure and import mods.",
   "author": {
     "name": "Lupus Malus Deviant"
   },
@@ -136,6 +136,12 @@
       "type": "boolean",
       "title": "Catch Me Up",
       "description": "Side pane with a live summary of the session (/catch-me-up). Costs tokens: Haiku calls after turns that used tools.",
+      "default": false
+    },
+    "codebaseMap": {
+      "type": "boolean",
+      "title": "Codebase Map",
+      "description": "Feature map of the codebase from docs/blueprints: dependency graph with live highlighting of the features Claude edits, a freshness band, a CLAUDE.md pointer for agents and mapper instructions (machine-checked edges, optional Confluence mirror) that load only when you ask for blueprint work. Costs tokens: Only when you ask for blueprint work: creating a blueprint reads the whole repo once (hundreds of thousands of tokens on a large repo), an update reads only the changed features. While a blueprint exists, the CLAUDE.md pointer adds about 500 tokens per session (switch off with the CLAUDE.md option)..",
       "default": false
     },
     "secretMode": {
@@ -440,6 +446,16 @@
       ],
       "title": "Heads-up (You Should Know): display",
       "description": "band: above the prompt. status: in the status line. off: not shown (the mod keeps working)."
+    },
+    "codebaseMapClaudeMd": {
+      "type": "string",
+      "title": "Codebase Map: CLAUDE.md pointer",
+      "description": "auto: keeps a pointer block to docs/blueprints in CLAUDE.md of repos with a blueprint; off: never writes CLAUDE.md and removes the block at the next session start.",
+      "default": "auto",
+      "options": [
+        "auto",
+        "off"
+      ]
     }
   },
   "homepage": "https://github.com/LupusMalusDeviant/mod-box",
