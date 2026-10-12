@@ -90,8 +90,8 @@ describe('Profiles and sources', () => {
       calls.push([...e.argv])
       const out = e.argv[2] === 'catalog'
         ? { ok: true, sources: [{ kind: 'link', name: 'sammlung', link: 'owner/repo', dir: '/c', plugins: [
-            { name: 'token-weather', description: 'Wetter', isMod: true, extras: [], imported: null },
-            { name: 'skills-only', description: 'nur Skills', isMod: false, extras: ['skills'], imported: null },
+            { name: 'token-weather', description: 'Wetter', isMod: true, extras: [], imported: null, verdict: 'integrate', reasons: [], components: { modules: ['./register.ts'], commands: ['/weather'] } },
+            { name: 'skills-only', description: 'nur Skills', isMod: false, extras: ['skills'], imported: null, verdict: 'native', reasons: ['Hat Skills'], components: { skills: ['a'] } },
           ] }] }
         : { ok: true, id: 'token-weather', toggle: 'tokenWeather', notes: ['Hinweis A'] }
       return { value: { exitCode: 0, stdout: JSON.stringify(out) + '\n', stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
@@ -103,11 +103,13 @@ describe('Profiles and sources', () => {
     await ui.input({ key: 'link-new', text: 'owner/repo' })
     expect(calls.filter(c => c[2] === 'catalog').at(-1)?.slice(3)).toEqual(['--url', 'owner/repo', '--lang', 'de'])
     expect(await ui.find({ type: 'Text', text: /token-weather/ })).toBeDefined()
+    // a plugin with skills cannot go into the box, but can be installed natively
     expect(await ui.find({ key: 'imp-owner/repo-skills-only' })).toBeUndefined()
+    expect(await ui.find({ key: 'nat-owner/repo-skills-only' })).toBeDefined()
     await ui.press({ key: 'imp-owner/repo-token-weather' })
     const imp = calls.find(c => c[2] === 'import')
     expect(imp?.[1]?.endsWith('/tools/box.mjs')).toBe(true)
-    expect(imp?.slice(2)).toEqual(['import', '--url', 'owner/repo', '--plugin', 'token-weather', '--lang', 'de'])
+    expect(imp?.slice(2)).toEqual(['import', '--url', 'owner/repo', '--plugin', 'token-weather', '--strategy', 'auto', '--lang', 'de'])
     expect(await ui.find({ type: 'Text', text: /Hinweis A/ })).toBeDefined()
   })
 })

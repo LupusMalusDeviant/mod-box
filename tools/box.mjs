@@ -13,14 +13,17 @@
 //       If the check fails, everything is rolled back.
 //   node tools/box.mjs remove <id>
 //       Removes an imported mod again.
-import { execFileSync } from 'node:child_process'
+import { execFileSync, execSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
+import crypto from 'node:crypto'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import { exportMods } from './export.mjs'
+import { componentsOf, inventory, verdictOf } from './inspect.mjs'
+import * as native from './native.mjs'
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const BOX = path.join(ROOT, 'box.json')
@@ -233,14 +236,21 @@ function build() {
   const imports = []
   const calls = []
   mods.forEach((mod, i) => {
-    const spec = rel(path.join(ROOT, 'hooks'), path.join(ROOT, mod.entry)).replace(/\.(tsx?|mts|cts)$/, '')
-    imports.push(`import { register as m${i} } from '${spec}' // ${mod.id}`)
+    // A mod may bring several hooks modules (Claude Code loads one per plugin; the box all of them).
+    const specs = (mod.entries ?? [mod.entry]).map(e => rel(path.join(ROOT, 'hooks'), path.join(ROOT, e)).replace(/\.(tsx?|mts|cts)$/, ''))
+    specs.forEach((spec, j) => imports.push(`import { register as m${i}${j ? '_' + j : ''} } from '${spec}' // ${mod.id}`))
     const opts = []
-    for (const o of mod.options ?? []) if (!o.field.startsWith('__')) opts.push(`${JSON.stringify(o.field)}: opt(o, ${JSON.stringify(o.key)}, ${JSON.stringify(o.default ?? '')})`)
+    for (const o of mod.options ?? []) {
+      if (o.field.startsWith('__')) continue
+      const fn = o.type === 'number' ? 'optNumber' : o.type === 'boolean' ? 'optBool' : o.multiple ? 'optList' : 'opt'
+      const fallback = fn === 'opt' ? JSON.stringify(o.default ?? '') : JSON.stringify(o.default ?? (fn === 'optList' ? [] : fn === 'optBool' ? false : null))
+      opts.push(`${JSON.stringify(o.field)}: ${fn}(o, ${JSON.stringify(o.key)}, ${fallback})`)
+    }
     for (const [field, key] of Object.entries(mod.pass ?? {})) opts.push(`${JSON.stringify(field)}: opt(o, ${JSON.stringify(key)}, ${JSON.stringify(settingDefault[key] ?? '')})`)
     // The core (window, band manager) gets all options: it reads switches, display and order.
     if (mod.core) calls.push(`  ;(m${i} as any)(on, o) // ${mod.id}`)
-    else calls.push(`  if (isOn(o, ${JSON.stringify(mod.toggle)}, ${mod.default === true})) (m${i} as any)(on, { ${opts.join(', ')} })`)
+    else if (specs.length === 1) calls.push(`  if (isOn(o, ${JSON.stringify(mod.toggle)}, ${mod.default === true})) (m${i} as any)(on, { ${opts.join(', ')} })`)
+    else calls.push(`  if (isOn(o, ${JSON.stringify(mod.toggle)}, ${mod.default === true})) {\n    const p${i} = { ${opts.join(', ')} }\n${specs.map((_s, j) => `    ;(m${i}${j ? '_' + j : ''} as any)(on, p${i})`).join('\n')}\n  }`)
   })
   write(
     path.join(ROOT, 'hooks', 'register.ts'),
@@ -251,6 +261,9 @@ function build() {
       `  const v = options[key]\n  return typeof v === 'boolean' ? v : v === 'true' ? true : v === 'false' ? false : fallback\n}\n\n` +
       `export function opt(options: Record<string, unknown>, key: string, fallback: string): string {\n` +
       `  const v = options[key]\n  return typeof v === 'string' && v !== '' ? v : typeof v === 'number' || typeof v === 'boolean' ? String(v) : fallback\n}\n\n` +
+      `export function optNumber(options: Record<string, unknown>, key: string, fallback: number | null): number | null {\n  const v = options[key]\n  const n = typeof v === 'number' ? v : typeof v === 'string' && v.trim() !== '' ? Number(v) : NaN\n  return Number.isFinite(n) ? n : fallback\n}\n\n` +
+      `export function optBool(options: Record<string, unknown>, key: string, fallback: boolean): boolean {\n  return isOn(options, key, fallback)\n}\n\n` +
+      `export function optList(options: Record<string, unknown>, key: string, fallback: string[]): string[] {\n  const v = options[key]\n  return Array.isArray(v) ? v.map(String) : typeof v === 'string' && v !== '' ? [v] : fallback\n}\n\n` +
       `export const register: Register = (on, options) => {\n  const o = (options ?? {}) as Record<string, unknown>\n${calls.join('\n')}\n}\n`,
   )
 
@@ -279,7 +292,7 @@ function build() {
     label: { en: p.en ?? id, de: p.de ?? p.en ?? id },
     set: toggles.map(m => [m.toggle, ruleSays(p.rule ?? p.set, m)]),
   }))
-  const field = o => ({ key: o.key, title: both(o, 'title'), description: both(o, 'description'), labels: o.labels ?? {}, options: Array.isArray(o.options) ? o.options.map(String) : null, default: o.default ?? '' })
+  const field = o => ({ key: o.key, type: o.type ?? (typeof o.default === 'boolean' ? 'boolean' : 'string'), multiple: o.multiple === true, title: both(o, 'title'), description: both(o, 'description'), labels: o.labels ?? {}, options: Array.isArray(o.options) ? o.options.map(String) : null, default: o.default ?? '' })
   const katalog = toggles.map(m => ({
     id: m.id,
     toggle: m.toggle,
@@ -295,6 +308,7 @@ function build() {
     source: m.source?.url ?? null,
     commands: (m.commands ?? []).map(c => ({ name: c.name, text: { en: c.en ?? c.name, de: c.de ?? c.en ?? c.name } })),
     tokens: m.tokens ?? (m.costs ? 'always' : 'none'),
+    needs: m.needs ?? [],
     compat: { surfaces: m.compat?.surfaces ?? ['terminal', 'desktop', 'vscode', 'mobile'], os: m.compat?.os ?? ['windows', 'mac', 'linux'], needs: m.compat?.needs ?? [] },
   }))
   const groups = { imported: { en: 'Imported', de: 'Übernommen' }, ...(box.groups ?? {}) }
@@ -302,8 +316,8 @@ function build() {
     path.join(ROOT, 'mods', 'settings', 'hooks', 'catalog.ts'),
     GENERATED +
       `export type Text = { en: string; de: string }\n` +
-      `export type CatalogField = { key: string; title: Text; description: Text; labels: Record<string, Record<string, string>>; options: string[] | null; default: string | boolean }\n` +
-      `export type CatalogMod = { id: string; toggle: string; default: boolean; band: boolean; title: Text; description: Text; group: string; costs: Text | null; params: CatalogField[]; imported: boolean; upstream: string; source: string | null; commands: Array<{ name: string; text: Text }>; tokens: 'none' | 'optional' | 'always'; compat: { surfaces: string[]; os: string[]; needs: string[] } }\n` +
+      `export type CatalogField = { key: string; title: Text; description: Text; labels: Record<string, Record<string, string>>; options: string[] | null; type: string; multiple: boolean; default: string | boolean | number | string[] }\n` +
+      `export type CatalogMod = { id: string; toggle: string; default: boolean; band: boolean; title: Text; description: Text; group: string; costs: Text | null; params: CatalogField[]; imported: boolean; upstream: string; source: string | null; commands: Array<{ name: string; text: Text }>; tokens: 'none' | 'optional' | 'always'; needs: string[]; compat: { surfaces: string[]; os: string[]; needs: string[] } }\n` +
       `export type CatalogProfile = { id: string; label: Text; set: Array<[string, boolean]> }\n\n` +
       `export const PLUGIN = ${JSON.stringify(box.plugin)}\n` +
       `export const SETTINGS: CatalogField[] = ${JSON.stringify((box.settings ?? []).map(field), null, 2)}\n` +
@@ -315,7 +329,7 @@ function build() {
   // 4b. Which events each mod subscribes to (for diagnosis: who may be behind an error).
   const hooks = {}
   for (const mod of mods) {
-    const dirs = [path.join(ROOT, path.dirname(mod.entry)), ...(mod.extraDirs ?? []).map(d => path.join(ROOT, d))]
+    const dirs = [...new Set((mod.entries ?? [mod.entry]).map(e => path.join(ROOT, path.dirname(e))))].concat((mod.extraDirs ?? []).map(d => path.join(ROOT, d)))
     const events = new Set()
     for (const f of dirs.flatMap(dir => (fs.existsSync(dir) ? walk(dir) : []))) {
       if (!CODE_EXT.test(f) || f.endsWith('.d.ts')) continue
@@ -338,7 +352,7 @@ function build() {
 }
 
 // Only the fields userConfig knows; translations and display names stay in the catalog.
-const USERCONFIG_FIELDS = ['type', 'title', 'description', 'default', 'options', 'sensitive', 'required', 'min', 'max', 'multiple']
+const USERCONFIG_FIELDS = ['type', 'title', 'description', 'default', 'options', 'sensitive', 'min', 'max', 'multiple']
 function strip(o) {
   return Object.fromEntries(Object.entries(o).filter(([k]) => USERCONFIG_FIELDS.includes(k)))
 }
@@ -461,6 +475,8 @@ function importedIds() {
 
 function catalog(a) {
   const imported = importedIds()
+  const box = readJson(BOX)
+  const ctx = { taken: takenNames(box), strategy: String(a.strategy ?? importStrategy(box)) }
   const sources = []
   const known = path.join(os.homedir(), '.claude', 'plugins', 'known_marketplaces.json')
   if (fs.existsSync(known)) {
@@ -469,7 +485,7 @@ function catalog(a) {
       const dir = m.installLocation
       const link = m.source?.repo ? `https://github.com/${m.source.repo}` : m.source?.url ?? m.source?.path ?? ''
       try {
-        sources.push({ kind: 'claude', name, link, dir, ...decorate(scan(dir), imported) })
+        sources.push({ kind: 'claude', name, link, dir, ...decorate(scan(dir), imported, { ...ctx, root: dir }, name) })
       } catch (err) {
         sources.push({ kind: 'claude', name, link, dir, plugins: [], error: String(err.message ?? err) })
       }
@@ -479,7 +495,7 @@ function catalog(a) {
     try {
       const dir = fetchLink(link, a.refresh === true)
       const s = scan(dir)
-      sources.push({ kind: 'link', link, dir, ...decorate(s, imported) })
+      sources.push({ kind: 'link', link, dir, ...decorate(s, imported, { ...ctx, root: dir }, null) })
     } catch (err) {
       sources.push({ kind: 'link', link, name: link, dir: null, plugins: [], error: String(err.message ?? err).split('\n')[0] })
     }
@@ -487,30 +503,52 @@ function catalog(a) {
   return { ok: true, sources }
 }
 
-function decorate(s, imported) {
-  return { name: s.name, plugins: s.plugins.map(p => ({ ...p, imported: imported[p.name] ?? null })) }
+// Adds what the box can do with each plugin. A plugin whose files are not here yet (remote source)
+// gets its verdict when it is fetched for import or install.
+function decorate(s, imported, ctx = null, marketplace = null) {
+  return {
+    name: s.name,
+    plugins: s.plugins.map(p => {
+      const out = { ...p, imported: imported[p.name] ?? null, nativeId: marketplace ? `${p.name}@${marketplace}` : null }
+      if (!ctx || !p.dir) return { ...out, verdict: null, reasons: [], components: null }
+      try {
+        const inv = inventory(p.dir, { root: ctx.root ?? null })
+        const v = verdictOf(inv, { taken: ctx.taken, self: imported[p.name] ?? null, strategy: ctx.strategy, t })
+        return { ...out, verdict: v.verdict, reasons: v.reasons, components: componentsOf(inv), license: inv.license }
+      } catch (err) {
+        return { ...out, verdict: 'unsupported', reasons: [String(err.message ?? err)], components: null }
+      }
+    }),
+  }
 }
 
 // ---------------------------------------------------------------- import
 
-function copyTree(from, to, report) {
+// Copies a plugin into the box. Everything comes along (media, docs, assets): a file the code reads
+// must not go missing. Left out: version control, installed packages, the manifest (the box has its
+// own), and test folders (the box would run them as its own tests). A file over 5 MB that the code
+// names is a loss and stops the import; one it does not name is left out with a note.
+const COPY_SKIP = new Set(['.git', 'node_modules', '.claude-plugin', '.github'])
+const TEST_DIRS = new Set(['tests', 'test', '__tests__'])
+function copyTree(from, to, report, lost, code = null) {
   fs.mkdirSync(to, { recursive: true })
   for (const e of fs.readdirSync(from, { withFileTypes: true })) {
     const s = path.join(from, e.name)
     const d = path.join(to, e.name)
     if (e.isDirectory()) {
-      if (SKIP_DIRS.has(e.name) || e.name === '.claude-plugin') continue
-      if (['skills', 'agents', 'commands'].includes(e.name)) {
-        report.push(t(`Ordner ${e.name}/ nicht übernommen: Skills, Agents und Befehlsdateien lassen sich nicht pro Mod schalten (das Plugin dafür normal per /plugin installieren).`, `Folder ${e.name}/ not taken over: skills, agents and command files cannot be switched per mod (install that plugin normally with /plugin).`))
+      if (COPY_SKIP.has(e.name)) continue
+      if (TEST_DIRS.has(e.name)) {
+        report.push(t(`Testordner ${e.name}/ nicht übernommen (die Box würde ihn als eigene Tests ausführen).`, `Test folder ${e.name}/ not taken over (the box would run it as its own tests).`))
         continue
       }
-      copyTree(s, d, report)
+      copyTree(s, d, report, lost, code)
     } else if (e.isFile()) {
+      if (/^(package-lock\.json|bun\.lockb?|yarn\.lock|pnpm-lock\.yaml)$/.test(e.name)) continue
       if (fs.statSync(s).size > 5 * 1024 * 1024) {
-        report.push(t(`${e.name} nicht übernommen (größer als 5 MB).`, `${e.name} not taken over (larger than 5 MB).`))
+        if (code && code.includes(e.name)) lost.push(t(`${e.name} (größer als 5 MB, der Code benutzt sie)`, `${e.name} (larger than 5 MB, the code uses it)`))
+        else report.push(t(`${e.name} nicht übernommen (größer als 5 MB, im Code nicht genannt).`, `${e.name} not taken over (larger than 5 MB, not named in the code).`))
         continue
       }
-      if (/^(package-lock\.json|bun\.lockb?|yarn\.lock|pnpm-lock\.yaml)$/.test(e.name)) continue
       fs.copyFileSync(s, d)
     }
   }
@@ -537,7 +575,7 @@ function uniquePrefix(id, taken) {
 // Rewrites a mod's code for the box. Returns notes.
 // `prefixes` maps every plugin name living in the box to its state prefix (its own
 // included), so references to other box mods' state are translated too.
-export function rewrite(code, { upstream, prefix, id, plugin, prefixes = {} }) {
+export function rewrite(code, { upstream, prefix, id, plugin, prefixes = {}, storePrefix = null }) {
   const notes = []
   const q = upstream.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
   const map = { ...prefixes, [upstream]: prefix }
@@ -563,6 +601,15 @@ export function rewrite(code, { upstream, prefix, id, plugin, prefixes = {} }) {
   code = code.replace(/(\$\.plugin\.root\s*\+\s*)(['"`])\//g, `$1$2/mods/${id}/`)
   code = code.replace(/\$\{\s*\$\.plugin\.root\s*\}\//g, `\${$.plugin.root}/mods/${id}/`)
   if (/\$\.plugin\.root(?!\s*\+\s*['"`]\/mods\/)(?!\s*\}\/mods\/)/.test(code)) notes.push(t('$.plugin.root wird in einer Form benutzt, die nicht automatisch umgeschrieben wurde; Pfade prüfen.', '$.plugin.root is used in a form that was not rewritten automatically; check the paths.'))
+  // Assets ($.audio.play({ asset }) and the like) are named relative to the plugin root.
+  code = code.replace(/(\basset:\s*)(['"`])(?!mods\/)([^'"`$]+)\2/g, (_all, head, q, p) => `${head}${q}mods/${id}/${p.replace(/^\.?\//, '')}${q}`)
+  if (/\basset:\s*(?!['"`])/.test(code)) notes.push(t('Ein Asset-Pfad ist nicht wörtlich angegeben und wurde nicht umgeschrieben; prüfen.', 'An asset path is not a literal and was not rewritten; check it.'))
+  // $.store is one per plugin: in the box all mods share it, so literal keys get the mod's prefix.
+  if (storePrefix) {
+    code = code.replace(/(\$\.store\.(?:get|set|delete)\(\s*)(['"`])(?!\w+:)/g, `$1$2${storePrefix}:`)
+    if (/\$\.store\.(?:get|set|delete)\(\s*(?!['"`])/.test(code)) notes.push(t('$.store wird mit einem berechneten Schlüssel benutzt; der kann mit anderen Mods kollidieren.', '$.store is used with a computed key; it may clash with other mods.'))
+    if (/\$\.store\.keys\(/.test(code)) notes.push(t('$.store.keys() sieht in der Box auch die Schlüssel anderer Mods.', '$.store.keys() sees other mods\' keys too inside the box.'))
+  }
   // Several mods may watch the same event if each has a matcher: {} matches everything.
   code = code.replace(/(?<![\w.$])on\((['"][\w.*!]+['"]),(?!\s*\{)\s*/g, 'on($1, {}, ')
   return { code, notes, stateRefs: n }
@@ -705,20 +752,21 @@ function importMod(a) {
     pluginDir = all[0].dir
   }
 
-  const info = pluginInfo(pluginDir)
-  if (!info) throw new Error(t('Kein .claude-plugin/plugin.json gefunden', 'no .claude-plugin/plugin.json found'))
-  if (!info.isMod) throw new Error(t(`${info.name} ist kein Mod mit Function-Hooks (hooks/hooks.json ohne "modules"); normal per /plugin installieren`, `${info.name} is not a mod with function hooks (hooks/hooks.json has no "modules"); install it normally with /plugin`))
-  const manifest = readJson(path.join(pluginDir, '.claude-plugin', 'plugin.json'))
-  const modules = readJson(path.join(pluginDir, 'hooks', 'hooks.json')).modules
-  const report = []
-  if (modules.length > 1) report.push(t(`Das Plugin hat ${modules.length} Hook-Module; übernommen wird das erste.`, `The plugin has ${modules.length} hook modules; the first one is taken over.`))
-  if (manifest.dependencies?.length) report.push(t(`Abhängigkeiten (${manifest.dependencies.join(', ')}) werden nicht mitgeholt.`, `Dependencies (${manifest.dependencies.join(', ')}) are not fetched.`))
-
+  // First what it is: nothing of the plugin runs for this.
   const box = readJson(BOX)
-  const upstream = manifest.name
-  const existing = box.mods.find(m => (m.upstream ?? m.id) === upstream)
-  if (existing && !existing.imported) throw new Error(t(`${upstream} ist schon fest in der Box`, `${upstream} is already built into the box`))
-  const id = existing?.id ?? (box.mods.some(m => m.id === slug(upstream)) ? slug(upstream) + '-2' : slug(upstream))
+  const inv = inventory(pluginDir, { root: dir })
+  const upstream = inv.name
+  const existing = a.as ? box.mods.find(m => m.id === a.as) : box.mods.find(m => (m.upstream ?? m.id) === upstream)
+  if (existing && !existing.imported) throw new Error(t(`${existing.id} ist schon fest in der Box`, `${existing.id} is already built into the box`))
+  const v = verdictOf(inv, { taken: takenNames(box), self: existing?.id ?? null, acceptUnlicensed: a['accept-unlicensed'] === true, strategy: String(a.strategy ?? importStrategy(box)), t })
+  if (v.verdict !== 'integrate') {
+    return { ok: false, verdict: v.verdict, reasons: v.reasons, components: componentsOf(inv), error: v.reasons[0] ?? v.verdict, native: v.verdict === 'native' ? t('Als eigenes Plugin verwalten: Quellen → „Nativ installieren“.', 'Manage it as a plugin of its own: Sources → "Install natively".') : null }
+  }
+  const manifest = fs.existsSync(path.join(pluginDir, '.claude-plugin', 'plugin.json')) ? readJson(path.join(pluginDir, '.claude-plugin', 'plugin.json')) : { name: upstream }
+  const modules = inv.modules
+  const report = [...v.reasons]
+  const lost = []
+  const id = existing?.id ?? a.as ?? (box.mods.some(m => m.id === slug(upstream)) ? slug(upstream) + '-2' : slug(upstream))
   const target = path.join(ROOT, 'mods', id)
   const backupBox = fs.readFileSync(BOX, 'utf8')
   const backupManifest = fs.readFileSync(MANIFEST, 'utf8')
@@ -726,17 +774,22 @@ function importMod(a) {
   if (existing) fs.renameSync(target, backupDir)
 
   try {
-    copyTree(pluginDir, target, report)
+    const sourceCode = walk(pluginDir).filter(p => CODE_EXT.test(p) && !/[\\/]node_modules[\\/]/.test(p)).map(p => fs.readFileSync(p, 'utf8')).join('\n')
+    copyTree(pluginDir, target, report, lost, sourceCode)
     fs.rmSync(path.join(target, 'hooks', 'hooks.json'), { force: true })
+    if (inv.licenseFile && !fs.existsSync(path.join(target, path.basename(inv.licenseFile)))) fs.copyFileSync(inv.licenseFile, path.join(target, path.basename(inv.licenseFile)))
+    const entries = modules.map(m => path.resolve(target, 'hooks', m))
+    for (const e of entries) if (!fs.existsSync(e)) lost.push(t(`Hooks-Modul ${path.basename(e)}`, `hooks module ${path.basename(e)}`))
+    if (lost.length) throw new Error(t(`Beim Übernehmen ginge etwas verloren: ${lost.join(', ')}. Nichts geändert.`, `Something would be lost on import: ${lost.join(', ')}. Nothing changed.`))
     writeJson(path.join(target, 'upstream-plugin.json'), manifest)
 
     const taken = new Set(box.mods.filter(m => m.id !== id).map(m => m.state?.prefix).filter(Boolean))
-    const prefix = existing?.state?.prefix ?? uniquePrefix(id, taken)
+    const prefix = existing?.state?.prefix ?? existing?.storePrefix ?? uniquePrefix(id, taken)
     let stateRefs = 0
     for (const f of walk(target)) {
       if (!CODE_EXT.test(f) || f.endsWith('.d.ts')) continue
       const prefixes = Object.fromEntries(box.mods.filter(m => m.state?.prefix && m.id !== id).map(m => [m.upstream ?? m.state.from ?? m.id, m.state.prefix]))
-      const r = rewrite(fs.readFileSync(f, 'utf8'), { upstream, prefix, id, plugin: box.plugin, prefixes })
+      const r = rewrite(fs.readFileSync(f, 'utf8'), { upstream, prefix, id, plugin: box.plugin, prefixes, storePrefix: prefix })
       fs.writeFileSync(f, r.code)
       stateRefs += r.stateRefs
       for (const n of r.notes) report.push(`${path.relative(target, f)}: ${n}`)
@@ -757,13 +810,13 @@ function importMod(a) {
     const toggle = existing?.toggle ?? camel(id)
     const guess = analyze(walk(target).filter(f => CODE_EXT.test(f) && !f.endsWith('.d.ts')).map(f => fs.readFileSync(f, 'utf8')).join('\n'))
     report.push(t(`Einordnung (Vorschlag): Gruppe ${guess.group}, Token ${guess.tokens}, läuft auf ${guess.compat.surfaces.join('/')}, ${guess.compat.os.join('/')}${guess.compat.needs.length ? `, braucht ${guess.compat.needs.join(', ')}` : ''}.`, `Classification (guess): group ${guess.group}, tokens ${guess.tokens}, runs on ${guess.compat.surfaces.join('/')}, ${guess.compat.os.join('/')}${guess.compat.needs.length ? `, needs ${guess.compat.needs.join(', ')}` : ''}.`))
-    const options = Object.entries(manifest.userConfig ?? {}).map(([field, f]) => ({
-      key: toggle + pascal(field),
-      field,
-      ...f,
-      title: `${manifest.displayName ?? pascal(upstream)}: ${f.title ?? field}`,
-    }))
-    if (options.some(o => o.sensitive)) report.push(t('Eine Option ist als geheim markiert; geheime Werte gehören nicht ins Fenster, sondern in /config.', 'An option is marked secret; secret values belong in /config, not in the window.'))
+    // Options keep their type. "required" stays out of the box manifest (an unset required field would
+    // stop the whole box from loading); the window keeps the mod off until they are set instead.
+    const options = Object.entries(manifest.userConfig ?? {}).map(([field, f]) => {
+      const { required: _required, ...rest } = f
+      return { key: toggle + pascal(field), field, ...rest, title: `${manifest.displayName ?? pascal(upstream)}: ${f.title ?? field}` }
+    })
+    const needs = Object.entries(manifest.userConfig ?? {}).filter(([, f]) => f.required === true && f.default === undefined).map(([field]) => toggle + pascal(field))
 
     const entry = {
       id,
@@ -772,15 +825,18 @@ function importMod(a) {
       group: guess.group,
       tokens: guess.tokens,
       compat: guess.compat,
-      ...(guess.commands.length ? { commands: guess.commands.map(name => ({ name, en: '', de: '' })) } : {}),
+      ...(inv.commands.length ? { commands: inv.commands.map(name => ({ name, en: '', de: '' })) } : {}),
       description: manifest.description ?? '',
       default: existing?.default ?? false,
-      entry: rel(ROOT, path.join(target, 'hooks', modules[0])).replace(/^\.\//, ''),
+      entry: rel(ROOT, entries[0]).replace(/^\.\//, ''),
+      ...(entries.length > 1 ? { entries: entries.map(e => rel(ROOT, e).replace(/^\.\//, '')) } : {}),
       imported: true,
+      storePrefix: prefix,
+      ...(needs.length ? { needs } : {}),
       upstream,
       ...(options.length ? { options } : {}),
       ...(state ? { state } : {}),
-      source: { url: a.url[0] ?? null, dir: pluginDir, license: manifest.license ?? null, version: manifest.version ?? null },
+      source: { url: a.url[0] ?? null, dir: pluginDir, license: inv.license ?? null, version: manifest.version ?? null },
     }
     if (existing) box.mods[box.mods.indexOf(existing)] = entry
     else box.mods.push(entry)
@@ -790,8 +846,8 @@ function importMod(a) {
     for (const d of duplicates()) report.push(d)
 
     build()
-    const v = validate()
-    if (!v.ok) throw new Error(t('Prüfung fehlgeschlagen, nichts geändert:\n', 'validation failed, nothing changed:\n') + errorsOf(v.text))
+    const vr = validate()
+    if (!vr.ok) throw new Error(t('Prüfung fehlgeschlagen, nichts geändert:\n', 'validation failed, nothing changed:\n') + errorsOf(vr.text))
     // Record the baseline for later update checks.
     try {
       writeSnapshot({ dir: `mods/${id}`, pluginDir, url: a.url[0] ?? '', sub: a.url[0] ? parseLink(a.url[0]).sub : '', name: upstream, prefix, typesPath: manifest.types ?? null })
@@ -799,7 +855,7 @@ function importMod(a) {
       report.push(t(`Kein Grundstand für Updates: ${String(err.message ?? err)}`, `No baseline for updates: ${String(err.message ?? err)}`))
     }
     if (backupDir) fs.rmSync(backupDir, { recursive: true, force: true })
-    return { ok: true, id, toggle, prefix, notes: report, validated: v.binary ?? null }
+    return { ok: true, id, toggle, prefix, verdict: 'integrate', components: componentsOf(inv), lost: [], notes: report, validated: vr.binary ?? null }
   } catch (err) {
     fs.rmSync(target, { recursive: true, force: true })
     if (backupDir) fs.renameSync(backupDir, target)
@@ -810,8 +866,149 @@ function importMod(a) {
     } catch {
       // the old state was built; nothing to do
     }
-    return { ok: false, error: String(err.message ?? err), notes: report }
+    return { ok: false, verdict: 'integrate', error: String(err.message ?? err), lost, notes: report }
   }
+}
+
+/** Commands and tools the box already has: name -> mod id (read from every mod's code). */
+function takenNames(box) {
+  const commands = new Map()
+  const tools = new Map()
+  for (const m of box.mods) {
+    const dirs = [path.join(ROOT, path.dirname(m.entry)), ...(m.extraDirs ?? []).map(d => path.join(ROOT, d))]
+    for (const file of dirs.flatMap(d => (fs.existsSync(d) ? walk(d) : []))) {
+      if (!CODE_EXT.test(file) || file.endsWith('.d.ts')) continue
+      const code = fs.readFileSync(file, 'utf8')
+      for (const x of code.matchAll(/command\.register\(\s*\{[^}]*?name:\s*['"`]([\w:-]+)/g)) commands.set('/' + x[1], m.id)
+      for (const x of code.matchAll(/(?:const COMMAND|name:)\s*=?\s*['"`]([\w:-]+)['"`][^\n]*command/gi)) if (!commands.has('/' + x[1])) commands.set('/' + x[1], m.id)
+      for (const x of code.matchAll(/tool\.register\(\s*\{[^}]*?name:\s*['"`]([\w:-]+)/g)) tools.set(x[1], m.id)
+    }
+    for (const c of m.commands ?? []) commands.set(c.name.split(' ')[0], m.id)
+  }
+  return { commands, tools }
+}
+
+/** The box setting importStrategy: "auto" (integrate what can be) or "native" (manage all natively). */
+function importStrategy(box) {
+  return box.settings?.find(s => s.key === 'importStrategy')?.default ?? 'auto'
+}
+
+// ---------------------------------------------------------------- Native plugins
+
+/** How profiles see a natively managed plugin: group, token class, where it runs, read from its files. */
+function nativeMeta(dir) {
+  if (!dir || !fs.existsSync(dir)) return { group: 'native', tokens: 'none', compat: null }
+  const inv = inventory(dir)
+  const code = walk(dir).filter(p => CODE_EXT.test(p) && !p.endsWith('.d.ts') && !/[\\/]node_modules[\\/]/.test(p)).map(p => fs.readFileSync(p, 'utf8')).join('\n')
+  const guess = analyze(code)
+  const contextParts = inv.skills.length + inv.agents.length + inv.mcp.length + inv.commandFiles.length
+  const needs = [...guess.compat.needs]
+  for (const l of inv.lsp) needs.push(`LSP server ${l}`)
+  return {
+    group: guess.group === 'imported' ? 'native' : guess.group,
+    tokens: guess.tokens === 'always' ? 'always' : contextParts ? 'optional' : guess.tokens,
+    compat: { ...guess.compat, needs },
+  }
+}
+
+function claudeExe() {
+  const c = findClaude()
+  if (!c) throw new Error(t('Kein Claude Code gefunden.', 'No Claude Code found.'))
+  return c.exe
+}
+
+/**
+ * native <action> ...: plugins managed through Claude Code's own plugin system.
+ *   list | details <id> | options <id> | set <id> (values as JSON on stdin) | install <plugin>
+ *   [--source S] [--accept-command SHA] | adopt <id> | trust <id> | untrust <id> | enable <id> |
+ *   disable <id> | update <id> | uninstall <id> [--prune] | profile <profile-id>
+ */
+function nativeCmd(a) {
+  const [, action, id] = a._
+  const exe = claudeExe()
+  const box = readJson(BOX)
+  switch (action) {
+    case 'list':
+      return { ok: true, plugins: native.list(exe, { self: box.plugin }) }
+    case 'details':
+      return { ok: true, id, ...native.details(exe, id) }
+    case 'options':
+      return { ok: true, ...native.options(exe, id) }
+    case 'set': {
+      const raw = fs.readFileSync(0, 'utf8')
+      return { ok: true, ...native.setOptions(exe, id, JSON.parse(raw || '{}')) }
+    }
+    case 'install': {
+      // A plugin without a marketplace (--dir folder, or --url repo): through the box's local marketplace.
+      let target = id
+      if (a.dir || a.url.length) {
+        const base = a.url.length ? fetchLink(a.url[0], a.refresh === true) : path.resolve(String(a.dir))
+        const hits = findPlugins(base).filter(p => !id || p.name === id)
+        if (hits.length !== 1) throw new Error(t(`${hits.length} Plugins gefunden; Namen angeben`, `${hits.length} plugins found; name one`))
+        target = native.stageLocal(exe, hits[0].dir, hits[0].name)
+      }
+      const r = native.install(exe, target, { source: a.source ? String(a.source) : null, acceptCommand: a['accept-command'] ? String(a['accept-command']) : null })
+      if (r.ok) {
+        const p = native.list(exe, { self: box.plugin }).find(x => x.id === r.id)
+        const meta = nativeMeta(p?.installPath)
+        const reg = native.readRegistry()
+        if (reg.plugins[r.id]) native.adopt(r.id, meta) // keeps trusted:false from install
+      }
+      return r
+    }
+    case 'adopt': {
+      const p = native.list(exe, { self: box.plugin }).find(x => x.id === id)
+      if (!p) throw new Error(t(`${id} ist nicht installiert`, `${id} is not installed`))
+      return native.adopt(id, nativeMeta(p.installPath))
+    }
+    case 'trust':
+      return native.setTrust(id, true)
+    case 'untrust':
+      return native.setTrust(id, false)
+    case 'enable':
+    case 'disable':
+      return native.setEnabled(exe, id, action === 'enable')
+    case 'update':
+      return native.update(exe, id)
+    case 'uninstall':
+      return native.uninstall(exe, id, { prune: a.prune === true })
+    case 'profile': {
+      // The same rules as for the box's own mods; only managed, trusted plugins are switched.
+      const p = (box.profiles ?? {})[id]
+      if (!p) throw new Error(t(`Profil ${id} gibt es nicht`, `no profile ${id}`))
+      const changes = []
+      for (const n of native.list(exe, { self: box.plugin })) {
+        if (!n.managed || !n.trusted || n.missing) continue
+        const want = ruleSays(p.rule ?? p.set, { toggle: n.id, group: n.group, tokens: n.tokens, default: true, imported: true })
+        if (want === n.enabled) continue
+        native.setEnabled(exe, n.id, want)
+        changes.push({ id: n.id, enabled: want })
+      }
+      return { ok: true, profile: id, changes, restart: changes.length > 0 }
+    }
+    default:
+      throw new Error('native: list | details <id> | options <id> | set <id> | install <plugin> [--source S] | adopt <id> | trust <id> | untrust <id> | enable <id> | disable <id> | update <id> | uninstall <id> [--prune] | profile <id>')
+  }
+}
+
+/** inspect (--dir D | --url L) [--plugin N]: what each plugin there is and how the box can take it. Runs nothing. */
+function inspectCmd(a) {
+  let dir
+  if (a.url.length) dir = fetchLink(a.url[0], a.refresh === true)
+  else if (a.dir) dir = path.resolve(String(a.dir))
+  else throw new Error(t('--dir oder --url angeben', 'pass --dir or --url'))
+  const box = readJson(BOX)
+  const taken = takenNames(box)
+  const found = fs.existsSync(path.join(dir, '.claude-plugin', 'marketplace.json')) ? scan(dir).plugins.filter(p => p.dir).map(p => p.dir) : findPlugins(dir).map(p => p.dir)
+  const plugins = found
+    .filter(p => !a.plugin || inventory(p).name === a.plugin)
+    .map(p => {
+      const inv = inventory(p, { root: dir })
+      const existing = box.mods.find(m => (m.upstream ?? m.id) === inv.name)
+      const v = verdictOf(inv, { taken, self: existing?.id ?? null, acceptUnlicensed: a['accept-unlicensed'] === true, strategy: String(a.strategy ?? importStrategy(box)), t })
+      return { name: inv.name, version: inv.version, description: inv.description, license: inv.license, dir: p, verdict: v.verdict, reasons: v.reasons, components: componentsOf(inv) }
+    })
+  return { ok: true, plugins }
 }
 
 function duplicates() {
@@ -836,6 +1033,18 @@ function duplicates() {
 }
 
 // Find the newest Claude Code (the desktop app often ships a newer one than PATH).
+// Installed with npm: on Windows only a .cmd shim is on PATH, which Node does not start without a
+// shell, so the binary in the package is taken directly.
+function npmClaude() {
+  try {
+    const root = execSync('npm root -g', { encoding: 'utf8', timeout: 20_000, stdio: ['ignore', 'pipe', 'ignore'] }).trim()
+    const exe = path.join(root, '@anthropic-ai', 'claude-code', 'bin', process.platform === 'win32' ? 'claude.exe' : 'claude')
+    return fs.existsSync(exe) ? exe : null
+  } catch {
+    return null
+  }
+}
+
 function findClaude() {
   const found = []
   const appdata = process.env.APPDATA
@@ -852,7 +1061,7 @@ function findClaude() {
       }
     }
   }
-  for (const exe of [path.join(os.homedir(), '.local', 'bin', process.platform === 'win32' ? 'claude.exe' : 'claude'), 'claude']) {
+  for (const exe of [path.join(os.homedir(), '.local', 'bin', process.platform === 'win32' ? 'claude.exe' : 'claude'), npmClaude(), 'claude'].filter(Boolean)) {
     try {
       const out = execFileSync(exe, ['--version'], { encoding: 'utf8', timeout: 20_000, stdio: ['ignore', 'pipe', 'ignore'] })
       const v = /(\d+\.\d+\.\d+)/.exec(out)?.[1]
@@ -900,7 +1109,35 @@ export function localPath(rel, typesPath) {
   return r
 }
 
-function upstreamFiles(pluginDir) {
+const BINARY_EXT = /\.(png|jpe?g|gif|webp|ico|bmp|wav|mp3|ogg|flac|m4a|mp4|webm|woff2?|ttf|otf|zip|gz|pdf|wasm|exe|dll|so|dylib)$/i
+/** "bin:<sha1>" stands for a binary file in a baseline: compared by hash, copied whole, never merged. */
+function binMark(buf) {
+  return 'bin:' + crypto.createHash('sha1').update(buf).digest('hex')
+}
+const isBinary = (name, buf) => BINARY_EXT.test(name) || buf.subarray(0, 8000).includes(0)
+
+function upstreamFiles(pluginDir, format = 1) {
+  if (format >= 2) {
+    // Format 2: what copyTree takes along, binary files by hash.
+    const out = {}
+    const walk2 = dir => {
+      for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+        const p = path.join(dir, e.name)
+        const rel = path.relative(pluginDir, p).split(path.sep).join('/')
+        if (e.isDirectory()) {
+          if (COPY_SKIP.has(e.name) || TEST_DIRS.has(e.name)) continue
+          walk2(p)
+        } else if (e.isFile()) {
+          if (rel === 'hooks/hooks.json' || /^(package-lock\.json|bun\.lockb?|yarn\.lock|pnpm-lock\.yaml)$/.test(e.name)) continue
+          if (fs.statSync(p).size > 5 * 1024 * 1024) continue
+          const buf = fs.readFileSync(p)
+          out[rel] = isBinary(e.name, buf) ? binMark(buf) : buf.toString('utf8')
+        }
+      }
+    }
+    walk2(pluginDir)
+    return out
+  }
   const out = {}
   const walkUp = (dir, base) => {
     for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
@@ -923,8 +1160,15 @@ function repoRoot(dir) {
   return git(['rev-parse', '--show-toplevel'], dir).trim()
 }
 
+// The commit of a git checkout; for a plain folder a hash of its files (so a change shows as an update).
 function headOf(dir) {
-  return git(['rev-parse', 'HEAD'], dir).trim()
+  try {
+    return git(['rev-parse', 'HEAD'], dir).trim()
+  } catch {
+    const h = crypto.createHash('sha1')
+    for (const [rel, text] of Object.entries(upstreamFiles(dir, 2)).sort(([a], [b]) => a.localeCompare(b))) h.update(rel + '\0' + lf(text))
+    return 'local-' + h.digest('hex')
+  }
 }
 
 function readUpstream(dir) {
@@ -933,26 +1177,33 @@ function readUpstream(dir) {
 }
 
 // Records the baseline: only the upstream files that exist in our copy.
-function writeSnapshot({ dir, pluginDir, url, sub, name, prefix, typesPath }) {
+function writeSnapshot({ dir, pluginDir, url, sub, name, prefix, typesPath, format = 2 }) {
   const target = path.join(ROOT, dir)
-  const all = upstreamFiles(pluginDir)
+  const all = upstreamFiles(pluginDir, format)
   const files = {}
   for (const [rel, text] of Object.entries(all)) {
     if (fs.existsSync(path.join(target, localPath(rel, typesPath)))) files[rel] = text
   }
-  // URL and subpath from the upstream's Git repo where they weren't given.
-  const root = repoRoot(pluginDir)
-  const realSub = path.relative(root, pluginDir).split(path.sep).join('/')
+  // URL and subpath from the upstream's Git repo where they weren't given. Without one (a plain
+  // folder, or a checkout without a remote) the folder itself is the original.
+  let root = null
+  try {
+    root = repoRoot(pluginDir)
+  } catch {
+    root = null
+  }
+  const realSub = root ? path.relative(root, pluginDir).split(path.sep).join('/') : ''
   let link = url
-  if (!link) {
+  if (!link && root) {
     try {
       link = git(['remote', 'get-url', 'origin'], root).trim()
     } catch {
       link = ''
     }
   }
-  if (!link) throw new Error(t('Das Original liegt in keinem Git-Repo mit Adresse; Updates lassen sich nicht prüfen.', 'The original is in no git repo with a remote; updates cannot be checked.'))
-  const snap = { url: parseLink(link).clone, path: realSub || sub || '', name, prefix: prefix ?? null, typesPath: typesPath ?? null, commit: headOf(pluginDir), at: new Date().toISOString(), files }
+  const snap = link
+    ? { format, url: parseLink(link).clone, path: realSub || sub || '', name, prefix: prefix ?? null, typesPath: typesPath ?? null, commit: headOf(pluginDir), at: new Date().toISOString(), files }
+    : { format, url: null, local: path.resolve(pluginDir), path: '', name, prefix: prefix ?? null, typesPath: typesPath ?? null, commit: headOf(pluginDir), at: new Date().toISOString(), files }
   writeJson(path.join(target, UPSTREAM_FILE), snap)
   return snap
 }
@@ -971,6 +1222,10 @@ function vendoredDirs() {
 
 // Fetches a mod's current upstream (git pull in the cache).
 function fetchUpstream(snap, refresh) {
+  if (snap.local) {
+    if (!fs.existsSync(snap.local)) throw new Error(t(`Der Ordner des Originals fehlt: ${snap.local}`, `The original's folder is gone: ${snap.local}`))
+    return snap.local
+  }
   return fetchParsed({ clone: parseLink(snap.url).clone, ref: null, sub: (snap.path ?? '').replace(/^\.?\/|\/$/g, '') }, refresh)
 }
 
@@ -978,7 +1233,7 @@ function compare(dir, refresh) {
   const snap = readUpstream(dir)
   const pluginDir = fetchUpstream(snap, refresh)
   const head = headOf(pluginDir)
-  const theirs = upstreamFiles(pluginDir)
+  const theirs = upstreamFiles(pluginDir, snap.format ?? 1)
   const changed = []
   const added = []
   const removed = []
@@ -987,14 +1242,16 @@ function compare(dir, refresh) {
     else if (lf(theirs[rel]) !== lf(text)) changed.push(rel)
   }
   for (const rel of Object.keys(theirs)) {
-    if (!(rel in snap.files) && rel.startsWith('hooks/')) added.push(rel)
+    if (!(rel in snap.files) && ((snap.format ?? 1) >= 2 || rel.startsWith('hooks/'))) added.push(rel)
   }
   return { snap, pluginDir, head, theirs, changed, added, removed }
 }
 
+// updates [<id>]: compares the copied mods (or only one) with their originals.
 function updatesCmd(a) {
   const out = []
-  for (const dir of vendoredDirs()) {
+  const only = a._[1] ? String(a._[1]) : null
+  for (const dir of vendoredDirs().filter(d => !only || path.basename(d) === only)) {
     try {
       const c = compare(dir, a.refresh !== false)
       const n = c.changed.length + c.added.length + c.removed.length
@@ -1022,7 +1279,8 @@ function rewriteFor(snap, dir, rel, text) {
   const box = readJson(BOX)
   const id = path.basename(dir)
   const prefixes = Object.fromEntries(box.mods.filter(m => m.state?.prefix).map(m => [m.upstream ?? m.state.from ?? m.id, m.state.prefix]))
-  return rewrite(text, { upstream: snap.name, prefix: snap.prefix ?? 'x', id, plugin: box.plugin, prefixes }).code
+  const mod = box.mods.find(m => m.id === id)
+  return rewrite(text, { upstream: snap.name, prefix: snap.prefix ?? 'x', id, plugin: box.plugin, prefixes, storePrefix: mod?.storePrefix ?? null }).code
 }
 
 function diffCmd(a) {
@@ -1032,6 +1290,10 @@ function diffCmd(a) {
   const parts = []
   try {
     for (const rel of [...c.changed, ...c.added, ...c.removed]) {
+      if (String(c.snap.files[rel] ?? '').startsWith('bin:') || String(c.theirs[rel] ?? '').startsWith('bin:')) {
+        parts.push(`--- a/${rel}\n+++ b/${rel}\n${t('Binärdatei', 'binary file')}: ${c.snap.files[rel] ?? '-'} → ${c.theirs[rel] ?? '-'}\n`)
+        continue
+      }
       const A = path.join(tmp, 'a.txt')
       const B = path.join(tmp, 'b.txt')
       fs.writeFileSync(A, lf(c.snap.files[rel] ?? ''))
@@ -1091,9 +1353,16 @@ function updateCmd(a) {
   const deletes = []
   const conflicts = []
   const notes = []
+  const copies = []
   for (const rel of c.changed) {
     const local = path.join(target, localPath(rel, typesPath))
     if (!fs.existsSync(local)) continue
+    if (String(c.snap.files[rel]).startsWith('bin:') || String(c.theirs[rel]).startsWith('bin:')) {
+      // binary: ours untouched since the baseline -> take theirs; changed by us -> conflict
+      if (binMark(fs.readFileSync(local)) === c.snap.files[rel]) copies.push([local, path.join(c.pluginDir, rel)])
+      else conflicts.push(`${localPath(rel, typesPath)} (${t('Binärdatei, bei uns geändert', 'binary, changed here')})`)
+      continue
+    }
     const ours = fs.readFileSync(local, 'utf8')
     const base = rewriteFor(c.snap, dir, rel, c.snap.files[rel])
     const theirs = rewriteFor(c.snap, dir, rel, c.theirs[rel])
@@ -1102,13 +1371,19 @@ function updateCmd(a) {
     else writes.push([local, m.text.split('\n').join(eolOf(ours))])
   }
   for (const rel of c.added) {
+    if (String(c.theirs[rel]).startsWith('bin:')) {
+      copies.push([path.join(target, localPath(rel, typesPath)), path.join(c.pluginDir, rel)])
+      notes.push(t(`neu: ${rel}`, `new: ${rel}`))
+      continue
+    }
     writes.push([path.join(target, localPath(rel, typesPath)), rewriteFor(c.snap, dir, rel, c.theirs[rel])])
     notes.push(t(`neu: ${rel}`, `new: ${rel}`))
   }
   for (const rel of c.removed) {
     const local = path.join(target, localPath(rel, typesPath))
     if (!fs.existsSync(local)) continue
-    if (lf(fs.readFileSync(local, 'utf8')) === lf(rewriteFor(c.snap, dir, rel, c.snap.files[rel]))) deletes.push(local)
+    const same = String(c.snap.files[rel]).startsWith('bin:') ? binMark(fs.readFileSync(local)) === c.snap.files[rel] : lf(fs.readFileSync(local, 'utf8')) === lf(rewriteFor(c.snap, dir, rel, c.snap.files[rel]))
+    if (same) deletes.push(local)
     else notes.push(t(`${rel} gibt es im Original nicht mehr; unsere geänderte Fassung bleibt.`, `${rel} is gone upstream; our changed version stays.`))
   }
   if (conflicts.length) {
@@ -1116,18 +1391,22 @@ function updateCmd(a) {
   }
   // Back up, write, update the baseline, build, check; roll back on error.
   const backup = new Map()
-  for (const [p] of writes) backup.set(p, fs.existsSync(p) ? fs.readFileSync(p) : null)
+  for (const [p] of [...writes, ...copies]) backup.set(p, fs.existsSync(p) ? fs.readFileSync(p) : null)
   for (const p of deletes) backup.set(p, fs.readFileSync(p))
   const snapPath = path.join(target, UPSTREAM_FILE)
   const snapBackup = fs.readFileSync(snapPath)
   try {
     for (const [p, text] of writes) write(p, text)
+    for (const [p, from] of copies) {
+      fs.mkdirSync(path.dirname(p), { recursive: true })
+      fs.copyFileSync(from, p)
+    }
     for (const p of deletes) fs.rmSync(p, { force: true })
-    writeSnapshot({ dir, pluginDir: c.pluginDir, url: c.snap.url, sub: c.snap.path, name: c.snap.name, prefix: c.snap.prefix, typesPath })
+    writeSnapshot({ dir, pluginDir: c.pluginDir, url: c.snap.url ?? '', sub: c.snap.path, name: c.snap.name, prefix: c.snap.prefix, typesPath, format: c.snap.format ?? 1 })
     build()
     const v = validate()
     if (!v.ok) throw new Error(t('Prüfung fehlgeschlagen, zurückgerollt:\n', 'validation failed, rolled back:\n') + errorsOf(v.text))
-    return { ok: true, dir, from: c.snap.commit.slice(0, 7), to: c.head.slice(0, 7), files: writes.length + deletes.length, notes }
+    return { ok: true, dir, from: c.snap.commit.slice(0, 7), to: c.head.slice(0, 7), files: writes.length + copies.length + deletes.length, notes }
   } catch (err) {
     for (const [p, content] of backup) {
       if (content === null) fs.rmSync(p, { force: true })
@@ -1206,6 +1485,9 @@ if (isMain) {
     else if (cmd === 'update') result = updateCmd(a)
     else if (cmd === 'analyze') result = analyzeCmd(a._[1])
     else if (cmd === 'export') result = exportCmd(a)
+    else if (cmd === 'inspect') result = inspectCmd(a)
+    else if (cmd === 'native') result = nativeCmd(a)
+    else if (cmd === 'reimport') result = importMod({ ...a, as: a._[1] })
     else result = { ok: false, error: 'commands: build | validate | release | catalog [--url L]... [--refresh] | import (--dir D | --url L) [--plugin N] | analyze <id|dir> | remove <id> | updates | diff <id> | update <id>' }
   } catch (err) {
     result = { ok: false, error: String(err.message ?? err) }

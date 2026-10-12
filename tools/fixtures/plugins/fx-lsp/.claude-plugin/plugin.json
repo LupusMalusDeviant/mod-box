@@ -1,0 +1,6 @@
+{
+  "name": "fx-lsp",
+  "version": "1.0.0",
+  "description": "An LSP server only.",
+  "license": "MIT"
+}

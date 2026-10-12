@@ -1,0 +1,9 @@
+{
+  "name": "fx-dep",
+  "version": "1.0.0",
+  "description": "A mod that needs another plugin.",
+  "license": "MIT",
+  "dependencies": [
+    "fx-base"
+  ]
+}

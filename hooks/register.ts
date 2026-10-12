@@ -28,6 +28,21 @@ export function opt(options: Record<string, unknown>, key: string, fallback: str
   return typeof v === 'string' && v !== '' ? v : typeof v === 'number' || typeof v === 'boolean' ? String(v) : fallback
 }
 
+export function optNumber(options: Record<string, unknown>, key: string, fallback: number | null): number | null {
+  const v = options[key]
+  const n = typeof v === 'number' ? v : typeof v === 'string' && v.trim() !== '' ? Number(v) : NaN
+  return Number.isFinite(n) ? n : fallback
+}
+
+export function optBool(options: Record<string, unknown>, key: string, fallback: boolean): boolean {
+  return isOn(options, key, fallback)
+}
+
+export function optList(options: Record<string, unknown>, key: string, fallback: string[]): string[] {
+  const v = options[key]
+  return Array.isArray(v) ? v.map(String) : typeof v === 'string' && v !== '' ? [v] : fallback
+}
+
 export const register: Register = (on, options) => {
   const o = (options ?? {}) as Record<string, unknown>
   ;(m0 as any)(on, o) // settings
