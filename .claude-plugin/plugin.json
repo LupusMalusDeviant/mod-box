@@ -99,7 +99,7 @@
     "nextSteps": {
       "type": "boolean",
       "title": "Next Steps",
-      "description": "After each answer, 2-3 likely next prompts (1-3 drafts one, 0 dismisses). Costs tokens: a small Haiku call per answer.",
+      "description": "After each answer, 2-3 likely next prompts (1-3 drafts one, 0 dismisses). Claude Code has one built-in suggestion (Tab); this mod offers two or three. Costs tokens: a small Haiku call per answer.",
       "default": false
     },
     "cacheMeter": {
@@ -111,7 +111,7 @@
     "subagentSaver": {
       "type": "boolean",
       "title": "Subagent Saver",
-      "description": "Search subagents (Explore) that were given no model of their own run on a cheaper one instead of the main model. An explicit model, forks, teammates and plugin agents stay untouched.",
+      "description": "Search subagents (Explore) that were given no model of their own run on a cheaper one instead of the main model. An explicit model, forks, teammates and plugin agents stay untouched. With Claude Code's own CLAUDE_CODE_SUBAGENT_MODEL set (for all subagents), the mod stays out.",
       "default": true
     },
     "handoff": {
@@ -196,6 +196,27 @@
       ],
       "title": "CI Watch: sound",
       "description": "on: a short sound when the runs are green or red (Windows: system sounds)."
+    },
+    "ciNotify": {
+      "type": "string",
+      "default": "red",
+      "options": [
+        "off",
+        "red",
+        "always"
+      ],
+      "title": "CI Watch: system notification",
+      "description": "When a watched run ends, through your notification channel (preferredNotifChannel): off, only red, or always. Claude Code notifies at the end of a turn; CI usually ends later."
+    },
+    "ciPrOnDesktop": {
+      "type": "string",
+      "default": "app",
+      "options": [
+        "app",
+        "box"
+      ],
+      "title": "CI Watch: PR checks in the desktop app",
+      "description": "app: in the desktop app a new PR is watched by the app itself (CI bar, auto-fix), so nothing is reported twice; pushes are still watched here. box: CI Watch follows the PR as in the terminal."
     },
     "ciWatchShow": {
       "type": "string",
