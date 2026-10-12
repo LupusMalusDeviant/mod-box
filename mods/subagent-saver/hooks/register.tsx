@@ -52,7 +52,17 @@ export const register: Register = (on, options) => {
     .map(x => x.trim())
     .filter(Boolean)
 
+  // Claude Code's own setting wins: with CLAUDE_CODE_SUBAGENT_MODEL set, the mod stays out, so two
+  // rules never pick a subagent's model against each other.
+  let builtIn: string | null = null
+  on('session.start', {}, async ($, e, next) => {
+    const r = await next(e)
+    builtIn = ((await $.env.get('CLAUDE_CODE_SUBAGENT_MODEL').catch(() => undefined)) ?? '').trim() || null
+    return r
+  })
+
   on('agent.spawn', {}, async ($, e, next) => {
+    if (builtIn) return next(e)
     const model = cheaperModel(e as SpawnFacts, target, types)
     if (!model) return next(e)
     await update($, stats, s => ({ routed: s.routed + 1, last: `${e.subagentType} → ${model}` }))

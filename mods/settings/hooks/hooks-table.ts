@@ -90,6 +90,7 @@ export const HOOKS: Record<string, string[]> = {
   ],
   "subagentSaver": [
     "agent.spawn",
+    "session.start",
     "ui.render"
   ],
   "handoff": [

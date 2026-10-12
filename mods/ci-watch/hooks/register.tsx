@@ -23,6 +23,9 @@ export const PUSH = /(?:^|[;&|(]\s*)git\s+(?:-C\s+(\S+)\s+)?push\b/
 let intervalMs = 20_000
 let onRed = 'both'
 let withSound = false
+let notifyOn = 'red'
+let prOnDesktop = 'app'
+let onDesktop = false
 
 export const PR_CREATE = /(?:^|[;&|(]\s*)gh\s+pr\s+create\b/
 export const PR_URL = /https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/pull\/(\d+)/
@@ -79,6 +82,7 @@ async function poll($: EngineInterface) {
         : t(`CI grün: ${runs.length} Lauf/Läufe für ${w.sha.slice(0, 7)}`, `CI green: ${runs.length} run(s) for ${w.sha.slice(0, 7)}`),
     )
     void sound($, 'green')
+    void notify($, 'green', w.pr ? `PR #${w.pr.number}: ${t('alle Checks grün', 'all checks green')}` : `${w.branch} ${w.sha.slice(0, 7)}: ${t('alle Läufe grün', 'all runs green')}`)
     return
   }
   const log = bad.id ? await $.process.run(['gh', 'run', 'view', String(bad.id), '--log-failed'], { cwd: w.cwd, timeoutMs: 60_000 }).catch(() => null) : null
@@ -88,6 +92,7 @@ async function poll($: EngineInterface) {
     : t(`(Check außerhalb von GitHub Actions: kein Log über gh. Details: ${bad.url})`, `(check outside GitHub Actions: no log through gh. Details: ${bad.url})`)
   await set($, x => ({ ...x, phase: 'rot', runs, endedAt: now, failed: { id: bad.id, name: bad.name, url: bad.url, log: tail || noLog } }))
   void sound($, 'red')
+  void notify($, 'red', `${bad.name} (${bad.conclusion}) · ${w.pr ? `PR #${w.pr.number}` : w.branch}`)
   $.ui.toast(t(`CI rot: ${bad.name} (${bad.conclusion}). Analysieren, bevor irgendetwas anderes passiert.`, `CI red: ${bad.name} (${bad.conclusion}). Analyse it before anything else happens.`))
   if (onRed === 'pane' || onRed === 'both') void $.ui.open({ id: PANE, title: `${t('CI rot', 'CI red')} · ${bad.name}`, focus: true, closeOnEscape: true }).catch(() => {})
   if (onRed === 'prompt' || onRed === 'both') void $.prompt.fill({ text: analyse(w, bad), mode: 'replace' }).catch(() => {})
@@ -208,6 +213,13 @@ async function startPr($: EngineInterface, ref: string, cwd: string): Promise<bo
   return ok
 }
 
+// A system notification at the end (option notify: off | red | always), through the person's own
+// notification channel. Claude Code notifies when a turn ends; a CI run usually ends later.
+async function notify($: EngineInterface, kind: 'green' | 'red', text: string) {
+  if (notifyOn === 'off' || (notifyOn === 'red' && kind === 'green')) return
+  await $.ui.notify(text, { title: kind === 'red' ? t('CI rot', 'CI red') : t('CI grün', 'CI green') }).catch(() => undefined)
+}
+
 // A short sound at the end (option): Windows system sounds through PowerShell, elsewhere the mod's own clip.
 async function sound($: EngineInterface, kind: 'green' | 'red') {
   if (!withSound) return
@@ -233,10 +245,13 @@ export const register: Register = (on, options) => {
   intervalMs = Math.max(5, Number(options.intervalSec) || 20) * 1000
   onRed = String(options.onRed || 'both')
   withSound = options.sound === 'on'
+  notifyOn = String(options.notify || 'red')
+  prOnDesktop = String(options.prOnDesktop || 'app')
   lang = options.language === 'de' ? 'de' : 'en'
 
   on('session.start', {}, async ($, e, next) => {
     const r = await next(e)
+    onDesktop = (e as { surface?: string | null }).surface === 'desktop'
     await $.command.register({
       name: 'ci',
       description: t('CI-Wächter: Stand der Läufe zum letzten Push oder PR', 'CI Watch: state of the runs for the last push or PR'),
@@ -255,7 +270,9 @@ export const register: Register = (on, options) => {
     // A new pull request: its URL stands in the output of gh pr create.
     if (PR_CREATE.test(cmd)) {
       const url = PR_URL.exec(String(result.text ?? ''))?.[0]
-      if (url) void startPr($, url, await $.session.cwd()).catch(() => {})
+      // The desktop app binds a new PR to the session and watches its checks itself (CI bar, auto-fix).
+      if (url && onDesktop && prOnDesktop === 'app') $.ui.toast(t('PR-Checks überwacht die Desktop-App (CI-Leiste); /ci pr zeigt sie hier.', 'The desktop app watches the PR checks (CI bar); /ci pr shows them here.'))
+      else if (url) void startPr($, url, await $.session.cwd()).catch(() => {})
       return result
     }
     const m = PUSH.exec(cmd)

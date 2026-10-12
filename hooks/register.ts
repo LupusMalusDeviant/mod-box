@@ -49,7 +49,7 @@ export const register: Register = (on, options) => {
   ;(m0 as any)(on, o) // settings
   if (isOn(o, "blastRadius", true)) (m1 as any)(on, {  })
   if (isOn(o, "secretGuard", true)) (m2 as any)(on, { "mode": opt(o, "secretMode", "block"), "placeholders": opt(o, "secretPlaceholders", "on"), "language": opt(o, "language", "en") })
-  if (isOn(o, "ciWatch", true)) (m3 as any)(on, { "intervalSec": opt(o, "ciInterval", "20"), "onRed": opt(o, "ciOnRed", "both"), "sound": opt(o, "ciSound", "off"), "language": opt(o, "language", "en") })
+  if (isOn(o, "ciWatch", true)) (m3 as any)(on, { "intervalSec": opt(o, "ciInterval", "20"), "onRed": opt(o, "ciOnRed", "both"), "sound": opt(o, "ciSound", "off"), "notify": opt(o, "ciNotify", "red"), "prOnDesktop": opt(o, "ciPrOnDesktop", "app"), "language": opt(o, "language", "en") })
   if (isOn(o, "signGuard", false)) (m4 as any)(on, { "mode": opt(o, "signMode", "ask"), "script": opt(o, "signScript", ""), "subject": opt(o, "signSubject", ""), "language": opt(o, "language", "en") })
   if (isOn(o, "savvyProgress", true)) (m5 as any)(on, { "language": opt(o, "savvyLanguage", "auto") })
   if (isOn(o, "filetree", true)) (m6 as any)(on, { "activity": opt(o, "filetreeActivity", "reads and writes"), "glyphs": opt(o, "filetreeGlyphs", "auto"), "follow": opt(o, "filetreeFollow", "on"), "column": opt(o, "filetreeColumn", "date"), "open": opt(o, "filetreeOpen", ""), "language": opt(o, "language", "en"), "codebaseMap": opt(o, "codebaseMap", "") })
