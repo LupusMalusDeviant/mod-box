@@ -15,7 +15,7 @@ import { BAND_IDS } from './bands'
 import { HOOKS } from './hooks-table'
 import { CATALOG, GROUPS, PLUGIN, PROFILES, SETTINGS } from './catalog'
 import type { CatalogField, CatalogMod, Text as I18n } from './catalog'
-import type { NativeField, NativeInfo, NativePlugin, SourcePlugin, EnvCheck, HookError, ImportReport, Source, Tab, UpdateInfo } from '../types'
+import type { NativeField, NativeInfo, NativePlugin, SourcePlugin, EnvCheck, HookError, ImportReport, Source, Tab, UpdateInfo, BuiltinMod } from '../types'
 
 const PANE = 'mod-box-settings'
 // How Claude Code names this plugin's /config rows: <plugin>.<field>, for an installed plugin often
@@ -39,6 +39,7 @@ const open = atom({ plugin: 'mod-box', key: 'mb_open' } as const, [] as string[]
 const report = atom({ plugin: 'mod-box', key: 'mb_report' } as const, null as ImportReport | null)
 // Natively managed plugins (tools/native.mjs) and their details, read when a row opens.
 const natives = atom({ plugin: 'mod-box', key: 'mb_natives' } as const, null as NativePlugin[] | null)
+const builtinMods = atom({ plugin: 'mod-box', key: 'mb_builtins' } as const, null as BuiltinMod[] | null)
 const nativeInfo = atom({ plugin: 'mod-box', key: 'mb_nativeInfo' } as const, {} as Record<string, NativeInfo>)
 const expanded = atom({ plugin: 'mod-box', key: 'mb_expanded' } as const, [] as string[])
 // Mods that came in since the last session: marked "new" in the window for this session.
@@ -355,6 +356,7 @@ export const register: Register = (on, options) => {
     if (now === 'sources' && (await read($, sources)) === null) void loadCatalog($, false)
     if ((await read($, envChecks)) === null) void runEnvChecks($).catch(() => {})
     if ((await read($, natives)) === null) void loadNatives($).catch(() => {})
+    if ((await read($, builtinMods)) === null) void loadBuiltins($).catch(() => {})
     return { text: t('Mod-Box geöffnet (Esc schließt).', 'Mod Box opened (Esc closes).') }
   })
 
@@ -391,7 +393,7 @@ export const register: Register = (on, options) => {
     if (current === 'profiles') body = drawProfiles($, ui, rows, columns)
     else if (current === 'sources') body = <Box flexDirection="column">{await drawUpdates($, ui)}{await drawSources($, ui, columns)}</Box>
     else if (current === 'diag') body = <Box flexDirection="column">{await drawUsage($, ui)}{await drawDiagnosis($, ui)}</Box>
-    else body = drawMods($, ui, rows, await drawNotes($, ui), await read($, usage), await read($, expanded), columns, { ...(await here($, e.surface)), trusted, fresh: await read($, fresh) }, drawNativeCard($, ui, await read($, natives), await read($, nativeInfo), await read($, expanded), (await $.session.usage().catch(() => null))?.startedAt ?? 0))
+    else body = drawMods($, ui, rows, await drawNotes($, ui), await read($, usage), await read($, expanded), columns, { ...(await here($, e.surface)), trusted, fresh: await read($, fresh) }, drawNativeCard($, ui, await read($, natives), await read($, nativeInfo), await read($, expanded), (await $.session.usage().catch(() => null))?.startedAt ?? 0, await read($, builtinMods)))
 
     const storedId = await activeProfileId($)
     const matches = (p: (typeof PROFILES)[number]) => profileSet(p, trusted, rows).every(([k, v]) => (rows.get(k)?.value === true) === v)
@@ -1057,6 +1059,18 @@ async function loadNatives($: EngineInterface) {
   await update($, natives, () => list)
 }
 
+// Claude Code's own mods (@builtin): read once per window, switched through `claude plugin enable|disable`.
+async function loadBuiltins($: EngineInterface, refresh = false) {
+  const res = await box($, ['native', 'builtins', ...(refresh ? ['--refresh'] : [])], 120_000)
+  await update($, builtinMods, () => (res.ok && Array.isArray(res.builtins) ? (res.builtins as BuiltinMod[]) : []))
+}
+
+async function switchBuiltin($: EngineInterface, b: BuiltinMod) {
+  if (!b.switchable) return
+  await nativeRun($, [b.enabled ? 'builtin-off' : 'builtin-on', b.name], b.enabled ? t(`${b.name} wird ausgeschaltet …`, `Switching ${b.name} off …`) : t(`${b.name} wird eingeschaltet …`, `Switching ${b.name} on …`))
+  await loadBuiltins($)
+}
+
 /** Runs `box.mjs native <args>`; a failure becomes the report, the list is read again afterwards. */
 async function nativeRun($: EngineInterface, args: string[], busyText: string, stdin?: string): Promise<any> {
   if (await read($, busy)) return null
@@ -1143,7 +1157,7 @@ async function installNative($: EngineInterface, src: Source, p: SourcePlugin) {
 
 const PART_LABEL: Record<string, [string, string]> = { Skills: ['Skills', 'skills'], Agents: ['Agents', 'agents'], Hooks: ['Hooks', 'hooks'], 'MCP servers': ['MCP-Server', 'MCP servers'], 'LSP servers': ['LSP-Server', 'LSP servers'] }
 
-function drawNativeCard($: EngineInterface, ui: any, list: NativePlugin[] | null, info: Record<string, NativeInfo>, open: string[], startedAt: number) {
+function drawNativeCard($: EngineInterface, ui: any, list: NativePlugin[] | null, info: Record<string, NativeInfo>, open: string[], startedAt: number, builtins: BuiltinMod[] | null = null) {
   const { Box, Text, Button, Select, Input } = ui
   const managed = (list ?? []).filter(p => p.managed)
   const others = (list ?? []).filter(p => !p.managed)
@@ -1223,6 +1237,32 @@ function drawNativeCard($: EngineInterface, ui: any, list: NativePlugin[] | null
       {list === null ? <Text color="inactive">{t('Lese installierte Plugins …', 'Reading installed plugins …')}</Text> : null}
       {list && managed.length === 0 ? <Text color="inactive">{t('Noch keine. Unter Quellen „Nativ installieren“, oder unten ein installiertes Plugin übernehmen.', 'None yet. Sources → "Install natively", or take over an installed plugin below.')}</Text> : null}
       {managed.map(row)}
+      {builtins === null || builtins.length ? (
+        <Box flexDirection="column" marginTop={1}>
+          <Text bold color="claude">{t('Eingebaut in Claude Code', 'Built into Claude Code')}</Text>
+          {builtins === null ? <Text color="inactive">{t('Lese eingebaute Mods …', 'Reading built-in mods …')}</Text> : null}
+          {(builtins ?? []).map(b => (
+            <Box key={`bi-${b.id}`} flexDirection="column">
+              <Box flexDirection="row" alignItems="center">
+                {b.switchable ? (
+                  <Button key={`bt-${b.name}`} plain onPress={() => void switchBuiltin($, b)}>
+                    <Text color={b.enabled ? 'success' : 'inactive'}>{b.enabled ? '●' : '○'}</Text>
+                    {' '}
+                    <Text bold={b.enabled} color={b.enabled ? 'text' : 'inactive'}>{b.name}</Text>
+                  </Button>
+                ) : (
+                  <Text color="inactive">{`${b.enabled ? '●' : '○'} ${b.name}`}</Text>
+                )}
+                <Text color="inactive">{b.isDefault ? t('  (Standard)', '  (default)') : ''}</Text>
+                {b.note === 'locked' ? <Text color="inactive">{t('  · immer an', '  · always on')}</Text> : null}
+                {b.note === 'analytics' ? <Text color="inactive">{t('  · folgt der Analytics-Einstellung', '  · follows the analytics setting')}</Text> : null}
+              </Box>
+              {b.description ? <Text color="inactive" wrap="wrap">{`   ${b.description.replace(/^[^:]+:\s*/, '')}`}</Text> : null}
+            </Box>
+          ))}
+          {builtins?.length ? <Text color="inactive" wrap="wrap">{t('Schalter gelten für alle Projekte (User-Einstellung) und wirken nach einem Neustart.', 'Switches apply to all projects (user setting) and take effect after a restart.')}</Text> : null}
+        </Box>
+      ) : null}
       {others.length ? (
         <Box flexDirection="column" marginTop={1}>
           <Text color="inactive">{t('Weitere installierte Plugins (nicht von der Box verwaltet):', 'Other installed plugins (not managed by the box):')}</Text>
@@ -1715,8 +1755,8 @@ async function drawUsage($: EngineInterface, ui: any) {
       {all.calls === 0 ? (
         <Text dimColor wrap="wrap">
           {t(
-            'Noch keine eigenen Modell-Aufrufe. Gezählt werden Next Steps, Heads-up, Catch Me Up, die Übergabe-Notiz und das Warmhalten; die Kosten sind eine Schätzung nach Listenpreis.',
-            'No own model calls yet. Counted are Next Steps, Heads-up, Catch Me Up, the handoff note and keep-warm; costs are an estimate from list prices.',
+            'Noch keine eigenen Modell-Aufrufe. Gezählt werden Next Steps, Catch Me Up, die Übergabe-Notiz und das Warmhalten; die Kosten sind eine Schätzung nach Listenpreis.',
+            'No own model calls yet. Counted are Next Steps, Catch Me Up, the handoff note and keep-warm; costs are an estimate from list prices.',
           )}
         </Text>
       ) : (

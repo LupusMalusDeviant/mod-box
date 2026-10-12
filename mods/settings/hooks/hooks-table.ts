@@ -105,12 +105,6 @@ export const HOOKS: Record<string, string[]> = {
     "session.start",
     "ui.render"
   ],
-  "headsUp": [
-    "prompt.submit",
-    "turn.complete",
-    "turn.start",
-    "ui.render"
-  ],
   "catchMeUp": [
     "classic.SessionStart",
     "command.run",

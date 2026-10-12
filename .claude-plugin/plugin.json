@@ -1,7 +1,7 @@
 {
   "name": "mod-box",
   "version": "0.4.1",
-  "description": "15 Claude Code mods in one plugin, each switchable on its own; /mod-box opens the window to switch, configure and import mods.",
+  "description": "14 Claude Code mods in one plugin, each switchable on its own; /mod-box opens the window to switch, configure and import mods.",
   "author": {
     "name": "Lupus Malus Deviant"
   },
@@ -11,7 +11,7 @@
     "language": {
       "type": "string",
       "title": "Language",
-      "description": "Language of the Mod Box window and of the texts its mods write (Next Steps, Catch Me Up, Heads-up, handoff note).",
+      "description": "Language of the Mod Box window and of the texts its mods write (Next Steps, Catch Me Up, handoff note).",
       "default": "en",
       "options": [
         "de",
@@ -21,7 +21,7 @@
     "bandLayout": {
       "type": "string",
       "title": "Band layout",
-      "description": "compact: calm displays share one line; urgent ones (CI red, heads-up, sign offer) always get their own line. lines: one line per display.",
+      "description": "compact: calm displays share one line; urgent ones (CI red, sign offer) always get their own line. lines: one line per display.",
       "default": "compact",
       "options": [
         "compact",
@@ -32,7 +32,7 @@
       "type": "string",
       "title": "Band order",
       "description": "Order of the displays above the prompt (switch keys, comma separated). The window sets it with arrows.",
-      "default": "ciWatch,signGuard,headsUp,handoff,cacheMeter"
+      "default": "ciWatch,signGuard,handoff,cacheMeter"
     },
     "diagnose": {
       "type": "string",
@@ -125,12 +125,6 @@
       "title": "Visible Compact",
       "description": "Shows before and after of /compact side by side; /show-last-compact reopens it.",
       "default": true
-    },
-    "headsUp": {
-      "type": "boolean",
-      "title": "Heads-up (You Should Know)",
-      "description": "A second model reads longer answers and raises one easily missed but important point. Costs tokens: a small Haiku call per longer answer.",
-      "default": false
     },
     "catchMeUp": {
       "type": "boolean",
@@ -435,17 +429,6 @@
       ],
       "title": "Visible Compact: storage",
       "description": "temp: the OS temp folder. home: ~/.claude/visible-compact, kept."
-    },
-    "headsUpShow": {
-      "type": "string",
-      "default": "band",
-      "options": [
-        "band",
-        "status",
-        "off"
-      ],
-      "title": "Heads-up (You Should Know): display",
-      "description": "band: above the prompt. status: in the status line. off: not shown (the mod keeps working)."
     },
     "codebaseMapClaudeMd": {
       "type": "string",

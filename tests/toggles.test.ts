@@ -88,15 +88,6 @@ describe('Switches and band', () => {
     expect(await ui.find({ type: 'Text', text: /unten/ })).toBeDefined()
   })
 
-  test('Heads-up is urgent: own row with buttons, even when compact', { options: { ...QUIET, headsUp: true } }, async ($: any, on: any) => {
-    engine(on)
-    await turn($)
-    const ui = await band($)
-    expect(await ui.find({ type: 'Text', text: /Heads up/ })).toBeDefined()
-    expect(await ui.find({ type: 'Text', text: /doppelt belasten/ })).toBeDefined()
-    expect(await ui.find({ key: 'hu-ok' })).toBeDefined()
-  })
-
   test('cold cache: cost from the embedded Cache Tax', { options: { ...QUIET, bandLayout: 'lines' } }, async ($: any, on: any) => {
     engine(on)
     await turn($)
@@ -109,17 +100,17 @@ describe('Switches and band', () => {
 
 describe('Mod tokens', () => {
   test('calculation: Haiku call, totals', () => {
-    const b1 = addUsage(null, 'headsUp', 'claude-haiku-5-5', { input_tokens: 1000, output_tokens: 100, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 })
-    expect(b1.headsUp?.calls).toBe(1)
-    expect(Math.round((b1.headsUp?.usd ?? 0) * 1e6)).toBe(1500) // 1000 × $1/MTok + 100 × $5/MTok
+    const b1 = addUsage(null, 'nextSteps', 'claude-haiku-5-5', { input_tokens: 1000, output_tokens: 100, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 })
+    expect(b1.nextSteps?.calls).toBe(1)
+    expect(Math.round((b1.nextSteps?.usd ?? 0) * 1e6)).toBe(1500) // 1000 × $1/MTok + 100 × $5/MTok
     const b2 = addUsage(b1, 'handoff', 'unbekanntes-modell', { input_tokens: 10, output_tokens: 10 })
     expect(b2.handoff?.unpriced).toBe(1)
     expect(sumBook(b2).calls).toBe(2)
     expect(priceOf('Claude Opus 5.5')).toEqual([0.5, 10, 25])
   })
 
-  test('Heads-up counts its call, the window shows it', { options: { ...QUIET, headsUp: true } }, async ($: any, on: any) => {
-    engine(on, [{ key: 'mod-box.headsUp', label: 'Heads-up (You Should Know)', kind: 'boolean', value: true, provider: { plugin: 'mod-box', tier: 'user' }, isLocked: false }])
+  test('Next Steps counts its call, the window shows it', { options: { ...QUIET, nextSteps: true } }, async ($: any, on: any) => {
+    engine(on, [{ key: 'mod-box.nextSteps', label: 'Next Steps', kind: 'boolean', value: true, provider: { plugin: 'mod-box', tier: 'user' }, isLocked: false }])
     on('fs.list', () => ({ value: [] }))
     await turn($)
     const ui = await $.ui.mount({ plugin: 'mod-box', surface: 'terminal', component: 'Pane', requestId: 'mod-box-settings', props: { bodyColumns: 120 } })

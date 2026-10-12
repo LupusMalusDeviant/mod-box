@@ -12,7 +12,7 @@ function rows() {
   return [
     { key: 'theme', label: 'Theme', kind: 'choice', value: 'dark', options: ['dark', 'light'], provider: { plugin: 'engine', tier: 'core' }, isLocked: false },
     { key: 'mod-box.blastRadius', label: 'Blast Radius', description: 'Hält riskante Befehle an.', kind: 'boolean', value: true, provider: owner, isLocked: false },
-    { key: 'mod-box.headsUp', label: 'Heads-up (You Should Know)', description: 'Kostet je längerer Antwort einen kleinen Haiku-Aufruf.', kind: 'boolean', value: false, provider: owner, isLocked: false },
+    { key: 'mod-box.nextSteps', label: 'Next Steps', description: 'Ein Haiku-Aufruf je Antwort.', kind: 'boolean', value: false, provider: owner, isLocked: false },
     { key: 'mod-box.savvyProgress', label: 'Savvy Progress', kind: 'boolean', value: true, provider: owner, isLocked: false },
     { key: 'mod-box.savvyLanguage', label: 'Savvy Progress: Sprache', kind: 'choice', value: 'auto', options: ['auto', 'en', 'ru'], provider: owner, isLocked: false },
     { key: 'mod-box.filetree', label: 'Filetree', kind: 'boolean', value: true, provider: owner, isLocked: false },
@@ -55,14 +55,14 @@ describe('Settings window', () => {
     test(`saves switches and parameters via config.set (${surface})`, DE, async ($: any, on: any) => {
       const sets = engine(on)
       const ui = await pane($, surface)
-      await ui.press({ key: 't-headsUp' })
+      await ui.press({ key: 't-nextSteps' })
       await ui.press({ key: 't-blastRadius' })
       await ui.press({ key: 'exp-savvyProgress' })
       await ui.press({ key: 'exp-filetree' })
       await ui.select({ key: 'sel-savvyLanguage', value: 'en' })
       await ui.input({ key: 'in-filetreeOpen', text: 'code {path}' })
       expect(sets).toEqual([
-        { key: 'mod-box.headsUp', value: true },
+        { key: 'mod-box.nextSteps', value: true },
         { key: 'mod-box.blastRadius', value: false },
         { key: 'mod-box.savvyLanguage', value: 'en' },
         { key: 'mod-box.filetreeOpen', value: 'code {path}' },
@@ -227,11 +227,11 @@ describe('Without /config rows (desktop app)', () => {
     on('command.run', () => ({ text: '' }))
     const ui = await $.ui.mount({ plugin: 'mod-box', surface: 'desktop', ...PANE })
     expect(await ui.find({ type: 'Text', text: /Keine Einstellungen/ })).toBeUndefined()
-    expect(await ui.find({ key: 't-headsUp' })).toBeDefined()
-    await ui.press({ key: 't-headsUp' })
+    expect(await ui.find({ key: 't-nextSteps' })).toBeDefined()
+    await ui.press({ key: 't-nextSteps' })
     const saved = JSON.parse(file)
     expect(saved.model).toBe('opus')
-    expect(saved.pluginConfigs['mod-box@inline'].options).toEqual({ filetreeGlyphs: 'nerd', headsUp: true })
+    expect(saved.pluginConfigs['mod-box@inline'].options).toEqual({ filetreeGlyphs: 'nerd', nextSteps: true })
   })
 })
 
