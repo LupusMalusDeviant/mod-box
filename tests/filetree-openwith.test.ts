@@ -5,6 +5,9 @@ import { detectCommand, kindsFor, launchCommand, readDetected, readExtraApps } f
 // putting the path into a command line.
 const PANE = { component: 'Pane', requestId: 'filetree', props: { bodyColumns: 100, placement: 'right', scroll: { bodyRows: 40 } } }
 const norm = (p: unknown) => String(p).replace(/\\/g, '/').replace(/^[A-Za-z]:/, '')
+// The test pretends to be on Windows (cwd C:/w). The engine resolves that for the system it really
+// runs on: X:\w on Windows, <cwd>/C:/w on Linux. Any path ending in /w is the work folder.
+const isWork = (p: unknown) => /(^|\/)w\/?$/.test(norm(p))
 const settle = () => new Promise(done => (globalThis as any).setTimeout(done, 50))
 const FOUND = 'code\tC:\\Tools\\VSCode\\bin\\code.cmd\nmsedge.exe\tC:\\Program Files\\Edge\\msedge.exe\n'
 
@@ -30,7 +33,7 @@ const boot = async ($: any, on: any, runs: any[]) => {
   on('fs.read', () => ({ deny: 'none' }))
   on('fs.stat', () => ({ deny: 'none' }))
   on('fs.list', (_$: any, e: any) =>
-    norm(e.path).replace(/\/$/, '') === '/w'
+    isWork(e.path)
       ? { value: [
           { name: 'index.html', kind: 'file', size: 10, mtimeMs: 1, isLink: false },
           { name: 'app.ts', kind: 'file', size: 10, mtimeMs: 1, isLink: false },
