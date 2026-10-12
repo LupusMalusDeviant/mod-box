@@ -87,7 +87,7 @@
     "filetree": {
       "type": "boolean",
       "title": "Filetree",
-      "description": "File tree side pane (/filetree); files light up when Claude reads or writes them.",
+      "description": "File tree side pane (/filetree); files light up when Claude reads or writes them. With the Codebase Map on, a Features tab shows its features, what Claude is editing and the blueprint actions.",
       "default": true
     },
     "replayTheater": {

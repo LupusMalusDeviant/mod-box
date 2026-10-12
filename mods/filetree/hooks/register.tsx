@@ -3,10 +3,11 @@
 import { type BuiltinToolResults, type EngineInterface, type Register, type Timer, update } from 'claude-code'
 import { LINUX_LAUNCH, openCommand, openWithCommand } from './open'
 
-import type { Activity, FileNode, FileTree, Theme } from '../types'
+import type { Activity, FileNode, FileTree, FileView, Theme } from '../types'
 import { BRANCH_ICON, chainOf, type GitAction, gitActions, readOnly, readTargets, resolve, TONES } from './git'
 import type { RowSpec, RowsProps, Seg } from './rows'
 import { CHEVRON_CLOSED, CHEVRON_OPEN, fileIcon, GIT_COLOR } from './icons'
+import { TEXT as MAP_TEXT } from '../../codebase-map/hooks/i18n'
 import {
   ancestorsOf,
   type Change,
@@ -36,6 +37,70 @@ import {
 
 const TREE = { plugin: 'mod-box', key: 'ft_tree' } as const
 const THEME = { plugin: 'mod-box', key: 'ft_theme' } as const
+const VIEW = { plugin: 'mod-box', key: 'ft_view' } as const
+
+// Mod Box: the Features tab reads the Codebase Map's state (mod codebase-map, prefix cm2). Its
+// shapes are checked here instead of imported, so the file tree also works without that mod.
+type MapFeat = { slug: string; name: string; summary: string; files: string[]; deps: string[] }
+type MapEdit = { slug: string | null; file: string; agentId: string | null }
+type MapStatus = { kind: 'fresh' | 'behind' | 'unknown-stamp' | 'no-stamp'; commits?: number; files?: number }
+// Literal references, so the engine can list what this module reads.
+const CM_MAP = { plugin: 'mod-box', key: 'cm2_map' } as const
+const CM_STATUS = { plugin: 'mod-box', key: 'cm2_status' } as const
+const CM_ACTIVE = { plugin: 'mod-box', key: 'cm2_active' } as const
+const CM_TOUCHED = { plugin: 'mod-box', key: 'cm2_touched' } as const
+const CM_LOOSE = { plugin: 'mod-box', key: 'cm2_unassigned' } as const
+// A value read from the Codebase Map's state, if it has the expected shape.
+function cmValue<T>(got: unknown, ok: (v: unknown) => boolean, fallback: T): T {
+  const v = (got as { value?: unknown } | null)?.value
+  return ok(v) ? (v as T) : fallback
+}
+const isObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v)
+const isFeat = (f: unknown): f is MapFeat =>
+  isObj(f) && typeof f.slug === 'string' && typeof f.name === 'string' && Array.isArray(f.files) && Array.isArray(f.deps)
+let mapOn = false
+let lang: 'de' | 'en' = 'en'
+const tx = (de: string, en: string) => (lang === 'de' ? de : en)
+
+async function getView($: EngineInterface): Promise<FileView> {
+  return (await $.state.get(VIEW)).value ?? { tab: 'files', feature: '' }
+}
+async function setView($: EngineInterface, change: Partial<FileView>): Promise<void> {
+  await update($, VIEW, v => ({ tab: change.tab ?? v?.tab ?? 'files', feature: change.feature ?? v?.feature ?? '' }))
+}
+// The blueprint actions: the Codebase Map's own prompts (from its i18n module) and its own pane.
+// Not through /codebase-map: a command run from a plugin skips that plugin's hooks, and both mods
+// live in the one box plugin.
+type MapAction = 'map' | 'create' | 'update' | 'check' | 'publish' | 'feature-update' | 'feature-publish'
+async function mapAction($: EngineInterface, action: MapAction, feature = '', isIndexPublished = false): Promise<void> {
+  const m = MAP_TEXT[lang]
+  if (action === 'map') {
+    await $.ui.open({ id: 'codebase-map', title: m.paneTitle })
+    return
+  }
+  const text =
+    action === 'create' ? m.promptCreate
+      : action === 'update' ? m.promptUpdate
+        : action === 'check' ? m.promptCheck
+          : action === 'publish' ? m.promptPublishAll
+            : action === 'feature-update' ? m.promptUpdateFeature(feature)
+              : m.promptPublishFeature(feature, isIndexPublished)
+  await $.prompt.fill({ text })
+}
+// A file of a feature: back to the files tab, unfolded and under the cursor.
+async function showInTree($: EngineInterface, rel: string): Promise<void> {
+  const base = posix((await $.session.root()).replace(/[\\/]+$/, ''))
+  const abs = `${base}/${rel.replace(/^\.?\//, '')}`
+  await setView($, { tab: 'files' })
+  const t = await get($)
+  if (!inside(t.root, abs) && t.root !== abs) await reset($, base)
+  await revealPaths($, [abs])
+  await patch($, cur => {
+    const open = new Set(cur.expanded)
+    for (const a of ancestorsOf(abs, cur.root)) open.add(a)
+    return { expanded: [...open], cursor: abs, selected: abs, scroll: null }
+  })
+}
 const ACTIVITY = { plugin: 'mod-box', key: 'ft_activity' } as const
 const PANE = 'filetree'
 const SHIMMER = Object.fromEntries(Object.entries(TONES).map(([k, v]) => [k, { bright: v.bright, dim: v.dim }]))
@@ -1013,6 +1078,8 @@ function shortPath(path: string): string {
 }
 
 export const register: Register = (on, options) => {
+  mapOn = options?.codebaseMap === 'true' || options?.codebaseMap === true
+  lang = options?.language === 'de' ? 'de' : 'en'
   glyphSetting = typeof options?.glyphs === 'string' ? options.glyphs : 'auto'
   const activity = typeof options?.activity === 'string' ? options.activity : 'reads and writes'
   showReads = activity.includes('reads')
@@ -1263,6 +1330,108 @@ export const register: Register = (on, options) => {
     const { Box, Text, Button, Input, Client } = $.ui.resolve(e)
     const t = await get($)
     const theme: Theme = (await $.state.get(THEME)).value ?? DEFAULT_THEME
+    const ftView = mapOn ? await getView($) : { tab: 'files' as const, feature: '' }
+    const tabs = mapOn ? (
+      <Box flexDirection="row" gap={2}>
+        <Button key="tab-files" plain dimColor={ftView.tab !== 'files'} label={`${ftView.tab === 'files' ? '▣' : '□'} ${tx('Dateien', 'Files')}`} onPress={() => void setView($, { tab: 'files' })} />
+        <Button key="tab-features" plain dimColor={ftView.tab !== 'features'} label={`${ftView.tab === 'features' ? '▣' : '□'} Features`} onPress={() => void setView($, { tab: 'features' })} />
+      </Box>
+    ) : null
+    if (mapOn && ftView.tab === 'features') {
+      const none = () => null
+      const [rawMap, rawStatus, rawActive, rawTouched, rawLoose] = await Promise.all([
+        $.state.get(CM_MAP).catch(none),
+        $.state.get(CM_STATUS).catch(none),
+        $.state.get(CM_ACTIVE).catch(none),
+        $.state.get(CM_TOUCHED).catch(none),
+        $.state.get(CM_LOOSE).catch(none),
+      ])
+      const map = cmValue<{ features: MapFeat[]; confluence?: { pageId?: string | null } } | null>(rawMap, v => isObj(v) && Array.isArray(v.features), null)
+      const features = (map?.features ?? []).filter(isFeat)
+      const status = cmValue<MapStatus | null>(rawStatus, v => isObj(v) && typeof v.kind === 'string', null)
+      const running = cmValue<MapEdit[]>(rawActive, Array.isArray, [])
+      const changed = cmValue<Record<string, string[]>>(rawTouched, isObj, {})
+      const loose = cmValue<string[]>(rawLoose, Array.isArray, [])
+      const busy = new Set(running.flatMap(r => (r.slug ? [r.slug] : [])))
+      const nameOf = (slug: string) => features.find(f => f.slug === slug)?.name ?? slug
+      const pick = features.find(f => f.slug === ftView.feature) ?? null
+      const statusLine =
+        status === null ? tx('kein Git-Stand', 'no git state')
+          : status.kind === 'fresh' ? tx('aktuell', 'up to date')
+            : status.kind === 'behind' ? tx(`${status.commits} Commits / ${status.files} Dateien hinter HEAD`, `${status.commits} commits / ${status.files} files behind HEAD`)
+              : tx('Stand unbekannt', 'stamp unknown')
+      const mark = (slug: string) => (busy.has(slug) ? ['●', TONES.orange?.solid ?? theme.urgent] : changed[slug] ? ['◆', theme.accent] : slug === ftView.feature ? ['▸', theme.fg] : ['·', theme.muted]) as [string, string]
+      const published = typeof map?.confluence?.pageId === 'string'
+      const action = (key: MapAction, label: string, feature = '') => <Button key={`fa-${key}`} plain dimColor label={label} onPress={() => void mapAction($, key, feature, published)} />
+      return (
+        <Box flexDirection="column" minHeight={Math.max(1, e.props.scroll?.bodyRows ?? 1)} backgroundColor={theme.bg || undefined}>
+          {tabs}
+          {features.length === 0 ? (
+            <Box flexDirection="column">
+              <Text color={theme.muted}>{tx('Noch kein Blueprint (docs/blueprints/INDEX.md).', 'No blueprint yet (docs/blueprints/INDEX.md).')}</Text>
+              {action('create', tx('▶ Blueprint erstellen', '▶ Create blueprint'))}
+            </Box>
+          ) : (
+            <Box flexDirection="column">
+              <Text bold color={theme.accent}>{`${features.length} Features · ${statusLine}`}</Text>
+              <Box flexDirection="row" gap={2}>
+                {action('map', tx('Karte', 'Map'))}
+                {action('update', tx('Aktualisieren', 'Update'))}
+                {action('check', tx('Prüfen', 'Check'))}
+                {action('publish', tx('Veröffentlichen', 'Publish'))}
+              </Box>
+              {running.map(r => (
+                <Text key={`run-${r.file}`} color={TONES.orange?.solid ?? theme.urgent} wrap="truncate-start">
+                  {`✎ ${r.agentId ? tx('Subagent', 'subagent') : 'Claude'}: ${r.file}${r.slug ? ` → ${nameOf(r.slug)}` : ''}`}
+                </Text>
+              ))}
+              {features.map(f => {
+                const [m, color] = mark(f.slug)
+                const open = f.slug === ftView.feature
+                return (
+                  <Box key={`f-${f.slug}`} flexDirection="row">
+                    <Text color={color || undefined}>{`${m} `}</Text>
+                    <Button key={`fs-${f.slug}`} plain label={f.name} onPress={() => void setView($, { feature: open ? '' : f.slug })} />
+                    {f.deps.length > 0 ? <Text color={theme.muted} wrap="truncate">{`  → ${f.deps.map(nameOf).join(', ')}`}</Text> : null}
+                  </Box>
+                )
+              })}
+              {pick !== null && (
+                <Box flexDirection="column" marginTop={1}>
+                  <Text bold>{pick.name}</Text>
+                  {pick.summary ? <Text color={theme.muted}>{pick.summary}</Text> : null}
+                  <Box flexDirection="row" flexWrap="wrap">
+                    <Text color={theme.muted}>{tx('nutzt: ', 'uses: ')}</Text>
+                    {pick.deps.length ? pick.deps.map(d => <Button key={`fd-${d}`} plain label={nameOf(d) + ' '} onPress={() => void setView($, { feature: d })} />) : <Text color={theme.muted}>-</Text>}
+                  </Box>
+                  <Box flexDirection="row" flexWrap="wrap">
+                    <Text color={theme.muted}>{tx('genutzt von: ', 'used by: ')}</Text>
+                    {features.filter(o => o.deps.includes(pick.slug)).length
+                      ? features.filter(o => o.deps.includes(pick.slug)).map(o => <Button key={`fu-${o.slug}`} plain label={o.name + ' '} onPress={() => void setView($, { feature: o.slug })} />)
+                      : <Text color={theme.muted}>-</Text>}
+                  </Box>
+                  <Text color={theme.muted}>{tx(`Dateien (docs/blueprints/${pick.slug}.md):`, `Files (docs/blueprints/${pick.slug}.md):`)}</Text>
+                  {[...pick.files, ...(changed[pick.slug] ?? []).filter(x => !pick.files.includes(x))].map(file => (
+                    <Box key={`ff-${file}`} flexDirection="row" marginLeft={2}>
+                      <Button key={`ffb-${file}`} plain label={file} onPress={() => void showInTree($, file)} />
+                      {(changed[pick.slug] ?? []).includes(file) ? <Text color={theme.accent}>{pick.files.includes(file) ? ' ✏' : tx(' ✏ neu', ' ✏ new')}</Text> : null}
+                    </Box>
+                  ))}
+                  {(changed[pick.slug] ?? []).length > 0 ? <Text color={theme.muted}>{tx('Geändert in dieser Sitzung: Blueprint evtl. veraltet.', 'Changed this session: the blueprint may be stale.')}</Text> : null}
+                  <Box flexDirection="row" gap={2}>
+                    {action('feature-update', tx('Feature aktualisieren', 'Update feature'), pick.name)}
+                    {action('feature-publish', tx('Feature veröffentlichen', 'Publish feature'), pick.name)}
+                  </Box>
+                </Box>
+              )}
+              {loose.length > 0 ? <Text color={theme.muted} wrap="truncate-start">{tx('ohne Feature: ', 'no feature: ') + loose.slice(-5).join(', ')}</Text> : null}
+              <Text color={theme.muted}>{tx('● bearbeitet gerade · ◆ geändert in dieser Sitzung', '● being edited · ◆ changed this session')}</Text>
+            </Box>
+          )}
+          <Box flexGrow={1} />
+        </Box>
+      )
+    }
     // The desktop tab never hands the wheel or the scrollbar drag to the pane, so
     // there it draws every row and lets the engine scroll the body.
     nativeScroll = e.surface === 'desktop'
@@ -1521,6 +1690,7 @@ export const register: Register = (on, options) => {
             <Text> </Text>
           </Box>
         </Box>
+        {tabs}
         {branchRow()}
         {!t.top && <Text color={theme.muted}>{unicode ? '± ' : '\u{e702} '}no git repo · git status starts after git init</Text>}
         <Box flexDirection="row">

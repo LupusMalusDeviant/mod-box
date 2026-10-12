@@ -25,6 +25,30 @@ function copyDir(from, to, skip = () => false) {
   }
 }
 
+const IMPORT = /(?:import|export)\s[^'"]*?from\s*['"](\.{1,2}\/[^'"]+)['"]|import\(\s*['"](\.{1,2}\/[^'"]+)['"]\s*\)/g
+const EXTENSIONS = ['', '.ts', '.tsx', '.js', '.mjs', '/index.ts']
+
+/** Copies box files that the exported code imports but that are not in the export yet, until none is missing. */
+function copyImports(dir, ROOT) {
+  for (let round = 0; round < 10; round++) {
+    let copied = 0
+    for (const file of walk(dir).filter(p => CODE.test(p))) {
+      for (const m of fs.readFileSync(file, 'utf8').matchAll(IMPORT)) {
+        const spec = m[1] ?? m[2]
+        const target = path.resolve(path.dirname(file), spec)
+        if (EXTENSIONS.some(ext => fs.existsSync(target + ext))) continue
+        const rel = path.relative(dir, target)
+        if (rel.startsWith('..')) continue
+        const ext = EXTENSIONS.find(x => fs.existsSync(path.join(ROOT, rel) + x) && fs.statSync(path.join(ROOT, rel) + x).isFile())
+        if (ext === undefined) continue
+        write(path.join(dir, rel) + ext, fs.readFileSync(path.join(ROOT, rel) + ext, 'utf8'))
+        copied++
+      }
+    }
+    if (copied === 0) return
+  }
+}
+
 function walk(dir, out = []) {
   if (!fs.existsSync(dir)) return out
   for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
@@ -152,6 +176,10 @@ export function exportMods(ctx, ids, out, origins = {}) {
       const src = path.join(ROOT, 'mods', 'settings', 'hooks', f)
       if (walk(dir).some(p => CODE.test(p) && fs.readFileSync(p, 'utf8').includes(`settings/hooks/${f.replace(/\.ts$/, '')}`))) write(path.join(dir, 'mods', 'settings', 'hooks', f), fs.readFileSync(src, 'utf8'))
     }
+
+    // Other files of the box the code imports by a relative path (another mod's data module, for
+    // example): copied to the same place, so the import still resolves.
+    copyImports(dir, ROOT)
 
     let usesLedger = false
     for (const f of walk(dir).filter(p => CODE.test(p) && !p.endsWith('.d.ts'))) {

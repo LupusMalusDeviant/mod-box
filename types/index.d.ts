@@ -299,6 +299,12 @@ export type Theme = {
   bg: string
 }
 
+// Mod Box: the pane's tab (files or the Codebase Map's features) and the feature opened there.
+export type FileView = {
+  tab: 'files' | 'features'
+  feature: string
+}
+
 // ---- next-steps ----
 
 export type NextSteps = { turnId: string; items: string[] }
@@ -461,6 +467,7 @@ declare module 'claude-code' {
       ft_tree: FileTree
       ft_theme: Theme
       ft_activity: Activity[]
+      ft_view: FileView
 
       // next-steps
       ns_steps: NextSteps | null; ns_active: boolean

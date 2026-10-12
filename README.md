@@ -97,7 +97,7 @@ The same window runs in terminal Claude Code, as a side pane next to the convers
 | `ciWatch` | CI Watch | on | Follows the GitHub Actions runs after each `git push` (via `gh`) to the end. For an open pull request it watches every check and says whether the PR is ready to merge. When a run turns red, it shows the failed step's log and/or puts an analysis request into the prompt; it can also play a sound. `/ci` shows the state. | no |
 | `signGuard` | Sign Guard | off | Spots Windows builds and signs the new `.exe`, `.msi` and `.msix` files with your own script (`<script> -Exe <file>`). Mode *ask* or *auto*. | no |
 | `savvyProgress` | Savvy Progress | on | Progress bar and agents panel (`/agents-info`). | no |
-| `filetree` | Filetree | on | File tree side pane (`/filetree`) that lights up as Claude reads and writes. | no |
+| `filetree` | Filetree | on | File tree side pane (`/filetree`) that lights up as Claude reads and writes. With the Codebase Map on, a **Features** tab lists its features (live marks, uses / used by, files that jump to the tree) and the blueprint actions. | no |
 | `replayTheater` | Replay Theater | on | Steps through the last turn's edits (`/replay`). | no |
 | `nextSteps` | Next Steps | off | Suggests 2–3 next prompts. | a Haiku call per answer |
 | `cacheMeter` | Cache Meter (with Cache Tax) | on | Shows the time left on the warm cache, the hit rate, the context as weather and the plan limits, with compact and keep-warm buttons. It also stops a send to a cold cache once and names its cost, and the cost of compacting first instead. **Auto-compact at** sets Claude Code's `autoCompactWindow`: on 1M-context models Claude otherwise compacts only at about 967k tokens. | only keep-warm requests, when on |
@@ -124,7 +124,7 @@ The same window runs in terminal Claude Code, as a side pane next to the convers
 | `/handoff` | Handoff Note | writes the handoff note |
 | `/show-last-compact` | Visible Compact | before/after of the last `/compact` |
 | `/catch-me-up` | Catch Me Up | live summary pane |
-| `/codebase-map [create\|update\|check\|publish]` | Codebase Map | opens the feature map; with an argument, prepares the blueprint prompt |
+| `/codebase-map [create\|update [feature]\|check\|publish [feature]]` | Codebase Map | opens the feature map; with an argument, prepares the blueprint prompt (for one feature, if named) |
 
 The window lists them too: next to each mod's name, and in full under ⚙.
 
@@ -239,7 +239,7 @@ These mods come from other repositories and **were modified for the Mod Box**. E
 | Cache Tax | [karanb192/cache-tax](https://github.com/karanb192/cache-tax) | Karan Bansal | MIT | embedded into Cache Meter (guard and auto-warm options, exported helpers, token usage) |
 | Catch Me Up | [oliverow/catch-me-up](https://github.com/oliverow/catch-me-up) | Oliver Wang | MIT | language option, token usage, state rewritten |
 | Codebase Map | [LupusMalusDeviant/codebase-map](https://github.com/LupusMalusDeviant/codebase-map) | Lupus Malus Deviant | MIT | state, matchers and paths rewritten |
-| Filetree | [data-goblin/claude-code-filetree](https://github.com/data-goblin/claude-code-filetree) | Kurt Buhler | MIT | state, matchers and paths rewritten |
+| Filetree | [data-goblin/claude-code-filetree](https://github.com/data-goblin/claude-code-filetree) | Kurt Buhler | MIT | state, matchers and paths rewritten; Features tab for the Codebase Map added |
 | Next Steps | [hamzafer/claude-code-mods](https://github.com/hamzafer/claude-code-mods/tree/main/mods/next-steps) | Hamza Zafar | MIT | language option, token usage, state rewritten |
 | Savvy Progress | [JohnnyVizz/claude-kit](https://github.com/JohnnyVizz/claude-kit/tree/main/plugins/savvy-progress) | johnnyvizz | MIT | a type fix; state and tool names rewritten |
 | Visible Compact | [nvsravank/visible-compact](https://github.com/nvsravank/visible-compact) | nvsravank | MIT | state, matchers and paths rewritten |

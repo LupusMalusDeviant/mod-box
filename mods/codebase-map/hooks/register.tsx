@@ -143,6 +143,17 @@ export const register: Register = (on, options) => {
 
   on('command.run', { command: 'codebase-map' }, async ($, e) => {
     const action = e.args.trim().split(/\s+/)[0]?.toLowerCase() ?? ''
+    // Mod Box: "update <feature>" / "publish <feature>" prepare the prompt for that one feature.
+    const rest = e.args.trim().slice(action.length).trim()
+    if (rest !== '' && (action === 'update' || action === 'publish')) {
+      const map = await read($, mapData)
+      const feature = map?.features.find(one => one.name.toLowerCase() === rest.toLowerCase() || one.slug === rest.toLowerCase())
+      if (map === null || feature === undefined) return { text: t.commandUsage }
+      await $.prompt.fill({
+        text: action === 'update' ? t.promptUpdateFeature(feature.name) : t.promptPublishFeature(feature.name, map.confluence.pageId !== null),
+      })
+      return { text: t.commandPrepared }
+    }
     const prompts: Record<string, string> = {
       create: t.promptCreate,
       update: t.promptUpdate,

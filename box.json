@@ -578,8 +578,8 @@
       "toggle": "filetree",
       "title": "Filetree",
       "group": "display",
-      "description": "File tree side pane (/filetree); files light up when Claude reads or writes them.",
-      "description_de": "Dateibaum-Seitenleiste (/filetree); Dateien leuchten auf, wenn Claude sie liest oder schreibt.",
+      "description": "File tree side pane (/filetree); files light up when Claude reads or writes them. With the Codebase Map on, a Features tab shows its features, what Claude is editing and the blueprint actions.",
+      "description_de": "Dateibaum-Seitenleiste (/filetree); Dateien leuchten auf, wenn Claude sie liest oder schreibt. Mit eingeschalteter Codebase-Karte zeigt ein Reiter „Features“ deren Features, was Claude gerade bearbeitet, und die Blueprint-Aktionen.",
       "default": true,
       "entry": "mods/filetree/hooks/register.tsx",
       "options": [
@@ -703,6 +703,10 @@
         "needs": [
           "git"
         ]
+      },
+      "pass": {
+        "language": "language",
+        "codebaseMap": "codebaseMap"
       }
     },
     {

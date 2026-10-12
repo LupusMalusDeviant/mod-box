@@ -670,8 +670,8 @@ export const CATALOG: CatalogMod[] = [
       "de": "Filetree"
     },
     "description": {
-      "en": "File tree side pane (/filetree); files light up when Claude reads or writes them.",
-      "de": "Dateibaum-Seitenleiste (/filetree); Dateien leuchten auf, wenn Claude sie liest oder schreibt."
+      "en": "File tree side pane (/filetree); files light up when Claude reads or writes them. With the Codebase Map on, a Features tab shows its features, what Claude is editing and the blueprint actions.",
+      "de": "Dateibaum-Seitenleiste (/filetree); Dateien leuchten auf, wenn Claude sie liest oder schreibt. Mit eingeschalteter Codebase-Karte zeigt ein Reiter „Features“ deren Features, was Claude gerade bearbeitet, und die Blueprint-Aktionen."
     },
     "group": "display",
     "costs": null,

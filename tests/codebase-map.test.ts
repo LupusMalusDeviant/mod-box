@@ -29,7 +29,7 @@ describe('Codebase Map', () => {
   test('/codebase-map answers with its usage for an unknown argument', { options: { codebaseMap: true } }, async ($: any, on: any) => {
     await boot($, on)
     const r = await $.command.run({ command: 'codebase-map', args: 'nonsense' })
-    expect(r.text).toMatch(/codebase-map \[create\|update\|check\|publish\]/)
+    expect(r.text).toMatch(/codebase-map \[create\|update \[feature\]\|check\|publish \[feature\]\]/)
   })
 
   // The other mods with a prompt.submit hook read e.origin, which the test kit does not set; switch them off here.
