@@ -1,7 +1,7 @@
 {
   "name": "mod-box",
   "version": "0.5.0",
-  "description": "17 Claude Code mods in one plugin, each switchable on its own; /mod-box opens the window to switch, configure and import mods.",
+  "description": "20 Claude Code mods in one plugin, each switchable on its own; /mod-box opens the window to switch, configure and import mods.",
   "author": {
     "name": "Lupus Malus Deviant"
   },
@@ -135,13 +135,13 @@
     "readGuard": {
       "type": "boolean",
       "title": "Read Guard",
-      "description": "Holds a whole-file Read (no offset/limit) of a file above the limit, a lockfile, minified code or a source map, and the same via cat, type or Get-Content in the shell; tells Claude the size, a token estimate and a better way (Grep, offset/limit). A second try at the same file goes through. Claude Code itself stops only at about 25,000 tokens.",
+      "description": "Holds a whole-file Read (no offset/limit) of a file above the limit, a lockfile, minified code or a source map, and the same via cat, type or Get-Content in the shell; tells Claude the size, a token estimate and a better way (Grep, offset/limit). A second try at the same file goes through, and so does a Read with allow_large. Claude Code itself stops only at about 25,000 tokens.",
       "default": true
     },
     "catchMeUp": {
       "type": "boolean",
       "title": "Catch Me Up",
-      "description": "Side pane with a live summary of the session (/catch-me-up). Costs tokens: Haiku calls after turns that used tools.",
+      "description": "Side pane with a live summary of the session (/catch-me-up), updated after turns that used tools. Claude Code's built-in recap (/recap) is one short note (up to 400 characters) when you come back to an unfocused window; this one stays open and keeps up. Costs tokens: Haiku calls after turns that used tools.",
       "default": false
     },
     "codebaseMap": {
@@ -154,6 +154,24 @@
       "type": "boolean",
       "title": "Desktop Pet",
       "description": "A little cardboard box on the Windows desktop, always on top, that says in a speech bubble what Claude is doing: the file it reads or changes, the command that runs, what a guard held, and a short summary at the end of a turn. Drag it anywhere, right-click for quiet time. Built once with the C# compiler that ships with Windows and signed with the Sign Guard script when one is set. /pet shows it, /pet stop sends it off.",
+      "default": false
+    },
+    "ccSplitDiffView": {
+      "type": "boolean",
+      "title": "Split Diff",
+      "description": "Draws the result of Edit and Write as a split diff: removed lines on the left, added lines on the right, with line numbers. Only the drawing changes; Claude reads the same result.",
+      "default": false
+    },
+    "humanInTheLoop": {
+      "type": "boolean",
+      "title": "Human in the Loop",
+      "description": "Claude can hand you tasks only a person can do (put a secret in place, act on an account it cannot reach, make a decision) with its assign_task tool. They stay in a band and a pane (/my-tasks) until you answer or mark them done; your answer goes back to Claude, never a secret.",
+      "default": false
+    },
+    "promptRail": {
+      "type": "boolean",
+      "title": "Prompt Rail",
+      "description": "A rail of the prompts of this session: bars above the prompt (terminal) or a pane beside the transcript. Hover one to read it, click to jump to it in the transcript.",
       "default": false
     },
     "secretMode": {
@@ -559,6 +577,17 @@
       ],
       "title": "Desktop Pet: summary at the end",
       "description": "off: the first sentences of the answer (no tokens). haiku: Haiku puts a longer answer in one sentence."
+    },
+    "promptRailMode": {
+      "type": "string",
+      "title": "Prompt Rail: mode",
+      "description": "off: no rail. vertical: a pane beside the transcript. horizontal: bars above the prompt input (terminal only).",
+      "default": "horizontal",
+      "options": [
+        "off",
+        "vertical",
+        "horizontal"
+      ]
     }
   },
   "homepage": "https://github.com/LupusMalusDeviant/mod-box",

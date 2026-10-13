@@ -102,12 +102,15 @@ The same window runs in terminal Claude Code, as a side pane next to the convers
 | `replayTheater` | Replay Theater | on | Steps through the last turn's edits (`/replay`). | no |
 | `nextSteps` | Next Steps | off | Suggests 2–3 next prompts. Claude Code has one built-in suggestion (Tab); this offers two or three. | a Haiku call per answer |
 | `cacheMeter` | Cache Meter (with Cache Tax) | on | Shows the time left on the warm cache, the hit rate, the context as weather and the plan limits, with compact and keep-warm buttons. It also stops a send to a cold cache once and names its cost, and the cost of compacting first instead. **Auto-compact at** sets Claude Code's `autoCompactWindow`: on 1M-context models Claude otherwise compacts only at about 967k tokens. | only keep-warm requests, when on |
-| `readGuard` | Read Guard | on | Holds a whole-file `Read` (no offset/limit) above the limit (default 50 KB), of a lockfile, minified code or a source map, and the same via `cat`, `type` or `Get-Content`; tells Claude the size, a token estimate and a better way (Grep, offset/limit). A second try at the same file goes through. Claude Code itself stops a Read only at about 25,000 tokens. | no |
+| `readGuard` | Read Guard | on | Holds a whole-file `Read` (no offset/limit) above the limit (default 50 KB), of a lockfile, minified code or a source map, and the same via `cat`, `type` or `Get-Content`; tells Claude the size, a token estimate and a better way (Grep, offset/limit). A second try at the same file goes through, and so does a `Read` with `allow_large` (Claude Code 2.1.296+). Claude Code itself stops a Read only at about 25,000 tokens. | no |
 | `subagentSaver` | Subagent Saver | on | Search subagents (Explore) that got no model of their own run on Sonnet (or Haiku) instead of inheriting the main model. An explicit model, forks, teammates and plugin agents stay untouched; the band shows how many were routed. | no |
 | `handoff` | Handoff Note | on | `/handoff` writes `.claude/handoff.local.md`, and a new session offers to continue from it. | one request over the warm cache |
 | `pet` | Desktop Pet | off | Windows only: a little cardboard box on the desktop, always on top, that says in a speech bubble what Claude is doing (file read or changed, command running, what a guard held) and sums up each turn. Drag it anywhere; right-click for quiet time. Built once with the C# compiler that ships with Windows into `%LOCALAPPDATA%\mod-box\pet`, signed with the Sign Guard script when one is set. | only with summary *haiku* |
+| `ccSplitDiffView` | Split Diff | off | Draws the result of Edit and Write as a side-by-side diff with line numbers; only the drawing changes. | no |
+| `humanInTheLoop` | Human in the Loop | off | Claude hands you tasks only a person can do (a secret to put in place, an account it cannot reach, a decision); they stay in the band and in `/my-tasks` until you answer or mark them done. | no |
+| `promptRail` | Prompt Rail | off | A rail of this session's prompts above the input (terminal) or beside the transcript; hover to read one, click to jump to it (`/prompt-rail`). | no |
 | `visibleCompact` | Visible Compact | on | Before/after view of `/compact` (`/show-last-compact`). | no |
-| `catchMeUp` | Catch Me Up | off | Live summary of the session (`/catch-me-up`). | Haiku calls after turns |
+| `catchMeUp` | Catch Me Up | off | Live summary of the session (`/catch-me-up`), kept up after turns with tools. Claude Code's built-in recap (`/recap`) is one short note when you come back; this pane stays open. | Haiku calls after turns |
 | `codebaseMap` | Codebase Map | off | Feature map from `docs/blueprints` with live highlighting of the features Claude edits, a freshness band and a `CLAUDE.md` pointer; mapper instructions with machine-checked edges load only when you ask for blueprint work (`/codebase-map`). | only blueprint runs you ask for; about 500 tokens per session for the `CLAUDE.md` pointer |
 
 <p align="center"><img src="docs/images/cache-meter.png" alt="Cache Meter opened: commands, token cost and options" width="500"></p>
@@ -122,6 +125,8 @@ The same window runs in terminal Claude Code, as a side pane next to the convers
 | `/ci` · `/ci pr <nr|url>` · `/ci stop` | CI Watch | state of the watched runs · watch a pull request · stop watching |
 | `/agents-info` | Savvy Progress | agents panel |
 | `/filetree` | Filetree | opens the file tree |
+| `/my-tasks` | Human in the Loop | your open tasks from Claude |
+| `/prompt-rail [vertical\|horizontal\|off\|next\|prev\|<nr>\|find <words>]` | Prompt Rail | switch the rail, jump to a prompt |
 | `/replay` | Replay Theater | steps through the last turn's edits |
 | `/keepwarm <6h|90m|always|off|status>` · `/cache-tax` | Cache Meter | keeps the cache warm · cache costs of this session |
 | `/pet [stop]` | Desktop Pet | shows the pet, or sends it off |
@@ -157,6 +162,8 @@ The window remembers the profile you applied last (*Default* until you apply one
 Each mod declares where it works: the surfaces (terminal, desktop app, VS Code, mobile), the operating systems, and the programs it needs (`git`, `gh` signed in, Node.js, Git Bash, PowerShell, a signing script). The window compares that with the session you are in (surface, OS, and the environment check under **Health**) and puts a ⚠ with the reason next to a mod that would not, or not fully, run here. ⚙ shows the full list.
 
 <p align="center"><img src="docs/images/sources.png" alt="The Sources tab" width="820"></p>
+
+The Sources tab also searches the **community mod catalogue** of [awesome-claude-code-mods](https://github.com/karanb192/awesome-claude-code-mods) ([mods.aidojo.si](https://mods.aidojo.si/), CC0): several thousand public mods, each with what Claude's validator says it may read, write, run or send. The box fetches the list once a day (`node tools/box.mjs modcat --query <words>`); **Import** takes a hit through the same checks as a git link.
 
 ## Adding mods with Claude
 
@@ -249,6 +256,9 @@ These mods come from other repositories and **were modified for the Mod Box**. E
 | Next Steps | [hamzafer/claude-code-mods](https://github.com/hamzafer/claude-code-mods/tree/main/mods/next-steps) | Hamza Zafar | MIT | language option, token usage, state rewritten |
 | Savvy Progress | [JohnnyVizz/claude-kit](https://github.com/JohnnyVizz/claude-kit/tree/main/plugins/savvy-progress) | johnnyvizz | MIT | a type fix; state and tool names rewritten |
 | Visible Compact | [nvsravank/visible-compact](https://github.com/nvsravank/visible-compact) | nvsravank | MIT | state, matchers and paths rewritten |
+| Split Diff | [neteye-platform/cc-split-diff-view](https://github.com/neteye-platform/cc-split-diff-view) | oskarnrk | Apache-2.0 or MIT | taken over unchanged |
+| Human in the Loop | [tzafrir/human-in-the-loop](https://github.com/tzafrir/human-in-the-loop) | Tzafrir Rehan | MIT | state, store key and tool names rewritten; its own prompts known by the box's plugin name |
+| Prompt Rail | [oikon48/prompt-rail](https://github.com/oikon48/prompt-rail) | oikon48 | MIT | state and store keys rewritten; presses and focus told apart from other mods by element key; mode setting under the box |
 
 Heads-up was retired in favour of "You Should Know", which ships with Claude Code; the window switches it under **Built into Claude Code**. **Cache Meter, Subagent Saver, Read Guard, Secret Guard, Package Guard, Desktop Pet, CI Watch, Sign Guard, Handoff Note**, the window and the tools were written for this box.
 

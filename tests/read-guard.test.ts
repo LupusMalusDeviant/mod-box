@@ -75,9 +75,11 @@ describe('Read guard: in the session', () => {
     expect((await $.tool.call({ tool: 'Read', file_path: '/repo/src/huge.ts', offset: 1, limit: 100 })).deny).toBeUndefined()
     expect((await $.tool.call({ tool: 'Read', file_path: '/repo/src/app.ts' })).deny).toBeUndefined()
     expect((await $.tool.call({ tool: 'Read', file_path: '/repo/shot.png' })).deny).toBeUndefined()
+    // allow_large (Claude Code 2.1.296) says Claude means the whole file
+    expect((await $.tool.call({ tool: 'Read', file_path: '/repo/package-lock.json', allow_large: true })).deny).toBeUndefined()
     // the second try goes through
     expect((await $.tool.call({ tool: 'Read', file_path: '/repo/src/huge.ts' })).deny).toBeUndefined()
-    expect(ran).toEqual(['Read:/repo/src/huge.ts', 'Read:/repo/src/app.ts', 'Read:/repo/shot.png', 'Read:/repo/src/huge.ts'])
+    expect(ran).toEqual(['Read:/repo/src/huge.ts', 'Read:/repo/src/app.ts', 'Read:/repo/shot.png', 'Read:/repo/package-lock.json', 'Read:/repo/src/huge.ts'])
   })
 
   test('lockfile via cat, relative to the project', { options: QUIET }, async ($: any, on: any) => {

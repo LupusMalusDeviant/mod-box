@@ -138,5 +138,35 @@ export const HOOKS: Record<string, string[]> = {
     "tool.call",
     "turn.complete",
     "turn.start"
+  ],
+  "ccSplitDiffView": [
+    "ui.render"
+  ],
+  "humanInTheLoop": [
+    "command.run",
+    "prompt.compose",
+    "prompt.context",
+    "prompt.submit",
+    "session.end",
+    "session.start",
+    "tool.call",
+    "tool.describe",
+    "turn.complete",
+    "turn.start",
+    "turn.step",
+    "ui.render"
+  ],
+  "promptRail": [
+    "classic.SessionStart",
+    "classic.Stop",
+    "command.run",
+    "prompt.submit",
+    "session.receive",
+    "session.start",
+    "turn.complete",
+    "turn.start",
+    "ui.focus",
+    "ui.press",
+    "ui.render"
   ]
 }

@@ -1614,8 +1614,8 @@ export const CATALOG: CatalogMod[] = [
       "de": "Lese-Wächter"
     },
     "description": {
-      "en": "Holds a whole-file Read (no offset/limit) of a file above the limit, a lockfile, minified code or a source map, and the same via cat, type or Get-Content in the shell; tells Claude the size, a token estimate and a better way (Grep, offset/limit). A second try at the same file goes through. Claude Code itself stops only at about 25,000 tokens.",
-      "de": "Hält ein Read der ganzen Datei (ohne offset/limit) an, wenn sie über der Grenze liegt, ein Lockfile, minifizierter Code oder eine Source-Map ist, ebenso cat, type oder Get-Content in der Shell; nennt Claude Grösse, Token-Schätzung und einen besseren Weg (Grep, offset/limit). Ein zweiter Versuch an derselben Datei geht durch. Claude Code selbst stoppt erst bei etwa 25.000 Tokens."
+      "en": "Holds a whole-file Read (no offset/limit) of a file above the limit, a lockfile, minified code or a source map, and the same via cat, type or Get-Content in the shell; tells Claude the size, a token estimate and a better way (Grep, offset/limit). A second try at the same file goes through, and so does a Read with allow_large. Claude Code itself stops only at about 25,000 tokens.",
+      "de": "Hält ein Read der ganzen Datei (ohne offset/limit) an, wenn sie über der Grenze liegt, ein Lockfile, minifizierter Code oder eine Source-Map ist, ebenso cat, type oder Get-Content in der Shell; nennt Claude Grösse, Token-Schätzung und einen besseren Weg (Grep, offset/limit). Ein zweiter Versuch an derselben Datei geht durch, ebenso ein Read mit allow_large. Claude Code selbst stoppt erst bei etwa 25.000 Tokens."
     },
     "group": "context",
     "costs": null,
@@ -1729,8 +1729,8 @@ export const CATALOG: CatalogMod[] = [
       "de": "Catch Me Up"
     },
     "description": {
-      "en": "Side pane with a live summary of the session (/catch-me-up).",
-      "de": "Seitenleiste mit laufender Zusammenfassung der Sitzung (/catch-me-up)."
+      "en": "Side pane with a live summary of the session (/catch-me-up), updated after turns that used tools. Claude Code's built-in recap (/recap) is one short note (up to 400 characters) when you come back to an unfocused window; this one stays open and keeps up.",
+      "de": "Seitenleiste mit laufender Zusammenfassung der Sitzung (/catch-me-up), aktualisiert nach Turns mit Werkzeugen. Claude Codes eingebaute Rückschau (/recap) ist eine kurze Notiz (bis 400 Zeichen), wenn du zu einem unfokussierten Fenster zurückkommst; diese hier bleibt offen und läuft mit."
     },
     "group": "watchers",
     "costs": {
@@ -1932,6 +1932,173 @@ export const CATALOG: CatalogMod[] = [
         "powershell"
       ]
     }
+  },
+  {
+    "id": "cc-split-diff-view",
+    "toggle": "ccSplitDiffView",
+    "default": false,
+    "band": false,
+    "title": {
+      "en": "Split Diff",
+      "de": "Diff nebeneinander"
+    },
+    "description": {
+      "en": "Draws the result of Edit and Write as a split diff: removed lines on the left, added lines on the right, with line numbers. Only the drawing changes; Claude reads the same result.",
+      "de": "Zeigt das Ergebnis von Edit und Write als geteilten Diff: entfernte Zeilen links, hinzugefügte rechts, mit Zeilennummern. Nur die Darstellung ändert sich; Claude liest dasselbe Ergebnis."
+    },
+    "group": "display",
+    "costs": null,
+    "params": [],
+    "imported": true,
+    "upstream": "cc-split-diff-view",
+    "source": "neteye-platform/cc-split-diff-view",
+    "commands": [],
+    "tokens": "none",
+    "needs": [],
+    "compat": {
+      "surfaces": [
+        "terminal",
+        "desktop",
+        "vscode",
+        "mobile"
+      ],
+      "os": [
+        "windows",
+        "mac",
+        "linux"
+      ],
+      "needs": []
+    }
+  },
+  {
+    "id": "human-in-the-loop",
+    "toggle": "humanInTheLoop",
+    "default": false,
+    "band": false,
+    "title": {
+      "en": "Human in the Loop",
+      "de": "Mensch in der Schleife"
+    },
+    "description": {
+      "en": "Claude can hand you tasks only a person can do (put a secret in place, act on an account it cannot reach, make a decision) with its assign_task tool. They stay in a band and a pane (/my-tasks) until you answer or mark them done; your answer goes back to Claude, never a secret.",
+      "de": "Claude kann dir Aufgaben geben, die nur ein Mensch erledigen kann (ein Geheimnis hinterlegen, etwas in einem Konto tun, das er nicht erreicht, eine Entscheidung treffen), über sein Werkzeug assign_task. Sie bleiben im Band und in einem Panel (/my-tasks), bis du antwortest oder sie erledigt markierst; deine Antwort geht an Claude zurück, nie ein Geheimnis."
+    },
+    "group": "display",
+    "costs": null,
+    "params": [],
+    "imported": true,
+    "upstream": "human-in-the-loop",
+    "source": "tzafrir/human-in-the-loop",
+    "commands": [
+      {
+        "name": "/my-tasks",
+        "text": {
+          "en": "your open tasks from Claude",
+          "de": "deine offenen Aufgaben von Claude"
+        }
+      }
+    ],
+    "tokens": "none",
+    "needs": [],
+    "compat": {
+      "surfaces": [
+        "terminal",
+        "desktop",
+        "vscode"
+      ],
+      "os": [
+        "windows",
+        "mac",
+        "linux"
+      ],
+      "needs": []
+    }
+  },
+  {
+    "id": "prompt-rail",
+    "toggle": "promptRail",
+    "default": false,
+    "band": false,
+    "title": {
+      "en": "Prompt Rail",
+      "de": "Prompt-Leiste"
+    },
+    "description": {
+      "en": "A rail of the prompts of this session: bars above the prompt (terminal) or a pane beside the transcript. Hover one to read it, click to jump to it in the transcript.",
+      "de": "Eine Leiste mit den Prompts dieser Sitzung: Balken über der Eingabe (Terminal) oder ein Panel neben dem Verlauf. Darüberfahren zeigt einen Prompt, ein Klick springt im Verlauf dorthin."
+    },
+    "group": "display",
+    "costs": null,
+    "params": [
+      {
+        "key": "promptRailMode",
+        "type": "string",
+        "multiple": false,
+        "title": {
+          "en": "Prompt Rail: mode",
+          "de": "Prompt-Leiste: Modus"
+        },
+        "description": {
+          "en": "off: no rail. vertical: a pane beside the transcript. horizontal: bars above the prompt input (terminal only).",
+          "de": "aus: keine Leiste. vertical: ein Panel neben dem Verlauf. horizontal: Balken über der Eingabe (nur Terminal)."
+        },
+        "labels": {
+          "de": {
+            "off": "aus",
+            "vertical": "Panel",
+            "horizontal": "Balken"
+          }
+        },
+        "options": [
+          "off",
+          "vertical",
+          "horizontal"
+        ],
+        "default": "horizontal"
+      }
+    ],
+    "imported": true,
+    "upstream": "prompt-rail",
+    "source": "oikon48/prompt-rail",
+    "commands": [
+      {
+        "name": "/prompt-rail [vertical|horizontal|off]",
+        "text": {
+          "en": "show the rail beside the transcript, above the prompt, or not",
+          "de": "Leiste neben dem Verlauf, über der Eingabe oder gar nicht"
+        }
+      },
+      {
+        "name": "/prompt-rail next|prev|first|last|<nr>|find <words>",
+        "text": {
+          "en": "jump to a prompt",
+          "de": "zu einem Prompt springen"
+        }
+      },
+      {
+        "name": "/prompt-rail-next, /prompt-rail-prev",
+        "text": {
+          "en": "the same, for a keybinding",
+          "de": "dasselbe, für eine Tastenbelegung"
+        }
+      }
+    ],
+    "tokens": "none",
+    "needs": [],
+    "compat": {
+      "surfaces": [
+        "terminal",
+        "desktop",
+        "vscode",
+        "mobile"
+      ],
+      "os": [
+        "windows",
+        "mac",
+        "linux"
+      ],
+      "needs": []
+    }
   }
 ]
 export const PROFILES: CatalogProfile[] = [
@@ -2008,6 +2175,18 @@ export const PROFILES: CatalogProfile[] = [
       ],
       [
         "pet",
+        false
+      ],
+      [
+        "ccSplitDiffView",
+        false
+      ],
+      [
+        "humanInTheLoop",
+        false
+      ],
+      [
+        "promptRail",
         false
       ]
     ]
@@ -2086,6 +2265,18 @@ export const PROFILES: CatalogProfile[] = [
       [
         "pet",
         true
+      ],
+      [
+        "ccSplitDiffView",
+        true
+      ],
+      [
+        "humanInTheLoop",
+        true
+      ],
+      [
+        "promptRail",
+        true
       ]
     ]
   },
@@ -2163,6 +2354,18 @@ export const PROFILES: CatalogProfile[] = [
       [
         "pet",
         false
+      ],
+      [
+        "ccSplitDiffView",
+        false
+      ],
+      [
+        "humanInTheLoop",
+        false
+      ],
+      [
+        "promptRail",
+        false
       ]
     ]
   },
@@ -2239,6 +2442,18 @@ export const PROFILES: CatalogProfile[] = [
       ],
       [
         "pet",
+        true
+      ],
+      [
+        "ccSplitDiffView",
+        true
+      ],
+      [
+        "humanInTheLoop",
+        true
+      ],
+      [
+        "promptRail",
         true
       ]
     ]

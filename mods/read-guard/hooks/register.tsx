@@ -3,7 +3,7 @@
 // held with its size and a token estimate and a better way (Grep, offset/limit). The same with
 // cat, type or Get-Content in the shell, which knows no limit at all. Claude Code's own Read stops
 // only at about 25,000 tokens; this guard is the cheaper line before that. A second try at the
-// same file goes through: Claude may really need it.
+// same file goes through, and so does a Read with allow_large: Claude may really need it.
 import type { EngineInterface, Register } from 'claude-code'
 
 let lang: 'de' | 'en' = 'en'
@@ -105,7 +105,8 @@ export const register: Register = (on, options) => {
 
   on('tool.call', { tool: 'Read' }, async ($, e, next) => {
     const path = String(e.file_path ?? '')
-    if (!path || e.offset != null || e.limit != null) return next(e)
+    // Read's own allow_large (Claude Code 2.1.296) is Claude saying it means the whole file.
+    if (!path || e.offset != null || e.limit != null || (e as { allow_large?: unknown }).allow_large === true) return next(e)
     const deny = await check($, path, false)
     return deny ? { deny } : next(e)
   })

@@ -15,7 +15,7 @@ import { BAND_IDS } from './bands'
 import { HOOKS } from './hooks-table'
 import { CATALOG, GROUPS, PLUGIN, PROFILES, SETTINGS } from './catalog'
 import type { CatalogField, CatalogMod, Text as I18n } from './catalog'
-import type { NativeField, NativeInfo, NativePlugin, SourcePlugin, EnvCheck, HookError, ImportReport, Source, Tab, UpdateInfo, BuiltinMod } from '../types'
+import type { NativeField, NativeInfo, NativePlugin, SourcePlugin, EnvCheck, HookError, ImportReport, Source, Tab, UpdateInfo, BuiltinMod, ModCatalog, CatalogHit } from '../types'
 
 const PANE = 'mod-box-settings'
 // How Claude Code names this plugin's /config rows: <plugin>.<field>, for an installed plugin often
@@ -37,6 +37,8 @@ const busy = atom({ plugin: 'mod-box', key: 'mb_busy' } as const, null as string
 const filter = atom({ plugin: 'mod-box', key: 'mb_filter' } as const, '')
 const open = atom({ plugin: 'mod-box', key: 'mb_open' } as const, [] as string[])
 const report = atom({ plugin: 'mod-box', key: 'mb_report' } as const, null as ImportReport | null)
+// The community mod catalogue: the last search and its hits.
+const modcat = atom({ plugin: 'mod-box', key: 'mb_modcat' } as const, null as ModCatalog | null)
 // Natively managed plugins (tools/native.mjs) and their details, read when a row opens.
 const natives = atom({ plugin: 'mod-box', key: 'mb_natives' } as const, null as NativePlugin[] | null)
 const builtinMods = atom({ plugin: 'mod-box', key: 'mb_builtins' } as const, null as BuiltinMod[] | null)
@@ -1370,6 +1372,27 @@ async function importFrom($: EngineInterface, src: Source, plugin: string) {
   }
 }
 
+// The community catalogue (tools/modcat.mjs): fetched once a day, searched by words.
+async function searchModcat($: EngineInterface, query: string, refresh = false) {
+  if (await read($, busy)) return
+  await update($, busy, () => t('Mod-Katalog wird durchsucht …', 'Searching the mod catalogue …'))
+  try {
+    const res = await box($, ['modcat', '--query', query.trim() || ' ', '--limit', '20', ...(refresh ? ['--refresh'] : [])], 120_000)
+    await update($, modcat, (): ModCatalog => res.ok
+      ? { query: query.trim(), total: Number(res.total ?? 0), count: Number(res.count ?? 0), generated: res.generated ?? null, mods: (res.mods ?? []) as CatalogHit[] }
+      : { query: query.trim(), total: 0, count: 0, generated: null, mods: [], error: String(res.error ?? '?') })
+  } finally {
+    await update($, busy, () => null)
+  }
+}
+
+// A catalogue hit goes through the same import as a git link: inspected, rewritten, validated, off.
+async function importCatalogMod($: EngineInterface, m: CatalogHit) {
+  await importFrom($, { kind: 'link', link: `https://github.com/${m.repo}`, name: m.repo, dir: null, plugins: [] } as unknown as Source, m.name)
+  const q = await read($, modcat)
+  if (q) await searchModcat($, q.query)
+}
+
 async function removeMod($: EngineInterface, id: string, title: string) {
   if (await read($, busy)) return
   await update($, busy, () => t(`${title} wird entfernt …`, `Removing ${title} …`))
@@ -1411,6 +1434,53 @@ function drawReport($: EngineInterface, ui: any, r: ImportReport) {
   )
 }
 
+// What a mod may do, as the catalogue's scan reports it: the more it reaches, the warmer the colour.
+const reachColor = (name: string) => (/network|writes|runs/i.test(name) ? 'warning' : /remembers|draws/i.test(name) ? 'suggestion' : 'inactive')
+
+async function drawModcat($: EngineInterface, ui: any, columns: number) {
+  const { Box, Text, Button, Input } = ui
+  const q = await read($, modcat)
+  const isBusy = await read($, busy)
+  const width = Math.max(30, columns - 46)
+  return (
+    <Box flexDirection="column" marginBottom={1} borderStyle="round" borderColor="subtle" paddingX={1}>
+      <Text bold>{`☰  ${t('Community-Mod-Katalog', 'Community mod catalogue')}`}</Text>
+      <Text dimColor wrap="wrap">
+        {t(
+          'Alle öffentlichen Mods, die der nächtliche Scan von awesome-claude-code-mods (mods.aidojo.si, CC0) gefunden hat, mit dem, was sie laut Claudes Prüfung lesen, schreiben, ausführen oder senden dürfen. Übernehmen läuft wie bei einem Git-Link: geprüft, umgeschrieben, zunächst aus.',
+          'Every public mod the nightly scan of awesome-claude-code-mods (mods.aidojo.si, CC0) found, with what Claude\'s validator says it may read, write, run or send. Import works as for a git link: checked, rewritten, off at first.',
+        )}
+      </Text>
+      <Box flexDirection="row" marginTop={1}>
+        {Input ? <Input key="modcat-q" label={t('Suchen: ', 'Search: ')} value={q?.query ?? ''} placeholder={t('z. B. diff, usage, guard', 'e.g. diff, usage, guard')} submitLabel={t('Suchen', 'Search')} onSubmit={(v: string) => void searchModcat($, v)} /> : null}
+        <Text>{'  '}</Text>
+        {!Input ? <Button key="modcat-top" label={t('Beliebteste zeigen', 'Show the most starred')} plain onPress={() => void searchModcat($, '')} /> : null}
+        {q && !isBusy ? <Button key="modcat-refresh" label={t('Katalog neu laden', 'Reload catalogue')} plain onPress={() => void searchModcat($, q.query, true)} /> : null}
+      </Box>
+      {q?.error ? <Text color="error" wrap="wrap">{q.error}</Text> : null}
+      {q && !q.error ? <Text dimColor>{t(`${q.total} Treffer von ${q.count} Mods${q.total > q.mods.length ? `, die ${q.mods.length} mit den meisten Sternen` : ''}`, `${q.total} hits of ${q.count} mods${q.total > q.mods.length ? `, the ${q.mods.length} most starred` : ''}`)}</Text> : null}
+      {(q?.mods ?? []).map(m => {
+        const key = `${m.repo}:${m.name}`
+        return (
+          <Box key={`mc-${key}`} flexDirection="column" paddingLeft={1}>
+            <Box flexDirection="row">
+              <Text bold>{m.name}</Text>
+              <Text dimColor>{`  ★${m.stars}  ${m.repo}  ${m.license ?? t('keine Lizenz', 'no license')}`}</Text>
+              <Text color={reachColor(m.reach.name)}>{`  ${m.reach.name || '?'}`}</Text>
+              {m.validated && m.validated !== 'passed' ? <Text color="error">{`  ${t('Prüfung', 'validation')}: ${m.validated}`}</Text> : null}
+              <Text>{'  '}</Text>
+              {m.inBox ? <Text color="success">{`✓ ${t('in der Box', 'in the box')}`}</Text> : !isBusy ? <Button key={`mc-imp-${key}`} label={t('Übernehmen', 'Import')} plain onPress={() => void importCatalogMod($, m)} /> : null}
+            </Box>
+            <Box paddingLeft={2}>
+              <Text dimColor wrap="truncate-end">{`${trim(m.description, width)}${m.reach.labels.length ? `  [${m.reach.labels.join(', ')}]` : ''}`}</Text>
+            </Box>
+          </Box>
+        )
+      })}
+    </Box>
+  )
+}
+
 async function drawSources($: EngineInterface, ui: any, columns: number) {
   const { Box, Text, Button, Input } = ui
   const list = await read($, sources)
@@ -1448,10 +1518,12 @@ async function drawSources($: EngineInterface, ui: any, columns: number) {
       </Box>
     </Box>
   )
+  const catalogue = await drawModcat($, ui, columns)
   if (list === null) {
     return (
       <Box flexDirection="column">
         {header}
+        {catalogue}
         <Text dimColor>{isBusy ? t('Lese Quellen …', 'Reading sources …') : t('Noch nicht gelesen.', 'Not read yet.')}</Text>
         {!isBusy ? <Button key="sources-load" label={t('Quellen lesen', 'Read sources')} onPress={() => void loadCatalog($, false)} /> : null}
       </Box>
@@ -1463,6 +1535,7 @@ async function drawSources($: EngineInterface, ui: any, columns: number) {
   return (
     <Box flexDirection="column">
       {header}
+      {catalogue}
       {list.length === 0 ? <Text dimColor>{t('Keine Quellen. Einen Git-Link oben eintragen.', 'No sources. Enter a git link above.')}</Text> : null}
       {list.map(src => {
         const key = src.kind === 'link' ? src.link : `claude:${src.name}`
