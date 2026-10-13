@@ -2466,6 +2466,64 @@ export const CATALOG: CatalogMod[] = [
           "answer"
         ],
         "default": "show"
+      },
+      {
+        "key": "petTyping",
+        "type": "string",
+        "multiple": false,
+        "title": {
+          "en": "Desktop Pet: type answers in the pet",
+          "de": "Desktop-Pet: Antworten im Pet tippen"
+        },
+        "description": {
+          "en": "on: a hotkey, the pet's menu or a button in the bubble opens a small input box; the text goes to Claude as the next prompt, as the answer to its open question, or in place of a suggestion. Typing takes the keyboard from the game for a moment (borderless windowed mode is fine). Any program of your user can write the pet's answer file, hence off by default.",
+          "de": "an: Eine Tastenkombination, das Pet-Menü oder ein Knopf in der Blase öffnet ein kleines Eingabefeld; der Text geht als nächster Prompt an Claude, als Antwort auf seine offene Frage oder anstelle eines Vorschlags. Tippen holt kurz die Tastatur aus dem Spiel (randloser Fenstermodus geht gut). Jedes Programm deines Benutzers kann die Antwortdatei des Pets schreiben, deshalb standardmäßig aus."
+        },
+        "labels": {
+          "de": {
+            "on": "an",
+            "off": "aus"
+          }
+        },
+        "options": [
+          "off",
+          "on"
+        ],
+        "default": "off"
+      },
+      {
+        "key": "petHotkey",
+        "type": "string",
+        "multiple": false,
+        "title": {
+          "en": "Desktop Pet: hotkey for typing",
+          "de": "Desktop-Pet: Tastenkombination zum Tippen"
+        },
+        "description": {
+          "en": "Opens the input box from anywhere, also from a game. With several pets the first one gets it.",
+          "de": "Öffnet das Eingabefeld von überall, auch aus einem Spiel. Bei mehreren Pets bekommt sie das erste."
+        },
+        "labels": {
+          "de": {
+            "ctrl+alt+space": "Strg+Alt+Leertaste",
+            "ctrl+shift+space": "Strg+Umschalt+Leertaste",
+            "ctrl+alt+c": "Strg+Alt+C",
+            "off": "aus"
+          },
+          "en": {
+            "ctrl+alt+space": "Ctrl+Alt+Space",
+            "ctrl+shift+space": "Ctrl+Shift+Space",
+            "ctrl+alt+c": "Ctrl+Alt+C",
+            "off": "off"
+          }
+        },
+        "options": [
+          "ctrl+alt+space",
+          "ctrl+shift+space",
+          "ctrl+alt+c",
+          "off"
+        ],
+        "default": "ctrl+alt+space"
       }
     ],
     "imported": false,
