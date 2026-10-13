@@ -51,6 +51,8 @@ let stepsShownFor = ''
 let lastDone: PetNote | null = null
 const NEXT_STEPS = { plugin: 'mod-box', key: 'ns_steps' } as const
 const POLL_MS = 600
+// Tools whose permission request is the person's own decision (a plan to approve): never answered by the pet.
+const PERSONAL_TOOLS = ['ExitPlanMode', 'EnterPlanMode']
 // How long a permission request waits for a click in the pet (option permissions "answer").
 const PERMIT_WAIT_S = 90
 const changed = new Set<string>()
@@ -433,9 +435,14 @@ export const register: Register = (on, options) => {
     const r = await next(e)
     const req = e as unknown as { tool_name?: string; tool_input?: Record<string, unknown> }
     if (!statusPath || !req.tool_name || (r as { decision?: unknown })?.decision) return r
+    // Claude Code opens its question dialog through a permission request too: the question's own
+    // hook shows its choices, an "allow" here would skip the question unanswered.
+    if (req.tool_name === 'AskUserQuestion') return r
+    // A plan to approve is the person's decision in Claude Code alone: shown, never answered here.
+    const isPersonal = PERSONAL_TOOLS.includes(req.tool_name)
     const what = describe(req.tool_name, req.tool_input ?? {}, lang === 'de')
     const title = titled(t('Genehmigung nötig', 'Permission needed'))
-    if (permissions !== 'answer') {
+    if (permissions !== 'answer' || isPersonal) {
       void say($, { kind: 'ask', title, text: `${what} · ${t('bitte in Claude Code bestätigen', 'please confirm in Claude Code')}` })
       return r
     }

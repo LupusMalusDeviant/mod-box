@@ -1,4 +1,4 @@
-// Modified for mod-box (https://github.com/LupusMalusDeviant/mod-box): state, matchers and paths rewritten for the single plugin; a Features tab for the Codebase Map.
+// Modified for mod-box (https://github.com/LupusMalusDeviant/mod-box): state, matchers and paths rewritten for the single plugin; a Features tab for the Codebase Map; on the desktop the rows and the preview stay under the engine's 100,000-character limit for a Client's props.
 // Original: https://github.com/data-goblin/claude-code-filetree (commit bf8de32).
 import { type BuiltinToolResults, type EngineInterface, type Register, type Timer, update } from 'claude-code'
 import { LINUX_LAUNCH, openCommand, openWithCommand } from './open'
@@ -214,6 +214,24 @@ let activityId = 0
 let pointer = true
 let view = { from: 0, max: 0 }
 let nativeScroll = false
+// Mod Box: the engine refuses a Client whose props serialize past 100,000 characters; the desktop
+// gets every row at once, so a big expanded tree (or a long file in the preview) is kept below it.
+const CLIENT_MAX_CHARS = 90_000
+const PREVIEW_MAX_CHARS = 80_000
+
+/** The rows, cut from the end farther from the cursor until they fit a Client's props. */
+export function fitRows<T extends { id: string }>(specs: T[], cursor: string, max = CLIENT_MAX_CHARS): T[] {
+  const sizes = specs.map(r => JSON.stringify(r).length + 1)
+  let total = sizes.reduce((a, b) => a + b, 0)
+  let from = 0
+  let to = specs.length
+  const at = Math.max(0, specs.findIndex(r => r.id === cursor))
+  while (total > max && to - from > 1) {
+    if (at - from > to - 1 - at) total -= sizes[from++]!
+    else total -= sizes[--to]!
+  }
+  return from === 0 && to === specs.length ? specs : specs.slice(from, to)
+}
 let lastSync = 0
 let noDock = false
 let home = ''
@@ -1511,6 +1529,8 @@ export const register: Register = (on, options) => {
       const all = (p?.text ?? '').split('\n').length
       previewRows = nativeScroll ? all : Math.max(4, (e.props.scroll?.bodyRows ?? 40) - (p?.note ? 2 : 1))
       const win = previewLines(p?.text ?? '', nativeScroll ? 0 : Math.min(t.previewTop, Math.max(0, all - previewRows)), previewRows, markdown)
+      // Mod Box: the engine refuses a Client's props past 100,000 characters (and draws its own).
+      if (win.text.length > PREVIEW_MAX_CHARS) win.text = `${win.text.slice(0, PREVIEW_MAX_CHARS)}\n… (${tx('gekürzt, ↗ öffnet die ganze Datei', 'cut short, ↗ opens the whole file')})`
       const name = t.preview !== t.root && inside(t.root, t.preview) ? relative(t.root, t.preview) : shortPath(t.preview)
       return (
         <Box flexDirection="column" minHeight={Math.max(1, e.props.scroll?.bodyRows ?? 1)} backgroundColor={theme.bg || undefined}>
@@ -1625,12 +1645,10 @@ export const register: Register = (on, options) => {
     }
 
     const note = (text: string): RowSpec => ({ id: '', left: [{ t: text, c: theme.muted }], right: [] })
-    const specs: RowSpec[] = [
-      ...(rows.length === 0 ? [note('empty')] : []),
-      ...pinned.map(rowSpec),
-      ...(pinned.length > 0 ? [note('  ⋮')] : []),
-      ...shown.map(rowSpec),
-    ]
+    const specs: RowSpec[] = fitRows(
+      [...(rows.length === 0 ? [note('empty')] : []), ...pinned.map(rowSpec), ...(pinned.length > 0 ? [note('  ⋮')] : []), ...shown.map(rowSpec)],
+      t.cursor,
+    )
     const barSize = Math.max(1, Math.round((specs.length * shown.length) / Math.max(1, rows.length)))
     const bar =
       !nativeScroll && rows.length > shown.length + pinned.length
