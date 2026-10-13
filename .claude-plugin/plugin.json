@@ -694,6 +694,18 @@
       "title": "Desktop Pet: answer Claude's questions",
       "description": "Claude's questions (AskUserQuestion) appear as buttons in the bubble too; the first answer counts, the pet's or the dialog's."
     },
+    "petRemind": {
+      "type": "string",
+      "default": "60",
+      "options": [
+        "off",
+        "30",
+        "60",
+        "120"
+      ],
+      "title": "Desktop Pet: show a hidden question again (seconds)",
+      "description": "A question still open whose bubble you hid (double-click, menu) comes back after that many seconds. Not while the pet is snoozed."
+    },
     "petSuggest": {
       "type": "string",
       "default": "on",

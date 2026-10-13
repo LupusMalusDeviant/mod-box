@@ -99,6 +99,8 @@ namespace ModBox
         public string TypeLabel = "";
         /// The project the pet stands for (its tag, always shown).
         public string Name = "";
+        /// An open question whose bubble was hidden comes back after this many seconds (0: never).
+        public int Remind;
 
         public static Status Read(string path)
         {
@@ -121,6 +123,7 @@ namespace ModBox
                 else if (key == "hotkey") s.Hotkey = value;
                 else if (key == "typelabel") s.TypeLabel = value;
                 else if (key == "name") s.Name = value;
+                else if (key == "remind") int.TryParse(value, out s.Remind);
             }
             return s;
         }
@@ -139,6 +142,7 @@ namespace ModBox
         int hovered = -1;
         DateTime lastWrite = DateTime.MinValue;
         DateTime shownAt = DateTime.MinValue;
+        DateTime visibleAt = DateTime.Now;
         DateTime lastNews = DateTime.Now;
         DateTime byeAt = DateTime.MaxValue;
         DateTime snoozeUntil = DateTime.MinValue;
@@ -256,6 +260,13 @@ namespace ModBox
             bool isSticky = status.Kind == "ask" || status.Kind == "error" || status.Choices.Count > 0;
             if (isBubble && !isSticky && status.Kind != "work" && (DateTime.Now - shownAt).TotalMilliseconds > bubbleMs) isBubble = false;
             if (isBubble && status.Kind == "work" && (DateTime.Now - shownAt).TotalMilliseconds > bubbleMs * 4) isBubble = false;
+            // A question still open, its bubble hidden (and no snooze): it comes back after a while.
+            if (isBubble) visibleAt = DateTime.Now;
+            else if (status.Kind == "ask" && status.Remind > 0 && DateTime.Now >= snoozeUntil && (DateTime.Now - visibleAt).TotalSeconds > status.Remind)
+            {
+                isBubble = true;
+                shownAt = DateTime.Now;
+            }
             Draw();
         }
 

@@ -170,6 +170,9 @@ group('Desktop pet: figures and clicks', () => {
     const shown = writes.at(-1)!.text
     expect(shown).toContain('pet=cat')
     expect(shown).toContain('choice=PostgreSQL\nchoice=SQLite')
+    // the question's bubble comes back when hidden; nothing covers it with "Using AskUserQuestion"
+    expect(shown).toMatch(/^remind=60$/m)
+    expect(writes.some(w => w.text.includes('AskUserQuestion'))).toBe(false)
     click(writes, 'SQLite')
     await clock.advance(700)
     const r = await call

@@ -2416,6 +2416,31 @@ export const CATALOG: CatalogMod[] = [
         "default": "on"
       },
       {
+        "key": "petRemind",
+        "type": "string",
+        "multiple": false,
+        "title": {
+          "en": "Desktop Pet: show a hidden question again (seconds)",
+          "de": "Desktop-Pet: ausgeblendete Frage wieder zeigen (Sekunden)"
+        },
+        "description": {
+          "en": "A question still open whose bubble you hid (double-click, menu) comes back after that many seconds. Not while the pet is snoozed.",
+          "de": "Eine noch offene Frage, deren Blase du ausgeblendet hast (Doppelklick, Menü), kommt nach so vielen Sekunden wieder. Nicht, solange das Pet Ruhe hat."
+        },
+        "labels": {
+          "de": {
+            "off": "aus"
+          }
+        },
+        "options": [
+          "off",
+          "30",
+          "60",
+          "120"
+        ],
+        "default": "60"
+      },
+      {
         "key": "petSuggest",
         "type": "string",
         "multiple": false,

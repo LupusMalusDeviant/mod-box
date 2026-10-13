@@ -1819,6 +1819,27 @@
           }
         },
         {
+          "key": "petRemind",
+          "field": "remind",
+          "type": "string",
+          "default": "60",
+          "options": [
+            "off",
+            "30",
+            "60",
+            "120"
+          ],
+          "title": "Desktop Pet: show a hidden question again (seconds)",
+          "title_de": "Desktop-Pet: ausgeblendete Frage wieder zeigen (Sekunden)",
+          "description": "A question still open whose bubble you hid (double-click, menu) comes back after that many seconds. Not while the pet is snoozed.",
+          "description_de": "Eine noch offene Frage, deren Blase du ausgeblendet hast (Doppelklick, Menü), kommt nach so vielen Sekunden wieder. Nicht, solange das Pet Ruhe hat.",
+          "labels": {
+            "de": {
+              "off": "aus"
+            }
+          }
+        },
+        {
           "key": "petSuggest",
           "field": "suggest",
           "type": "string",
