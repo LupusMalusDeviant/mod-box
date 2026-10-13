@@ -158,6 +158,10 @@ export type BlockedFind = {
   stopped: boolean
 }
 
+// ---- screen-mask ----
+
+
+
 // ---- package-guard ----
 
 export type PackageInfo = {
@@ -368,6 +372,8 @@ export type MeterInfo = {
   window: number | null
   /** The subscription's rate-limit windows (5 hours, week), as the status line has them. */
   limits: Array<{ kind: string; percentUsed: number; resetsAt?: string }>
+  /** Context fill after each of the last turns (percent, oldest first), for the trend line. */
+  trend: number[]
 }
 
 // ---- subagent-saver ----
@@ -551,6 +557,9 @@ declare module 'claude-code' {
       sw_blocked: BlockedFind[]
       sw_project: string[]
       sw_global: string[]
+
+      // screen-mask
+      sm_on: boolean
 
       // package-guard
       pg_hold: PackageHold | null

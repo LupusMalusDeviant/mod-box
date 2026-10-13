@@ -1,7 +1,7 @@
 {
   "name": "mod-box",
   "version": "0.5.0",
-  "description": "20 Claude Code mods in one plugin, each switchable on its own; /mod-box opens the window to switch, configure and import mods.",
+  "description": "21 Claude Code mods in one plugin, each switchable on its own; /mod-box opens the window to switch, configure and import mods.",
   "author": {
     "name": "Lupus Malus Deviant"
   },
@@ -66,6 +66,12 @@
       "description": "Stops before Claude writes API keys, tokens, private keys or a non-ignored .env into files, git add or commits. Exceptions for test keys and example files: /secret-allow.",
       "default": true
     },
+    "screenMask": {
+      "type": "boolean",
+      "title": "Screen Mask",
+      "description": "For screen sharing and recordings: hides API keys, tokens, private keys, e-mail addresses, IP addresses, your login name in paths and any names you list. Only the display changes; Claude still reads the original. Nothing leaves the machine. /mask switches it.",
+      "default": false
+    },
     "packageGuard": {
       "type": "boolean",
       "title": "Package Guard",
@@ -111,7 +117,7 @@
     "cacheMeter": {
       "type": "boolean",
       "title": "Cache Meter",
-      "description": "Band: time left on the warm cache, hit rate, context as weather, plan limits, compact and keep-warm buttons; stops one send to a cold cache and names its cost (Cache Tax runs inside). Costs tokens: keep-warm requests, only when switched on.",
+      "description": "Band: time left on the warm cache, hit rate, context as weather with its trend over 12 turns, plan limits, compact and keep-warm buttons; stops one send to a cold cache and names its cost (Cache Tax runs inside). Costs tokens: keep-warm requests, only when switched on.",
       "default": true
     },
     "subagentSaver": {
@@ -147,13 +153,13 @@
     "codebaseMap": {
       "type": "boolean",
       "title": "Codebase Map",
-      "description": "Feature map of the codebase from docs/blueprints: dependency graph with live highlighting of the features Claude edits, a freshness band, a CLAUDE.md pointer for agents and mapper instructions (machine-checked edges, optional Confluence mirror) that load only when you ask for blueprint work. Costs tokens: Only when you ask for blueprint work: creating a blueprint reads the whole repo once (hundreds of thousands of tokens on a large repo), an update reads only the changed features. While a blueprint exists, the CLAUDE.md pointer adds about 500 tokens per session (switch off with the CLAUDE.md option)..",
+      "description": "Feature map of the codebase from docs/blueprints: dependency graph with live highlighting of the features Claude edits, a freshness band, a CLAUDE.md pointer for agents and mapper instructions (machine-checked edges, optional Confluence mirror) that load only when you ask for blueprint work. In the prompt, @ and a feature name attaches its blueprint, and a mentioned file says which feature it belongs to. Costs tokens: Only when you ask for blueprint work: creating a blueprint reads the whole repo once (hundreds of thousands of tokens on a large repo), an update reads only the changed features. While a blueprint exists, the CLAUDE.md pointer adds about 500 tokens per session (switch off with the CLAUDE.md option)..",
       "default": false
     },
     "pet": {
       "type": "boolean",
       "title": "Desktop Pet",
-      "description": "A little cardboard box on the Windows desktop, always on top, that says in a speech bubble what Claude is doing: the file it reads or changes, the command that runs, what a guard held, and a short summary at the end of a turn. Drag it anywhere, right-click for quiet time. Built once with the C# compiler that ships with Windows and signed with the Sign Guard script when one is set. /pet shows it, /pet stop sends it off.",
+      "description": "A little companion on the Windows desktop, always on top: a cardboard box or one of twelve figures (cat, dog, fox, bunny, hamster, owl, penguin, frog, axolotl, dragon, robot, ghost; cat, dog and bunny in nine coats). It says in a speech bubble what Claude is doing, shows permission requests, and lets you click Claude's questions and Next Steps' suggestions right in the bubble. Drag it anywhere, right-click for quiet time; optionally one pet per session. Built once with the C# compiler that ships with Windows and signed with the Sign Guard script when one is set. /pet shows it, /pet cat calico picks a figure, /pet stop sends it off.",
       "default": false
     },
     "ccSplitDiffView": {
@@ -193,6 +199,43 @@
       ],
       "title": "Secret Guard: let placeholders pass",
       "description": "on: values with EXAMPLE, DUMMY, FAKE, PLACEHOLDER, REDACTED, SAMPLE, xxxxxx … are no secret (this covers the AWS documentation keys)."
+    },
+    "screenMaskTerms": {
+      "type": "string",
+      "default": "",
+      "title": "Screen Mask: names and words to hide",
+      "description": "Comma separated, e.g. customer names, project code names, a server name. Case does not matter."
+    },
+    "screenMaskEmails": {
+      "type": "string",
+      "default": "on",
+      "options": [
+        "on",
+        "off"
+      ],
+      "title": "Screen Mask: hide e-mail addresses",
+      "description": "Every address becomes [e-mail]."
+    },
+    "screenMaskIps": {
+      "type": "string",
+      "default": "on",
+      "options": [
+        "on",
+        "off"
+      ],
+      "title": "Screen Mask: hide IP addresses",
+      "description": "IPv4 addresses except loopback and documentation ranges become [ip]."
+    },
+    "screenMaskShow": {
+      "type": "string",
+      "default": "band",
+      "options": [
+        "band",
+        "status",
+        "off"
+      ],
+      "title": "Screen Mask: display",
+      "description": "band: above the prompt. status: in the status line. off: not shown (the mod keeps working)."
     },
     "packageMode": {
       "type": "string",
@@ -577,6 +620,87 @@
       ],
       "title": "Desktop Pet: summary at the end",
       "description": "off: the first sentences of the answer (no tokens). haiku: Haiku puts a longer answer in one sentence."
+    },
+    "petKind": {
+      "type": "string",
+      "default": "box",
+      "options": [
+        "box",
+        "cat",
+        "dog",
+        "fox",
+        "bunny",
+        "hamster",
+        "owl",
+        "penguin",
+        "frog",
+        "axolotl",
+        "dragon",
+        "robot",
+        "ghost",
+        "random"
+      ],
+      "title": "Desktop Pet: figure",
+      "description": "Who stands on the desktop. random: a different one each session. /pet cat calico switches it too."
+    },
+    "petFur": {
+      "type": "string",
+      "default": "auto",
+      "options": [
+        "auto",
+        "ginger",
+        "black",
+        "white",
+        "grey",
+        "brown",
+        "cream",
+        "calico",
+        "siamese",
+        "tuxedo",
+        "random"
+      ],
+      "title": "Desktop Pet: coat (cat, dog, bunny)",
+      "description": "The coat colour of cat, dog and bunny."
+    },
+    "petPerSession": {
+      "type": "string",
+      "default": "off",
+      "options": [
+        "off",
+        "on"
+      ],
+      "title": "Desktop Pet: one pet per session",
+      "description": "on: every Claude Code session gets its own pet; they stand side by side. off: one pet for all."
+    },
+    "petAsk": {
+      "type": "string",
+      "default": "on",
+      "options": [
+        "on",
+        "off"
+      ],
+      "title": "Desktop Pet: answer Claude's questions",
+      "description": "Claude's questions (AskUserQuestion) appear as buttons in the bubble too; the first answer counts, the pet's or the dialog's."
+    },
+    "petSuggest": {
+      "type": "string",
+      "default": "on",
+      "options": [
+        "on",
+        "off"
+      ],
+      "title": "Desktop Pet: next-step suggestions",
+      "description": "With Next Steps on, its suggestions appear as buttons in the bubble; a click sends one as your next prompt."
+    },
+    "petPermissions": {
+      "type": "string",
+      "default": "show",
+      "options": [
+        "show",
+        "answer"
+      ],
+      "title": "Desktop Pet: permission requests",
+      "description": "show: the pet only says that Claude Code is waiting for your approval. answer: the bubble also offers \"allow once\" and \"deny\" for 90 seconds (never \"always\"; no rule is added). Mind that the pet stays on top: a click there approves."
     },
     "promptRailMode": {
       "type": "string",

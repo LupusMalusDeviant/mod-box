@@ -5,24 +5,25 @@ import type { Register } from 'claude-code'
 import { register as m0 } from '../mods/settings/hooks/register' // settings
 import { register as m1 } from '../mods/blast-radius/hooks/blast-radius.mjs' // blast-radius
 import { register as m2 } from '../mods/secret-guard/hooks/register' // secret-guard
-import { register as m3 } from '../mods/package-guard/hooks/register' // package-guard
-import { register as m4 } from '../mods/ci-watch/hooks/register' // ci-watch
-import { register as m5 } from '../mods/sign-guard/hooks/register' // sign-guard
-import { register as m6 } from '../mods/savvy-progress/hooks/register' // savvy-progress
-import { register as m7 } from '../mods/filetree/hooks/register' // filetree
-import { register as m8 } from '../mods/replay-theater/hooks/replay-theater.mjs' // replay-theater
-import { register as m9 } from '../mods/next-steps/hooks/register' // next-steps
-import { register as m10 } from '../mods/cache-meter/hooks/register' // cache-meter
-import { register as m11 } from '../mods/subagent-saver/hooks/register' // subagent-saver
-import { register as m12 } from '../mods/handoff/hooks/register' // handoff
-import { register as m13 } from '../mods/visible-compact/hooks/register' // visible-compact
-import { register as m14 } from '../mods/read-guard/hooks/register' // read-guard
-import { register as m15 } from '../mods/catch-me-up/hooks/register.js' // catch-me-up
-import { register as m16 } from '../mods/codebase-map/hooks/register' // codebase-map
-import { register as m17 } from '../mods/pet/hooks/register' // pet
-import { register as m18 } from '../mods/cc-split-diff-view/hooks/register' // cc-split-diff-view
-import { register as m19 } from '../mods/human-in-the-loop/hooks/register' // human-in-the-loop
-import { register as m20 } from '../mods/prompt-rail/hooks/index' // prompt-rail
+import { register as m3 } from '../mods/screen-mask/hooks/register' // screen-mask
+import { register as m4 } from '../mods/package-guard/hooks/register' // package-guard
+import { register as m5 } from '../mods/ci-watch/hooks/register' // ci-watch
+import { register as m6 } from '../mods/sign-guard/hooks/register' // sign-guard
+import { register as m7 } from '../mods/savvy-progress/hooks/register' // savvy-progress
+import { register as m8 } from '../mods/filetree/hooks/register' // filetree
+import { register as m9 } from '../mods/replay-theater/hooks/replay-theater.mjs' // replay-theater
+import { register as m10 } from '../mods/next-steps/hooks/register' // next-steps
+import { register as m11 } from '../mods/cache-meter/hooks/register' // cache-meter
+import { register as m12 } from '../mods/subagent-saver/hooks/register' // subagent-saver
+import { register as m13 } from '../mods/handoff/hooks/register' // handoff
+import { register as m14 } from '../mods/visible-compact/hooks/register' // visible-compact
+import { register as m15 } from '../mods/read-guard/hooks/register' // read-guard
+import { register as m16 } from '../mods/catch-me-up/hooks/register.js' // catch-me-up
+import { register as m17 } from '../mods/codebase-map/hooks/register' // codebase-map
+import { register as m18 } from '../mods/pet/hooks/register' // pet
+import { register as m19 } from '../mods/cc-split-diff-view/hooks/register' // cc-split-diff-view
+import { register as m20 } from '../mods/human-in-the-loop/hooks/register' // human-in-the-loop
+import { register as m21 } from '../mods/prompt-rail/hooks/index' // prompt-rail
 
 export function isOn(options: Record<string, unknown>, key: string, fallback: boolean): boolean {
   const v = options[key]
@@ -54,22 +55,23 @@ export const register: Register = (on, options) => {
   ;(m0 as any)(on, o) // settings
   if (isOn(o, "blastRadius", true)) (m1 as any)(on, {  })
   if (isOn(o, "secretGuard", true)) (m2 as any)(on, { "mode": opt(o, "secretMode", "block"), "placeholders": opt(o, "secretPlaceholders", "on"), "language": opt(o, "language", "en") })
-  if (isOn(o, "packageGuard", true)) (m3 as any)(on, { "mode": opt(o, "packageMode", "block"), "language": opt(o, "language", "en") })
-  if (isOn(o, "ciWatch", true)) (m4 as any)(on, { "intervalSec": opt(o, "ciInterval", "20"), "onRed": opt(o, "ciOnRed", "both"), "sound": opt(o, "ciSound", "off"), "notify": opt(o, "ciNotify", "red"), "prOnDesktop": opt(o, "ciPrOnDesktop", "app"), "language": opt(o, "language", "en") })
-  if (isOn(o, "signGuard", false)) (m5 as any)(on, { "mode": opt(o, "signMode", "ask"), "script": opt(o, "signScript", ""), "subject": opt(o, "signSubject", ""), "language": opt(o, "language", "en") })
-  if (isOn(o, "savvyProgress", true)) (m6 as any)(on, { "language": opt(o, "savvyLanguage", "auto") })
-  if (isOn(o, "filetree", true)) (m7 as any)(on, { "activity": opt(o, "filetreeActivity", "reads and writes"), "glyphs": opt(o, "filetreeGlyphs", "auto"), "follow": opt(o, "filetreeFollow", "on"), "column": opt(o, "filetreeColumn", "date"), "open": opt(o, "filetreeOpen", ""), "openWith": opt(o, "filetreeOpenWith", ""), "language": opt(o, "language", "en"), "codebaseMap": opt(o, "codebaseMap", "") })
-  if (isOn(o, "replayTheater", true)) (m8 as any)(on, {  })
-  if (isOn(o, "nextSteps", false)) (m9 as any)(on, { "language": opt(o, "language", "en") })
-  if (isOn(o, "cacheMeter", true)) (m10 as any)(on, { "ttlMinutes": opt(o, "cacheMeterTtl", "60"), "limits": opt(o, "cacheMeterLimits", "on"), "guard": opt(o, "cacheMeterGuard", "refuse"), "keepWarmHours": opt(o, "cacheMeterKeepWarm", "3"), "autoWarm": opt(o, "cacheMeterAutoWarm", "off"), "autoCompact": opt(o, "cacheMeterAutoCompact", "auto"), "language": opt(o, "language", "en") })
-  if (isOn(o, "subagentSaver", true)) (m11 as any)(on, { "model": opt(o, "subagentSaverModel", "sonnet"), "types": opt(o, "subagentSaverTypes", "Explore"), "language": opt(o, "language", "en") })
-  if (isOn(o, "handoff", true)) (m12 as any)(on, { "auto": opt(o, "handoffAuto", "off"), "language": opt(o, "language", "en"), "ttlMinutes": opt(o, "cacheMeterTtl", "60") })
-  if (isOn(o, "visibleCompact", true)) (m13 as any)(on, { "storage": opt(o, "compactStorage", "temp") })
-  if (isOn(o, "readGuard", true)) (m14 as any)(on, { "limitKb": opt(o, "readLimit", "50"), "mode": opt(o, "readMode", "block"), "shell": opt(o, "readShell", "on"), "language": opt(o, "language", "en") })
-  if (isOn(o, "catchMeUp", false)) (m15 as any)(on, { "language": opt(o, "language", "en") })
-  if (isOn(o, "codebaseMap", false)) (m16 as any)(on, { "claudeMd": opt(o, "codebaseMapClaudeMd", "auto"), "language": opt(o, "language", "en") })
-  if (isOn(o, "pet", false)) (m17 as any)(on, { "bubble": opt(o, "petBubble", "9"), "summary": opt(o, "petSummary", "off"), "language": opt(o, "language", "en"), "signScript": opt(o, "signScript", "") })
-  if (isOn(o, "ccSplitDiffView", false)) (m18 as any)(on, {  })
-  if (isOn(o, "humanInTheLoop", false)) (m19 as any)(on, {  })
-  if (isOn(o, "promptRail", false)) (m20 as any)(on, { "mode": opt(o, "promptRailMode", "horizontal") })
+  if (isOn(o, "screenMask", false)) (m3 as any)(on, { "terms": opt(o, "screenMaskTerms", ""), "emails": opt(o, "screenMaskEmails", "on"), "ips": opt(o, "screenMaskIps", "on"), "language": opt(o, "language", "en") })
+  if (isOn(o, "packageGuard", true)) (m4 as any)(on, { "mode": opt(o, "packageMode", "block"), "language": opt(o, "language", "en") })
+  if (isOn(o, "ciWatch", true)) (m5 as any)(on, { "intervalSec": opt(o, "ciInterval", "20"), "onRed": opt(o, "ciOnRed", "both"), "sound": opt(o, "ciSound", "off"), "notify": opt(o, "ciNotify", "red"), "prOnDesktop": opt(o, "ciPrOnDesktop", "app"), "language": opt(o, "language", "en") })
+  if (isOn(o, "signGuard", false)) (m6 as any)(on, { "mode": opt(o, "signMode", "ask"), "script": opt(o, "signScript", ""), "subject": opt(o, "signSubject", ""), "language": opt(o, "language", "en") })
+  if (isOn(o, "savvyProgress", true)) (m7 as any)(on, { "language": opt(o, "savvyLanguage", "auto") })
+  if (isOn(o, "filetree", true)) (m8 as any)(on, { "activity": opt(o, "filetreeActivity", "reads and writes"), "glyphs": opt(o, "filetreeGlyphs", "auto"), "follow": opt(o, "filetreeFollow", "on"), "column": opt(o, "filetreeColumn", "date"), "open": opt(o, "filetreeOpen", ""), "openWith": opt(o, "filetreeOpenWith", ""), "language": opt(o, "language", "en"), "codebaseMap": opt(o, "codebaseMap", "") })
+  if (isOn(o, "replayTheater", true)) (m9 as any)(on, {  })
+  if (isOn(o, "nextSteps", false)) (m10 as any)(on, { "language": opt(o, "language", "en") })
+  if (isOn(o, "cacheMeter", true)) (m11 as any)(on, { "ttlMinutes": opt(o, "cacheMeterTtl", "60"), "limits": opt(o, "cacheMeterLimits", "on"), "guard": opt(o, "cacheMeterGuard", "refuse"), "keepWarmHours": opt(o, "cacheMeterKeepWarm", "3"), "autoWarm": opt(o, "cacheMeterAutoWarm", "off"), "autoCompact": opt(o, "cacheMeterAutoCompact", "auto"), "language": opt(o, "language", "en") })
+  if (isOn(o, "subagentSaver", true)) (m12 as any)(on, { "model": opt(o, "subagentSaverModel", "sonnet"), "types": opt(o, "subagentSaverTypes", "Explore"), "language": opt(o, "language", "en") })
+  if (isOn(o, "handoff", true)) (m13 as any)(on, { "auto": opt(o, "handoffAuto", "off"), "language": opt(o, "language", "en"), "ttlMinutes": opt(o, "cacheMeterTtl", "60") })
+  if (isOn(o, "visibleCompact", true)) (m14 as any)(on, { "storage": opt(o, "compactStorage", "temp") })
+  if (isOn(o, "readGuard", true)) (m15 as any)(on, { "limitKb": opt(o, "readLimit", "50"), "mode": opt(o, "readMode", "block"), "shell": opt(o, "readShell", "on"), "language": opt(o, "language", "en") })
+  if (isOn(o, "catchMeUp", false)) (m16 as any)(on, { "language": opt(o, "language", "en") })
+  if (isOn(o, "codebaseMap", false)) (m17 as any)(on, { "claudeMd": opt(o, "codebaseMapClaudeMd", "auto"), "language": opt(o, "language", "en") })
+  if (isOn(o, "pet", false)) (m18 as any)(on, { "bubble": opt(o, "petBubble", "9"), "summary": opt(o, "petSummary", "off"), "kind": opt(o, "petKind", "box"), "fur": opt(o, "petFur", "auto"), "perSession": opt(o, "petPerSession", "off"), "ask": opt(o, "petAsk", "on"), "suggest": opt(o, "petSuggest", "on"), "permissions": opt(o, "petPermissions", "show"), "language": opt(o, "language", "en"), "signScript": opt(o, "signScript", "") })
+  if (isOn(o, "ccSplitDiffView", false)) (m19 as any)(on, {  })
+  if (isOn(o, "humanInTheLoop", false)) (m20 as any)(on, {  })
+  if (isOn(o, "promptRail", false)) (m21 as any)(on, { "mode": opt(o, "promptRailMode", "horizontal") })
 }

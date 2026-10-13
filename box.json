@@ -313,6 +313,100 @@
       }
     },
     {
+      "id": "screen-mask",
+      "toggle": "screenMask",
+      "title": "Screen Mask",
+      "title_de": "Bildschirmschutz",
+      "group": "guards",
+      "description": "For screen sharing and recordings: hides API keys, tokens, private keys, e-mail addresses, IP addresses, your login name in paths and any names you list. Only the display changes; Claude still reads the original. Nothing leaves the machine. /mask switches it.",
+      "description_de": "Für Bildschirmfreigabe und Aufnahmen: verdeckt API-Keys, Tokens, private Schlüssel, E-Mail-Adressen, IP-Adressen, deinen Benutzernamen in Pfaden und eigene Begriffe. Nur die Anzeige ändert sich; Claude liest weiter das Original. Nichts verlässt den Rechner. /mask schaltet ihn.",
+      "default": false,
+      "entry": "mods/screen-mask/hooks/register.tsx",
+      "pass": {
+        "language": "language"
+      },
+      "options": [
+        {
+          "key": "screenMaskTerms",
+          "field": "terms",
+          "type": "string",
+          "default": "",
+          "title": "Screen Mask: names and words to hide",
+          "title_de": "Bildschirmschutz: Namen und Wörter verdecken",
+          "description": "Comma separated, e.g. customer names, project code names, a server name. Case does not matter.",
+          "description_de": "Durch Komma getrennt, z. B. Kundennamen, Projekt-Codenamen, ein Servername. Gross/klein egal."
+        },
+        {
+          "key": "screenMaskEmails",
+          "field": "emails",
+          "type": "string",
+          "default": "on",
+          "options": [
+            "on",
+            "off"
+          ],
+          "title": "Screen Mask: hide e-mail addresses",
+          "title_de": "Bildschirmschutz: E-Mail-Adressen verdecken",
+          "description": "Every address becomes [e-mail].",
+          "description_de": "Jede Adresse wird zu [e-mail].",
+          "labels": {
+            "de": {
+              "on": "an",
+              "off": "aus"
+            }
+          }
+        },
+        {
+          "key": "screenMaskIps",
+          "field": "ips",
+          "type": "string",
+          "default": "on",
+          "options": [
+            "on",
+            "off"
+          ],
+          "title": "Screen Mask: hide IP addresses",
+          "title_de": "Bildschirmschutz: IP-Adressen verdecken",
+          "description": "IPv4 addresses except loopback and documentation ranges become [ip].",
+          "description_de": "IPv4-Adressen ausser Loopback und Doku-Bereichen werden zu [ip].",
+          "labels": {
+            "de": {
+              "on": "an",
+              "off": "aus"
+            }
+          }
+        }
+      ],
+      "state": {
+        "from": "screen-mask",
+        "prefix": "sm",
+        "contract": "mods/screen-mask/types/contract.d.ts"
+      },
+      "band": true,
+      "commands": [
+        {
+          "name": "/mask [on|off]",
+          "en": "hide secrets and names on screen",
+          "de": "Geheimnisse und Namen in der Anzeige verdecken"
+        }
+      ],
+      "tokens": "none",
+      "compat": {
+        "surfaces": [
+          "terminal",
+          "desktop",
+          "vscode",
+          "mobile"
+        ],
+        "os": [
+          "windows",
+          "mac",
+          "linux"
+        ],
+        "needs": []
+      }
+    },
+    {
       "id": "package-guard",
       "toggle": "packageGuard",
       "title": "Package Guard",
@@ -923,8 +1017,8 @@
       "title": "Cache Meter",
       "title_de": "Cache-Meter",
       "group": "context",
-      "description": "Band: time left on the warm cache, hit rate, context as weather, plan limits, compact and keep-warm buttons; stops one send to a cold cache and names its cost (Cache Tax runs inside).",
-      "description_de": "Band: Restzeit des warmen Caches, Trefferquote, Kontext als Wetter, Abo-Limits, Knöpfe für Compact und Warmhalten; hält eine Nachricht an einen kalten Cache einmal an und nennt die Kosten (Cache Tax läuft darin).",
+      "description": "Band: time left on the warm cache, hit rate, context as weather with its trend over 12 turns, plan limits, compact and keep-warm buttons; stops one send to a cold cache and names its cost (Cache Tax runs inside).",
+      "description_de": "Band: Restzeit des warmen Caches, Trefferquote, Kontext als Wetter mit Verlauf über 12 Runden, Abo-Limits, Knöpfe für Compact und Warmhalten; hält eine Nachricht an einen kalten Cache einmal an und nennt die Kosten (Cache Tax läuft darin).",
       "default": true,
       "entry": "mods/cache-meter/hooks/register.tsx",
       "pass": {
@@ -1461,7 +1555,7 @@
           "de": "Karte öffnen; mit Argument den Blueprint-Prompt vorbereiten"
         }
       ],
-      "description": "Feature map of the codebase from docs/blueprints: dependency graph with live highlighting of the features Claude edits, a freshness band, a CLAUDE.md pointer for agents and mapper instructions (machine-checked edges, optional Confluence mirror) that load only when you ask for blueprint work.",
+      "description": "Feature map of the codebase from docs/blueprints: dependency graph with live highlighting of the features Claude edits, a freshness band, a CLAUDE.md pointer for agents and mapper instructions (machine-checked edges, optional Confluence mirror) that load only when you ask for blueprint work. In the prompt, @ and a feature name attaches its blueprint, and a mentioned file says which feature it belongs to.",
       "default": false,
       "entry": "mods/codebase-map/hooks/register.tsx",
       "imported": true,
@@ -1496,7 +1590,7 @@
       "title_de": "Codebase-Karte",
       "costs": "Only when you ask for blueprint work: creating a blueprint reads the whole repo once (hundreds of thousands of tokens on a large repo), an update reads only the changed features. While a blueprint exists, the CLAUDE.md pointer adds about 500 tokens per session (switch off with the CLAUDE.md option).",
       "costs_de": "Nur wenn du Blueprint-Arbeit verlangst: Ein neuer Blueprint liest das ganze Repo einmal (bei großen Repos Hunderttausende Tokens), ein Update nur die geänderten Features. Solange ein Blueprint existiert, kostet der CLAUDE.md-Verweis rund 500 Tokens je Session (abschaltbar über die CLAUDE.md-Option).",
-      "description_de": "Feature-Karte der Codebase aus docs/blueprints: Abhängigkeitsgraph mit Live-Hervorhebung der Features, die Claude bearbeitet, ein Aktualitäts-Band, ein CLAUDE.md-Verweis für Agenten und die Mapper-Anleitung (maschinell geprüfte Kanten, optional Confluence-Spiegel), die nur bei Blueprint-Arbeit geladen wird.",
+      "description_de": "Feature-Karte der Codebase aus docs/blueprints: Abhängigkeitsgraph mit Live-Hervorhebung der Features, die Claude bearbeitet, ein Aktualitäts-Band, ein CLAUDE.md-Verweis für Agenten und die Mapper-Anleitung (maschinell geprüfte Kanten, optional Confluence-Spiegel), die nur bei Blueprint-Arbeit geladen wird. Im Prompt hängt @ und ein Feature-Name dessen Blueprint an, und eine erwähnte Datei sagt, zu welchem Feature sie gehört.",
       "pass": {
         "language": "language"
       }
@@ -1507,8 +1601,8 @@
       "title": "Desktop Pet",
       "title_de": "Desktop-Pet",
       "group": "display",
-      "description": "A little cardboard box on the Windows desktop, always on top, that says in a speech bubble what Claude is doing: the file it reads or changes, the command that runs, what a guard held, and a short summary at the end of a turn. Drag it anywhere, right-click for quiet time. Built once with the C# compiler that ships with Windows and signed with the Sign Guard script when one is set. /pet shows it, /pet stop sends it off.",
-      "description_de": "Eine kleine Pappbox auf dem Windows-Desktop, immer im Vordergrund, die in einer Sprechblase sagt, was Claude gerade tut: welche Datei er liest oder ändert, welcher Befehl läuft, was ein Wächter angehalten hat, und am Ende des Turns eine kurze Zusammenfassung. Frei verschiebbar, Rechtsklick für Ruhe. Wird einmal mit dem C#-Compiler von Windows gebaut und mit dem Skript des Signier-Wächters signiert, wenn eines gesetzt ist. /pet zeigt es, /pet stop verabschiedet es.",
+      "description": "A little companion on the Windows desktop, always on top: a cardboard box or one of twelve figures (cat, dog, fox, bunny, hamster, owl, penguin, frog, axolotl, dragon, robot, ghost; cat, dog and bunny in nine coats). It says in a speech bubble what Claude is doing, shows permission requests, and lets you click Claude's questions and Next Steps' suggestions right in the bubble. Drag it anywhere, right-click for quiet time; optionally one pet per session. Built once with the C# compiler that ships with Windows and signed with the Sign Guard script when one is set. /pet shows it, /pet cat calico picks a figure, /pet stop sends it off.",
+      "description_de": "Ein kleiner Begleiter auf dem Windows-Desktop, immer im Vordergrund: eine Pappbox oder eine von zwölf Figuren (Katze, Hund, Fuchs, Hase, Hamster, Eule, Pinguin, Frosch, Axolotl, Drache, Roboter, Geist; Katze, Hund und Hase in neun Fellfarben). Er sagt in einer Sprechblase, was Claude gerade tut, zeigt Genehmigungsanfragen an und lässt dich Claudes Fragen und die Vorschläge von Next Steps direkt in der Blase anklicken. Frei verschiebbar, Rechtsklick für Ruhe; auf Wunsch ein Pet pro Sitzung. Wird einmal mit dem C#-Compiler von Windows gebaut und mit dem Skript des Signier-Wächters signiert, wenn eines gesetzt ist. /pet zeigt es, /pet cat calico wählt eine Figur, /pet stop verabschiedet es.",
       "default": false,
       "entry": "mods/pet/hooks/register.tsx",
       "pass": {
@@ -1550,6 +1644,201 @@
               "off": "aus"
             }
           }
+        },
+        {
+          "key": "petKind",
+          "field": "kind",
+          "type": "string",
+          "default": "box",
+          "options": [
+            "box",
+            "cat",
+            "dog",
+            "fox",
+            "bunny",
+            "hamster",
+            "owl",
+            "penguin",
+            "frog",
+            "axolotl",
+            "dragon",
+            "robot",
+            "ghost",
+            "random"
+          ],
+          "title": "Desktop Pet: figure",
+          "title_de": "Desktop-Pet: Figur",
+          "description": "Who stands on the desktop. random: a different one each session. /pet cat calico switches it too.",
+          "description_de": "Wer auf dem Desktop steht. Zufall: jede Sitzung eine andere. /pet cat calico wechselt auch.",
+          "labels": {
+            "de": {
+              "box": "Karton",
+              "cat": "Katze",
+              "dog": "Hund",
+              "fox": "Fuchs",
+              "bunny": "Hase",
+              "hamster": "Hamster",
+              "owl": "Eule",
+              "penguin": "Pinguin",
+              "frog": "Frosch",
+              "axolotl": "Axolotl",
+              "dragon": "Drache",
+              "robot": "Roboter",
+              "ghost": "Geist",
+              "random": "Zufall (pro Sitzung)"
+            },
+            "en": {
+              "box": "cardboard box",
+              "cat": "cat",
+              "dog": "dog",
+              "fox": "fox",
+              "bunny": "bunny",
+              "hamster": "hamster",
+              "owl": "owl",
+              "penguin": "penguin",
+              "frog": "frog",
+              "axolotl": "axolotl",
+              "dragon": "dragon",
+              "robot": "robot",
+              "ghost": "ghost",
+              "random": "random (per session)"
+            }
+          }
+        },
+        {
+          "key": "petFur",
+          "field": "fur",
+          "type": "string",
+          "default": "auto",
+          "options": [
+            "auto",
+            "ginger",
+            "black",
+            "white",
+            "grey",
+            "brown",
+            "cream",
+            "calico",
+            "siamese",
+            "tuxedo",
+            "random"
+          ],
+          "title": "Desktop Pet: coat (cat, dog, bunny)",
+          "title_de": "Desktop-Pet: Fell (Katze, Hund, Hase)",
+          "description": "The coat colour of cat, dog and bunny.",
+          "description_de": "Die Fellfarbe von Katze, Hund und Hase.",
+          "labels": {
+            "de": {
+              "auto": "passend zur Figur",
+              "ginger": "rot getigert",
+              "black": "schwarz",
+              "white": "weiß",
+              "grey": "grau getigert",
+              "brown": "braun getigert",
+              "cream": "creme",
+              "calico": "glückskatze (dreifarbig)",
+              "siamese": "siam",
+              "tuxedo": "schwarz-weiß (Frack)",
+              "random": "Zufall"
+            },
+            "en": {
+              "auto": "the figure's own",
+              "ginger": "ginger tabby",
+              "black": "black",
+              "white": "white",
+              "grey": "grey tabby",
+              "brown": "brown tabby",
+              "cream": "cream",
+              "calico": "calico",
+              "siamese": "siamese",
+              "tuxedo": "tuxedo",
+              "random": "random"
+            }
+          }
+        },
+        {
+          "key": "petPerSession",
+          "field": "perSession",
+          "type": "string",
+          "default": "off",
+          "options": [
+            "off",
+            "on"
+          ],
+          "title": "Desktop Pet: one pet per session",
+          "title_de": "Desktop-Pet: ein Pet pro Sitzung",
+          "description": "on: every Claude Code session gets its own pet; they stand side by side. off: one pet for all.",
+          "description_de": "an: jede Claude-Code-Sitzung bekommt ihr eigenes Pet; sie stehen nebeneinander. aus: eines für alle.",
+          "labels": {
+            "de": {
+              "on": "an",
+              "off": "aus"
+            }
+          }
+        },
+        {
+          "key": "petAsk",
+          "field": "ask",
+          "type": "string",
+          "default": "on",
+          "options": [
+            "on",
+            "off"
+          ],
+          "title": "Desktop Pet: answer Claude's questions",
+          "title_de": "Desktop-Pet: Claudes Fragen beantworten",
+          "description": "Claude's questions (AskUserQuestion) appear as buttons in the bubble too; the first answer counts, the pet's or the dialog's.",
+          "description_de": "Claudes Fragen (AskUserQuestion) erscheinen auch als Knöpfe in der Blase; die erste Antwort zählt, die vom Pet oder die im Dialog.",
+          "labels": {
+            "de": {
+              "on": "an",
+              "off": "aus"
+            }
+          }
+        },
+        {
+          "key": "petSuggest",
+          "field": "suggest",
+          "type": "string",
+          "default": "on",
+          "options": [
+            "on",
+            "off"
+          ],
+          "title": "Desktop Pet: next-step suggestions",
+          "title_de": "Desktop-Pet: Vorschläge für den nächsten Schritt",
+          "description": "With Next Steps on, its suggestions appear as buttons in the bubble; a click sends one as your next prompt.",
+          "description_de": "Ist Next Steps an, erscheinen seine Vorschläge als Knöpfe in der Blase; ein Klick schickt einen als nächsten Prompt.",
+          "labels": {
+            "de": {
+              "on": "an",
+              "off": "aus"
+            }
+          }
+        },
+        {
+          "key": "petPermissions",
+          "field": "permissions",
+          "type": "string",
+          "default": "show",
+          "options": [
+            "show",
+            "answer"
+          ],
+          "title": "Desktop Pet: permission requests",
+          "title_de": "Desktop-Pet: Genehmigungsanfragen",
+          "description": "show: the pet only says that Claude Code is waiting for your approval. answer: the bubble also offers \"allow once\" and \"deny\" for 90 seconds (never \"always\"; no rule is added). Mind that the pet stays on top: a click there approves.",
+          "description_de": "anzeigen: Das Pet sagt nur, dass Claude Code auf deine Genehmigung wartet. beantworten: Die Blase bietet 90 Sekunden lang auch \"Einmal erlauben\" und \"Ablehnen\" (nie \"immer\"; es wird keine Regel angelegt). Bedenke, dass das Pet immer im Vordergrund steht: Ein Klick dort genehmigt.",
+          "labels": {
+            "de": {
+              "show": "anzeigen",
+              "answer": "beantworten"
+            },
+            "en": {
+              "show": "show",
+              "answer": "answer"
+            }
+          }
         }
       ],
       "commands": [
@@ -1557,6 +1846,11 @@
           "name": "/pet",
           "en": "show the desktop pet",
           "de": "das Desktop-Pet zeigen"
+        },
+        {
+          "name": "/pet <figure> [coat]",
+          "en": "pick a figure, e.g. /pet cat calico",
+          "de": "Figur wählen, z. B. /pet cat calico"
         },
         {
           "name": "/pet stop",

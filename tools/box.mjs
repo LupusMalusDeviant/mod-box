@@ -295,6 +295,14 @@ function build() {
     set: toggles.map(m => [m.toggle, ruleSays(p.rule ?? p.set, m)]),
   }))
   const field = o => ({ key: o.key, type: o.type ?? (typeof o.default === 'boolean' ? 'boolean' : 'string'), multiple: o.multiple === true, title: both(o, 'title'), description: both(o, 'description'), labels: o.labels ?? {}, options: Array.isArray(o.options) ? o.options.map(String) : null, default: o.default ?? '' })
+  // The code of a mod: its folder (scripts too) and extra folders, without tests and type files.
+  const codeOf = m =>
+    [path.join(ROOT, 'mods', m.id)]
+      .concat((m.extraDirs ?? []).map(d => path.join(ROOT, d)))
+      .flatMap(dir => (fs.existsSync(dir) ? walk(dir) : []))
+      .filter(f => CODE_EXT.test(f) && !f.endsWith('.d.ts') && !/\.test\.[jt]sx?$/.test(f))
+      .map(f => fs.readFileSync(f, 'utf8'))
+      .join('\n')
   const katalog = toggles.map(m => ({
     id: m.id,
     toggle: m.toggle,
@@ -312,6 +320,7 @@ function build() {
     tokens: m.tokens ?? (m.costs ? 'always' : 'none'),
     needs: m.needs ?? [],
     compat: { surfaces: m.compat?.surfaces ?? ['terminal', 'desktop', 'vscode', 'mobile'], os: m.compat?.os ?? ['windows', 'mac', 'linux'], needs: m.compat?.needs ?? [] },
+    reach: reachOf(codeOf(m)),
   }))
   const groups = { imported: { en: 'Imported', de: 'Übernommen' }, ...(box.groups ?? {}) }
   write(
@@ -319,7 +328,9 @@ function build() {
     GENERATED +
       `export type Text = { en: string; de: string }\n` +
       `export type CatalogField = { key: string; title: Text; description: Text; labels: Record<string, Record<string, string>>; options: string[] | null; type: string; multiple: boolean; default: string | boolean | number | string[] }\n` +
-      `export type CatalogMod = { id: string; toggle: string; default: boolean; band: boolean; title: Text; description: Text; group: string; costs: Text | null; params: CatalogField[]; imported: boolean; upstream: string; source: string | null; commands: Array<{ name: string; text: Text }>; tokens: 'none' | 'optional' | 'always'; needs: string[]; compat: { surfaces: string[]; os: string[]; needs: string[] } }\n` +
+      `export type CatalogMod = { id: string; toggle: string; default: boolean; band: boolean; title: Text; description: Text; group: string; costs: Text | null; params: CatalogField[]; imported: boolean; upstream: string; source: string | null; commands: Array<{ name: string; text: Text }>; tokens: 'none' | 'optional' | 'always'; needs: string[]; compat: { surfaces: string[]; os: string[]; needs: string[] }; reach: Reach }\n` +
+      `/** What a mod may do, read from its source at build time (tools/box.mjs reachOf). */\n` +
+      `export type Reach = { reads: boolean; writes: boolean; runs: boolean; programs: string[]; network: boolean; model: boolean; settings: boolean }\n` +
       `export type CatalogProfile = { id: string; label: Text; set: Array<[string, boolean]> }\n\n` +
       `export const PLUGIN = ${JSON.stringify(box.plugin)}\n` +
       `export const SETTINGS: CatalogField[] = ${JSON.stringify((box.settings ?? []).map(field), null, 2)}\n` +
@@ -662,6 +673,27 @@ export function analyze(code) {
     : 'imported'
   const commands = [...new Set([...code.matchAll(/command\.register\(\s*\{[^}]*?name:\s*['"`]([\w-]+)/g)].map(x => '/' + x[1]))]
   return { group, tokens, commands, compat: { surfaces, os, needs } }
+}
+
+/**
+ * What a mod may do, read from its source: the $ calls it makes. reads = files or the transcript,
+ * writes = files, the transcript or the prompt, runs = programs (the literal ones by name),
+ * network = $.http, fetch or a program that talks to the net, model = calls that cost tokens,
+ * settings = config.set. A first look, not a sandbox: the window shows it so nobody is surprised.
+ */
+export function reachOf(code) {
+  const has = re => re.test(code)
+  const programs = [...new Set([...code.matchAll(/\b(?:(?:process\.(?:run|spawn)|run|spawn)\(|argv:)\s*\[\s*['"]([\w.-]+)['"]/g)].map(x => x[1].toLowerCase().replace(/\.exe$/, '')))].sort()
+  const NET = ['gh', 'curl', 'wget', 'npm', 'npx', 'pnpm', 'yarn', 'pip', 'ollama']
+  return {
+    reads: has(/\$\.fs\.(read|stat|list|exists|glob)\b|\$\.session\.messages\b|\$\.prompt\.read\b/),
+    writes: has(/\$\.fs\.(write|delete|remove|mkdir|rename|append)\b|\$\.session\.(append|compact)\b|\$\.prompt\.(fill|submit)\b/),
+    runs: programs.length > 0 || has(/\$\.process\.(run|spawn)\b/),
+    programs,
+    network: has(/\$\.http\.\w+|\bfetch\(/) || programs.some(p => NET.includes(p)),
+    model: has(/\$\.model\.\w+/),
+    settings: has(/\$\.config\.set\b/),
+  }
 }
 
 /** analyze <id|dir>: the guess for a mod in the box or any folder, next to what box.json says. */

@@ -1,4 +1,4 @@
-// Modified for mod-box (https://github.com/LupusMalusDeviant/mod-box): state keys under mod-box with prefix cm2, {} matchers, $.plugin.root paths into mods/codebase-map/; no redraw for unchanged state, the graph fits the pane (against flicker).
+// Modified for mod-box (https://github.com/LupusMalusDeviant/mod-box): state keys under mod-box with prefix cm2, {} matchers, $.plugin.root paths into mods/codebase-map/; no redraw for unchanged state, the graph fits the pane (against flicker); @feature in the prompt (mention.ts).
 // Original: https://github.com/LupusMalusDeviant/codebase-map (version 0.4.1).
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
@@ -16,6 +16,7 @@ import {
 } from './blueprint'
 import { withBlock, withoutBlock } from './claudemd'
 import { MAPPER_TRIGGER, TEXT, langOf, mapperHint } from './i18n'
+import { featureSuggestions, mentionHint } from './mention'
 import type { Lang } from './i18n'
 import { renderSvg } from './svg'
 
@@ -179,6 +180,24 @@ export const register: Register = (on, options) => {
     // Template-Form, damit der Mod-Box-Import den Pfad auf mods/codebase-map/ umschreiben kann.
     const dir = `${$.plugin.root}/mods/codebase-map/mapper`.replace(/\\/g, '/').replace(/\/{2,}/g, '/')
     return next({ ...e, context: [...(e.context ?? []), mapperHint(dir)] })
+  })
+
+  // Mod Box: "@" and part of a feature name offers its blueprint, which the engine then attaches.
+  on('prompt.autocomplete', { token: /^@/ }, async ($, e, next) => {
+    const r = await next(e)
+    const map = await read($, mapData)
+    const mine = map === null ? [] : featureSuggestions(map, e.token, lang)
+    return mine.length ? { suggestions: [...r.suggestions, ...mine] } : r
+  })
+
+  // Mod Box: a mentioned code file brings one line on its feature and where the blueprint is.
+  on('prompt.mention', {}, async ($, e, next) => {
+    const r = await next(e)
+    if (r.deny !== undefined || r.type === null) return r
+    const map = await read($, mapData)
+    const rel = map === null ? null : relativeTo(await $.session.root(), e.path)
+    const hint = map === null || rel === null ? null : mentionHint(map, rel, lang)
+    return hint === null ? r : { ...r, context: [...(r.context ?? []), hint] }
   })
 
   // Live: welches Feature Claude (oder ein Subagent) gerade bearbeitet.

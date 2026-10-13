@@ -1,5 +1,7 @@
 import { describe, expect, mock, test } from 'claude-code/testing'
 
+import { featureSuggestions, mentionHint } from '../mods/codebase-map/hooks/mention'
+
 const boot = async ($: any, on: any, seen: any[] = [], files: Record<string, string> = {}) => {
   mock.clock(on); mock.store(on)
   on('session.id', () => ({ value: 's' }))
@@ -83,5 +85,48 @@ describe('Codebase Map', () => {
     await $.tool.call({ tool: 'Bash', command: 'ls' })
     await $.turn.complete({ turnId: 't2', answer: 'ok', durationMs: 1, isAborted: false, reason: 'answer' })
     expect(writes.cm2_map).toBeGreaterThan(first.version)
+  })
+})
+
+describe('Codebase Map: features in the prompt', () => {
+  const MAP = {
+    confluence: { isOptedIn: false, pageId: null },
+    features: [
+      { slug: 'auth', name: 'Auth', summary: 'login and sessions', files: ['src/auth/login.ts'], deps: ['storage'], globs: [] },
+      { slug: 'storage', name: 'Storage', summary: 'files on disk', files: ['src/store/'], deps: [], globs: [] },
+    ],
+  }
+
+  test('@ and part of a name offers the blueprint; a path is left to the engine', () => {
+    const rows = featureSuggestions(MAP, '@au', 'en')
+    expect(rows.map(r => r.label)).toEqual(['@Auth'])
+    expect(rows[0]!.text).toBe('@docs/blueprints/auth.md')
+    expect(rows[0]!.description).toContain('login and sessions')
+    expect(featureSuggestions(MAP, '@', 'en').length).toBe(2)
+    expect(featureSuggestions(MAP, '@src/au', 'en')).toEqual([])
+    expect(featureSuggestions(MAP, 'au', 'en')).toEqual([])
+  })
+
+  test('a mentioned code file names its feature and blueprint; a blueprint itself does not', () => {
+    expect(mentionHint(MAP, 'src/auth/login.ts', 'en')).toMatch(/belongs to the feature "Auth": login and sessions\. Depends on: storage\. Blueprint: docs\/blueprints\/auth\.md/)
+    expect(mentionHint(MAP, 'src/store/disk.ts', 'de')).toMatch(/gehört zum Feature „Storage“/)
+    expect(mentionHint(MAP, 'docs/blueprints/auth.md', 'en')).toBe(null)
+    expect(mentionHint(MAP, 'README.md', 'en')).toBe(null)
+  })
+
+  test('inside the box: typeahead rows and the mention line', { options: { codebaseMap: true, cacheMeter: false, filetree: false } }, async ($: any, on: any) => {
+    const files: Record<string, string> = {
+      '/w/docs/blueprints/INDEX.md': '# Codebase blueprint\n\n| Feature | What | File |\n|---|---|---|\n| Alpha | first | [alpha.md](./alpha.md) |\n',
+      '/w/docs/blueprints/alpha.md': '# Alpha\n\nThe first feature.\n\n## Files\n\n- `src/alpha/main.ts`\n',
+    }
+    on('prompt.autocomplete', () => ({ suggestions: [{ text: '@src/' }] }))
+    on('prompt.mention', () => ({ type: 'file' }))
+    on('tool.register', () => ({ value: {} }))
+    await boot($, on, [], files)
+    const typed = await $.prompt.autocomplete({ text: '@alp', cursor: 4, token: '@alp', start: 0 })
+    expect(typed.suggestions.map((r: any) => r.text)).toEqual(['@src/', '@docs/blueprints/alpha.md'])
+    const read = await $.prompt.mention({ mention: 'src/alpha/main.ts', path: '/w/src/alpha/main.ts' })
+    expect(read.type).toBe('file')
+    expect(read.context?.at(-1)).toMatch(/feature "Alpha"/)
   })
 })

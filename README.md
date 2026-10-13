@@ -14,7 +14,7 @@ Claude Code mods are small hook modules that change how Claude Code behaves and 
 **Highlights**
 
 - **One window** (`/mod-box`): every mod as a card with a switch, its options, commands and token cost; profiles; sources; health.
-- **Guards**: Blast Radius holds destructive shell commands, Secret Guard stops keys and `.env` files before they reach a file or commit, Package Guard holds installs of made-up, brand-new or typosquatted packages, CI Watch follows every push and pull request to the end.
+- **Guards**: Blast Radius holds destructive shell commands, Secret Guard stops keys and `.env` files before they reach a file or commit, Screen Mask hides them (and e-mails, IPs, names) on screen while you share it, Package Guard holds installs of made-up, brand-new or typosquatted packages, CI Watch follows every push and pull request to the end.
 - **Saves money and limits**: Cache Meter shows the warm cache and plan limits and stops a send to a cold cache with its price; Subagent Saver runs search subagents on Sonnet instead of your main model; auto-compact can kick in earlier.
 - **Grows with you**: import mods from any git repo or marketplace, or ask Claude to add one with the bundled `mod-box-add` skill. Profiles are rules, so new mods land in the right ones; foreign code stays off until you trust it.
 - **Knows where it runs**: each mod declares surfaces, systems and tools it needs; the window warns when one would not work here.
@@ -95,23 +95,24 @@ The same window runs in terminal Claude Code, as a side pane next to the convers
 | `blastRadius` | Blast Radius | on | Holds risky shell commands (`rm -rf`, `git reset --hard`, `git clean`, force push, migrations) and shows what they would hit. | no |
 | `packageGuard` | Package Guard | on | Before an install or `npx`/`uvx` run (npm, pnpm, yarn, bun, pip, uv, poetry, pipx, cargo) asks the public registry; holds the command when the package does not exist, is under 14 days old, was removed as malware, or looks like a well-known package and is young or thin. Mode *block* or *warn*; allow in the band or with `/pkg-allow`. Sends only the package name to the registry. | no |
 | `secretGuard` | Secret Guard | on | Stops before an API key, token, private key or non-ignored `.env` file gets into a file, `git add` or a commit. Mode *block* or *warn*; exceptions via `/secret-allow`. | no |
+| `screenMask` | Screen Mask | off | For screen sharing and recordings: hides API keys, tokens, e-mail and IP addresses, your login name in paths and names you list, in the display only. Claude still reads the original; nothing leaves the machine. `/mask` switches it; the band shows when it is on. | no |
 | `ciWatch` | CI Watch | on | Follows the GitHub Actions runs after each `git push` (via `gh`) to the end. For an open pull request it watches every check and says whether the PR is ready to merge. When a run turns red, it shows the failed step's log and/or puts an analysis request into the prompt; it can also play a sound. `/ci` shows the state. A system notification when a run ends (default: red only), since Claude Code notifies only at the end of a turn. In the desktop app, a new PR's checks are left to the app's own CI bar. | no |
 | `signGuard` | Sign Guard | off | Spots Windows builds and signs the new `.exe`, `.msi` and `.msix` files with your own script (`<script> -Exe <file>`). Mode *ask* or *auto*. | no |
 | `savvyProgress` | Savvy Progress | on | Progress bar and agents panel (`/agents-info`). | no |
 | `filetree` | Filetree | on | File tree side pane (`/filetree`) that lights up as Claude reads and writes. Right-click a file or folder (or press `o`) for **Open with**: the default app, the editors, IDEs and browsers found on this machine (by file type), preview, show in folder, copy path; Shift+right-click copies the path. With the Codebase Map on, a **Features** tab lists its features (live marks, uses / used by, files that jump to the tree) and the blueprint actions. | no |
 | `replayTheater` | Replay Theater | on | Steps through the last turn's edits (`/replay`). | no |
 | `nextSteps` | Next Steps | off | Suggests 2–3 next prompts. Claude Code has one built-in suggestion (Tab); this offers two or three. | a Haiku call per answer |
-| `cacheMeter` | Cache Meter (with Cache Tax) | on | Shows the time left on the warm cache, the hit rate, the context as weather and the plan limits, with compact and keep-warm buttons. It also stops a send to a cold cache once and names its cost, and the cost of compacting first instead. **Auto-compact at** sets Claude Code's `autoCompactWindow`: on 1M-context models Claude otherwise compacts only at about 967k tokens. | only keep-warm requests, when on |
+| `cacheMeter` | Cache Meter (with Cache Tax) | on | Shows the time left on the warm cache, the hit rate, the context as weather with its trend over the last 12 turns (growth per turn, turns until full) and the plan limits, with compact and keep-warm buttons. It also stops a send to a cold cache once and names its cost, and the cost of compacting first instead. **Auto-compact at** sets Claude Code's `autoCompactWindow`: on 1M-context models Claude otherwise compacts only at about 967k tokens. | only keep-warm requests, when on |
 | `readGuard` | Read Guard | on | Holds a whole-file `Read` (no offset/limit) above the limit (default 50 KB), of a lockfile, minified code or a source map, and the same via `cat`, `type` or `Get-Content`; tells Claude the size, a token estimate and a better way (Grep, offset/limit). A second try at the same file goes through, and so does a `Read` with `allow_large` (Claude Code 2.1.296+). Claude Code itself stops a Read only at about 25,000 tokens. | no |
 | `subagentSaver` | Subagent Saver | on | Search subagents (Explore) that got no model of their own run on Sonnet (or Haiku) instead of inheriting the main model. An explicit model, forks, teammates and plugin agents stay untouched; the band shows how many were routed. | no |
 | `handoff` | Handoff Note | on | `/handoff` writes `.claude/handoff.local.md`, and a new session offers to continue from it. | one request over the warm cache |
-| `pet` | Desktop Pet | off | Windows only: a little cardboard box on the desktop, always on top, that says in a speech bubble what Claude is doing (file read or changed, command running, what a guard held) and sums up each turn. Drag it anywhere; right-click for quiet time. Built once with the C# compiler that ships with Windows into `%LOCALAPPDATA%\mod-box\pet`, signed with the Sign Guard script when one is set. | only with summary *haiku* |
+| `pet` | Desktop Pet | off | Windows only: a little companion on the desktop, always on top, that says in a speech bubble what Claude is doing (file read or changed, command running, what a guard held) and sums up each turn. A cardboard box or one of twelve figures (cat, dog, fox, bunny, hamster, owl, penguin, frog, axolotl, dragon, robot, ghost), cat, dog and bunny in nine coats, or a random one per session. Claude's questions and Next Steps' suggestions show as buttons in the bubble: a click answers or sends them, and whichever answers first, the pet or Claude Code's dialog, counts. Permission requests are shown; with *permission requests: answer* the bubble also offers **Allow once** and **Deny** for 90 seconds (never "always", no rule is added), otherwise approving stays in Claude Code's dialog. Optionally one pet per session, side by side. Drag it anywhere; right-click for quiet time. Built once with the C# compiler that ships with Windows into `%LOCALAPPDATA%\mod-box\pet`, signed with the Sign Guard script when one is set. | only with summary *haiku* |
 | `ccSplitDiffView` | Split Diff | off | Draws the result of Edit and Write as a side-by-side diff with line numbers; only the drawing changes. | no |
 | `humanInTheLoop` | Human in the Loop | off | Claude hands you tasks only a person can do (a secret to put in place, an account it cannot reach, a decision); they stay in the band and in `/my-tasks` until you answer or mark them done. | no |
 | `promptRail` | Prompt Rail | off | A rail of this session's prompts above the input (terminal) or beside the transcript; hover to read one, click to jump to it (`/prompt-rail`). | no |
 | `visibleCompact` | Visible Compact | on | Before/after view of `/compact` (`/show-last-compact`). | no |
 | `catchMeUp` | Catch Me Up | off | Live summary of the session (`/catch-me-up`), kept up after turns with tools. Claude Code's built-in recap (`/recap`) is one short note when you come back; this pane stays open. | Haiku calls after turns |
-| `codebaseMap` | Codebase Map | off | Feature map from `docs/blueprints` with live highlighting of the features Claude edits, a freshness band and a `CLAUDE.md` pointer; mapper instructions with machine-checked edges load only when you ask for blueprint work (`/codebase-map`). | only blueprint runs you ask for; about 500 tokens per session for the `CLAUDE.md` pointer |
+| `codebaseMap` | Codebase Map | off | Feature map from `docs/blueprints` with live highlighting of the features Claude edits, a freshness band and a `CLAUDE.md` pointer; mapper instructions with machine-checked edges load only when you ask for blueprint work (`/codebase-map`). In the prompt, `@` and part of a feature name offers its blueprint to attach, and an `@file` gets one line on the feature it belongs to. | only blueprint runs you ask for; about 500 tokens per session for the `CLAUDE.md` pointer |
 
 <p align="center"><img src="docs/images/cache-meter.png" alt="Cache Meter opened: commands, token cost and options" width="500"></p>
 
@@ -122,6 +123,7 @@ The same window runs in terminal Claude Code, as a side pane next to the convers
 | `/mod-box [profiles|sources|diag]` | Mod Box | opens the window, optionally on a tab |
 | `/pkg-allow [name]` | Package Guard | allows a held package for this session |
 | `/secret-allow` | Secret Guard | the exception list: last finds, project and global entries |
+| `/mask [on\|off]` | Screen Mask | hide secrets and names on screen, or show them again |
 | `/ci` · `/ci pr <nr|url>` · `/ci stop` | CI Watch | state of the watched runs · watch a pull request · stop watching |
 | `/agents-info` | Savvy Progress | agents panel |
 | `/filetree` | Filetree | opens the file tree |
@@ -130,10 +132,13 @@ The same window runs in terminal Claude Code, as a side pane next to the convers
 | `/replay` | Replay Theater | steps through the last turn's edits |
 | `/keepwarm <6h|90m|always|off|status>` · `/cache-tax` | Cache Meter | keeps the cache warm · cache costs of this session |
 | `/pet [stop]` | Desktop Pet | shows the pet, or sends it off |
+| `/pet <figure> [coat]` | Desktop Pet | picks a figure, e.g. `/pet cat calico`, `/pet random` |
 | `/handoff` | Handoff Note | writes the handoff note |
 | `/show-last-compact` | Visible Compact | before/after of the last `/compact` |
 | `/catch-me-up` | Catch Me Up | live summary pane |
 | `/codebase-map [create\|update [feature]\|check\|publish [feature]]` | Codebase Map | opens the feature map; with an argument, prepares the blueprint prompt (for one feature, if named) |
+
+<p align="center"><img src="docs/images/pets.png" alt="The desktop pet's figures in every state: hello, working, done, asking, error; the cat, dog and bunny in their coats" width="760"><br><img src="docs/images/pet-question.png" alt="The cat asks Claude's question with three buttons in its bubble" width="340"></p>
 
 The window lists them too: next to each mod's name, and in full under ⚙.
 
@@ -156,6 +161,8 @@ Each mod in `box.json` carries attributes: `group` (guards, display, context, wa
 The window remembers the profile you applied last (*Default* until you apply one). At the next session start it gives every mod that is new since then the switch that profile wants, and marks it **new**. If you have changed switches by hand since, the header says *(changed)*; new mods still follow the profile.
 
 **Foreign code waits for trust.** A mod imported from another repo starts switched off, and profiles leave it off until you trust it: **Trust** under its ⚙, or switch it on by hand once. Imported mods show 🔒 until then, 📦 after.
+
+**What a mod may do.** The build reads each mod's source for the calls it makes, and the window shows the result next to its name: 👁 reads files or the transcript, ✎ writes files, the transcript or the prompt, ▶ runs programs, 🌐 goes online, 🔧 changes settings. Under ⚙ the same in words, with the programs by name. It is a reading of the code, not a sandbox, but it means a new mod cannot surprise you with what it touches.
 
 ## Where a mod runs
 
@@ -251,7 +258,7 @@ These mods come from other repositories and **were modified for the Mod Box**. E
 | Replay Theater | [anthropics/claude-code-playground](https://github.com/anthropics/claude-code-playground/tree/main/claude-code/mods/replay-theater) | Anthropic PBC | Apache-2.0 | state, matchers and paths rewritten |
 | Cache Tax | [karanb192/cache-tax](https://github.com/karanb192/cache-tax) | Karan Bansal | MIT | embedded into Cache Meter (guard and auto-warm options, exported helpers, token usage) |
 | Catch Me Up | [oliverow/catch-me-up](https://github.com/oliverow/catch-me-up) | Oliver Wang | MIT | language option, token usage, state rewritten |
-| Codebase Map | [LupusMalusDeviant/codebase-map](https://github.com/LupusMalusDeviant/codebase-map) | Lupus Malus Deviant | MIT | state, matchers and paths rewritten |
+| Codebase Map | [LupusMalusDeviant/codebase-map](https://github.com/LupusMalusDeviant/codebase-map) | Lupus Malus Deviant | MIT | state, matchers and paths rewritten; `@feature` in the prompt added |
 | Filetree | [data-goblin/claude-code-filetree](https://github.com/data-goblin/claude-code-filetree) | Kurt Buhler | MIT | state, matchers and paths rewritten; Features tab for the Codebase Map added |
 | Next Steps | [hamzafer/claude-code-mods](https://github.com/hamzafer/claude-code-mods/tree/main/mods/next-steps) | Hamza Zafar | MIT | language option, token usage, state rewritten |
 | Savvy Progress | [JohnnyVizz/claude-kit](https://github.com/JohnnyVizz/claude-kit/tree/main/plugins/savvy-progress) | johnnyvizz | MIT | a type fix; state and tool names rewritten |
@@ -260,7 +267,7 @@ These mods come from other repositories and **were modified for the Mod Box**. E
 | Human in the Loop | [tzafrir/human-in-the-loop](https://github.com/tzafrir/human-in-the-loop) | Tzafrir Rehan | MIT | state, store key and tool names rewritten; its own prompts known by the box's plugin name |
 | Prompt Rail | [oikon48/prompt-rail](https://github.com/oikon48/prompt-rail) | oikon48 | MIT | state and store keys rewritten; presses and focus told apart from other mods by element key; mode setting under the box |
 
-Heads-up was retired in favour of "You Should Know", which ships with Claude Code; the window switches it under **Built into Claude Code**. **Cache Meter, Subagent Saver, Read Guard, Secret Guard, Package Guard, Desktop Pet, CI Watch, Sign Guard, Handoff Note**, the window and the tools were written for this box.
+Heads-up was retired in favour of "You Should Know", which ships with Claude Code; the window switches it under **Built into Claude Code**. **Cache Meter, Subagent Saver, Read Guard, Secret Guard, Screen Mask, Package Guard, Desktop Pet, CI Watch, Sign Guard, Handoff Note**, the window and the tools were written for this box. The context trend in the Cache Meter takes its idea from token-weather in [anthropics/claude-code-playground](https://github.com/anthropics/claude-code-playground); the code is the box's own.
 
 ## License
 

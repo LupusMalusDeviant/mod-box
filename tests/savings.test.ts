@@ -1,7 +1,18 @@
 import { describe, expect, test } from 'claude-code/testing'
 
-import { autoCompactTokens } from '../mods/cache-meter/hooks/register'
+import { autoCompactTokens, sparkline, trendText } from '../mods/cache-meter/hooks/register'
 import { compactHint } from '../mods/cache-tax/hooks/register'
+
+describe('Context trend', () => {
+  test('one bar per turn on a fixed scale; growth and turns left', () => {
+    expect(sparkline([0, 12.5, 50, 99, 100])).toBe('▁▂▅██')
+    expect(trendText([10, 20])).toBe('')
+    expect(trendText([10, 20, 30])).toBe('· +10.0%/turn, full in ~7')
+    expect(trendText([30, 30.2, 30.4])).toBe('· steady')
+    // a compact (drop) does not count as growth
+    expect(trendText([60, 70, 20, 30])).toBe('· +10.0%/turn, full in ~7')
+  })
+})
 
 describe('Compaction', () => {
   test('the cold-send guard offers compacting first, with numbers', () => {

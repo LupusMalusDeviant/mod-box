@@ -28,6 +28,11 @@ export const HOOKS: Record<string, string[]> = {
     "tool.call",
     "ui.render"
   ],
+  "screenMask": [
+    "command.run",
+    "session.start",
+    "ui.render"
+  ],
   "packageGuard": [
     "command.run",
     "session.start",
@@ -125,6 +130,8 @@ export const HOOKS: Record<string, string[]> = {
   ],
   "codebaseMap": [
     "command.run",
+    "prompt.autocomplete",
+    "prompt.mention",
     "prompt.submit",
     "session.start",
     "tool.call",
@@ -132,6 +139,7 @@ export const HOOKS: Record<string, string[]> = {
     "ui.render"
   ],
   "pet": [
+    "classic.PermissionRequest",
     "command.run",
     "session.end",
     "session.start",

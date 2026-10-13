@@ -1,18 +1,28 @@
 // Desktop Pet: a small always-on-top companion on the Windows desktop (a cardboard box with a
-// face) that says in a speech bubble what Claude is doing: which file it reads or changes, which
+// face, or one of a dozen animals and friends) that says in a speech bubble what Claude is doing: which file it reads or changes, which
 // command runs, when a guard holds something, and a short summary when the turn is done. It works
 // from the events alone, no tokens; with option summary "haiku" the end of a turn is put in one
 // sentence by Haiku. The pet is its own little program (overlay/Pet.cs), compiled once with the
 // C# compiler that ships with Windows and signed with the Sign Guard script, when one is set.
-// The mod only writes a status file; the pet reads it.
-import { update } from 'claude-code'
+// The mod writes a status file the pet reads. When Claude asks a question (AskUserQuestion) or
+// Next Steps has suggestions, the bubble shows them as buttons; a click lands in
+// <status file>.answer, which this mod picks up: the question is answered (whichever comes first,
+// the pet or the dialog in Claude Code) or the suggestion is sent. A permission request is shown;
+// with option permissions "answer" the bubble also offers "allow once" and "deny" for a while.
+import { read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
 import { addUsage, USAGE_STORE } from '../../settings/hooks/usage'
 import type { UsageBook } from '../../settings/hooks/usage'
 
 export type PetKind = 'hello' | 'work' | 'done' | 'ask' | 'error' | 'bye'
-export type PetNote = { kind: PetKind; title: string; text: string }
+/** One message for the bubble; with `ask` and `choices`, buttons whose click answers `ask`. */
+export type PetNote = { kind: PetKind; title: string; text: string; ask?: string; choices?: string[] }
+/** Which figure stands on the desktop and, for cat, dog and bunny, its coat. */
+export type PetLook = { pet: string; fur: string }
+
+export const PETS = ['box', 'cat', 'dog', 'fox', 'bunny', 'hamster', 'owl', 'penguin', 'frog', 'axolotl', 'dragon', 'robot', 'ghost']
+export const FURS = ['auto', 'ginger', 'black', 'white', 'grey', 'brown', 'cream', 'calico', 'siamese', 'tuxedo']
 
 let lang: 'de' | 'en' = 'en'
 const t = (de: string, en: string) => (lang === 'en' ? en : de)
@@ -24,6 +34,23 @@ let statusPath = ''
 let project = ''
 let started = 0
 let steps = 0
+let look: PetLook = { pet: 'box', fur: 'auto' }
+let petChoice = 'box'
+let perSession = false
+let askViaPet = true
+let suggestViaPet = true
+let permissions: 'show' | 'answer' = 'show'
+// Picks the pet may answer, by id; the answer file's last time read.
+const pending = new Map<string, (choice: string) => void>()
+let answerAt = 0
+// Next Steps: after a turn the suggestions arrive a few seconds later; watched until then.
+let watchStepsUntil = 0
+let stepsShownFor = ''
+let lastDone: PetNote | null = null
+const NEXT_STEPS = { plugin: 'mod-box', key: 'ns_steps' } as const
+const POLL_MS = 600
+// How long a permission request waits for a click in the pet (option permissions "answer").
+const PERMIT_WAIT_S = 90
 const changed = new Set<string>()
 
 const MODEL = 'haiku'
@@ -98,17 +125,76 @@ export function gist(answer: string, max = 170): string {
 }
 
 /** The status file the pet reads: key=value lines, newlines in the text escaped. */
-export function statusText(note: PetNote, at: number): string {
+export function statusText(note: PetNote, at: number, figure?: PetLook): string {
   const esc = (s: string) => s.replace(/\r?\n/g, '\\n')
-  return [`at=${at}`, `kind=${note.kind}`, `title=${esc(note.title)}`, `text=${esc(note.text)}`, ''].join('\n')
+  const lines = [`at=${at}`, `kind=${note.kind}`, `title=${esc(note.title)}`, `text=${esc(note.text)}`]
+  if (figure) lines.push(`pet=${figure.pet}`, `fur=${figure.fur}`)
+  if (note.ask && note.choices?.length) lines.push(`ask=${note.ask}`, ...note.choices.map(c => `choice=${esc(c)}`))
+  return [...lines, ''].join('\n')
+}
+
+/** What the pet wrote after a click: the id it answers and the choice. Pure, for the tests. */
+export function parseAnswer(text: string): { id: string; choice: string } | null {
+  const get = (k: string) => new RegExp(`^${k}=(.*)$`, 'm').exec(text)?.[1]?.trim() ?? ''
+  const id = get('id')
+  const choice = get('choice').replace(/\\n/g, '\n')
+  return id && choice ? { id, choice } : null
+}
+
+/** The figure for a session: the one chosen, or any one for "random" (kept for the session). */
+export function pickLook(pet: string, fur: string, roll = Math.random): PetLook {
+  const figure = pet === 'random' ? PETS[1 + Math.floor(roll() * (PETS.length - 1))]! : PETS.includes(pet) ? pet : 'box'
+  const coat = fur === 'random' ? FURS[1 + Math.floor(roll() * (FURS.length - 1))]! : FURS.includes(fur) ? fur : 'auto'
+  return { pet: figure, fur: coat }
+}
+
+const waitPick = (id: string) => new Promise<string>(resolve => pending.set(id, resolve))
+
+// Reads the pet's answer file while something waits for a click, and offers Next Steps'
+// suggestions once they are there.
+async function poll($: EngineInterface) {
+  if (!statusPath) return
+  if (pending.size > 0) {
+    const at = await $.fs.stat(`${statusPath}.answer`).then(x => x.mtimeMs).catch(() => 0)
+    if (at && at !== answerAt) {
+      answerAt = at
+      const a = parseAnswer(String(await $.fs.read(`${statusPath}.answer`).catch(() => '')))
+      const done = a ? pending.get(a.id) : undefined
+      if (a && done) {
+        pending.delete(a.id)
+        done(a.choice)
+      }
+    }
+  }
+  if (suggestViaPet && watchStepsUntil && lastDone) {
+    if ((await $.clock.now()) > watchStepsUntil) {
+      watchStepsUntil = 0
+      return
+    }
+    const s = (await read($, NEXT_STEPS as any).catch(() => null)) as { turnId: string; items: string[] } | null
+    if (!s || !s.items?.length || s.turnId === stepsShownFor) return
+    stepsShownFor = s.turnId
+    watchStepsUntil = 0
+    const id = `ns-${s.turnId}`
+    for (const key of [...pending.keys()]) if (key.startsWith('ns-')) pending.delete(key)
+    pending.set(id, text => void sendSuggestion($, text))
+    await say($, { ...lastDone, ask: id, choices: s.items })
+  }
+}
+
+async function sendSuggestion($: EngineInterface, text: string) {
+  await say($, { kind: 'work', title: titled(t('Los geht’s', 'On it')), text: cut(text, 120) })
+  await $.prompt.submit({ text }).catch(() => $.prompt.fill({ text }).catch(() => {}))
 }
 
 async function say($: EngineInterface, note: PetNote) {
   if (!statusPath) return
   const now = await $.clock.now()
-  await $.fs.write(statusPath, statusText(note, now)).catch(() => {})
+  await $.fs.write(statusPath, statusText(note, now, look)).catch(() => {})
   if (now - started > RESTART_MS) void ensure($).catch(() => {})
 }
+
+type AskQuestion = { question: string; header?: string; multiSelect?: boolean; type?: string; options?: Array<{ label: string }> }
 
 const titled = (what: string) => (project ? `${project} · ${what}` : what)
 
@@ -120,6 +206,14 @@ const BUILD =
   '$csc = Join-Path $env:WINDIR "Microsoft.NET\\Framework64\\v4.0.30319\\csc.exe"; ' +
   'if (-not (Test-Path $csc)) { $csc = Join-Path $env:WINDIR "Microsoft.NET\\Framework\\v4.0.30319\\csc.exe" }; ' +
   '& $csc -nologo -target:winexe -optimize+ "-out:$env:PET_EXE" -r:System.Windows.Forms.dll -r:System.Drawing.dll $env:PET_SRC; exit $LASTEXITCODE'
+// Waits for the pet's click on one permission request: prints the answer file once it names the
+// request, gives up when the status no longer offers it (answered elsewhere) or the time is over.
+const WAIT =
+  '$end = (Get-Date).AddSeconds([int]$env:PET_WAIT); ' +
+  'while ((Get-Date) -lt $end) { ' +
+  "if (Test-Path $env:PET_ANSWER) { $a = Get-Content -Raw $env:PET_ANSWER -ErrorAction SilentlyContinue; if ($a -match ('(?m)^id=' + [regex]::Escape($env:PET_ID) + '\\r?$')) { $a; exit 0 } }; " +
+  "$s = Get-Content -Raw $env:PET_STATUS -ErrorAction SilentlyContinue; if ($s -notmatch ('(?m)^ask=' + [regex]::Escape($env:PET_ID) + '\\r?$')) { exit 1 }; " +
+  'Start-Sleep -Milliseconds 250 }; exit 2'
 const START = "Start-Process -FilePath $env:PET_EXE -ArgumentList ('\"' + $env:PET_STATUS + '\"'), $env:PET_SECS"
 
 async function ensure($: EngineInterface): Promise<string | null> {
@@ -170,15 +264,24 @@ export const register: Register = (on, options) => {
   bubbleSec = String(options.bubble ?? '9')
   summary = String(options.summary ?? 'off')
   signScript = String(options.signScript ?? '').trim()
+  petChoice = String(options.kind ?? 'box')
+  look = pickLook(petChoice, String(options.fur ?? 'auto'))
+  perSession = options.perSession === 'on'
+  askViaPet = options.ask !== 'off'
+  suggestViaPet = options.suggest !== 'off'
+  permissions = options.permissions === 'answer' ? 'answer' : 'show'
 
   on('session.start', {}, async ($, e, next) => {
     const r = await next(e)
     isWindows = (await $.env.get('OS')) === 'Windows_NT'
     if (!isWindows) return r
     const temp = (await $.env.get('TEMP')) || (await $.env.get('TMP')) || ''
-    statusPath = temp ? `${temp}\\mod-box-pet.txt` : ''
+    // One pet for all sessions, or (option) one each: then every session has its own status file.
+    const sid = perSession ? `-${String(await $.session.id().catch(() => '')).replace(/[^\w-]/g, '').slice(0, 8)}` : ''
+    statusPath = temp ? `${temp}\\mod-box-pet${sid}.txt` : ''
+    $.clock.every(POLL_MS, () => void poll($).catch(() => {}))
     project = base(await $.session.cwd().catch(() => ''))
-    await $.command.register({ name: 'pet', description: t('Desktop-Pet: zeigen (ohne Argument) oder verabschieden (stop)', 'Desktop Pet: show it (no argument) or send it off (stop)'), argumentHint: '[stop]' })
+    await $.command.register({ name: 'pet', description: t('Desktop-Pet: zeigen, verabschieden (stop) oder Figur wählen (z. B. /pet cat calico)', 'Desktop Pet: show it, send it off (stop) or pick a figure (e.g. /pet cat calico)'), argumentHint: '[stop | <figure> [coat]]' })
     void (async () => {
       await say($, { kind: 'hello', title: titled(t('Hallo!', 'Hello!')), text: t('Ich schaue Claude über die Schulter.', "I'm watching over Claude's shoulder.") })
       await ensure($)
@@ -190,6 +293,9 @@ export const register: Register = (on, options) => {
     const r = await next(e)
     steps = 0
     changed.clear()
+    watchStepsUntil = 0
+    lastDone = null
+    for (const key of [...pending.keys()]) if (key.startsWith('ns-')) pending.delete(key)
     if (e.text.trim()) void say($, { kind: 'work', title: titled(t('Los geht’s', 'On it')), text: cut(e.text, 120) })
     return r
   })
@@ -229,19 +335,105 @@ export const register: Register = (on, options) => {
     const isQuestion = /\?\s*$/.test(e.answer.trim())
     const kind: PetKind = isQuestion ? 'ask' : 'done'
     const title = titled([isQuestion ? t('Frage an dich', 'A question for you') : t('Fertig', 'Done'), ...facts].join(' · '))
+    lastDone = { kind, title, text: gist(e.answer) || t('Fertig.', 'Done.') }
+    if (suggestViaPet && !isQuestion) watchStepsUntil = (await $.clock.now()) + 45_000
     void (async () => {
       await say($, { kind, title, text: gist(e.answer) || t('Fertig.', 'Done.') })
       if (summary === 'haiku' && e.answer.trim().length > 200) {
         const text = await sum($, e.answer).catch(() => null)
-        if (text) await say($, { kind, title, text })
+        if (text) {
+          lastDone = { kind, title, text }
+          await say($, { kind, title, text })
+        }
       }
     })().catch(() => {})
     return r
   })
 
+  // Claude's question: as buttons in the bubble too. Whichever answers first, the pet or the dialog
+  // in Claude Code, counts; the other is closed (a hook returning while next is pending aborts it).
+  on('tool.call', { tool: 'AskUserQuestion' }, async ($, e, next) => {
+    const call = e as unknown as { questions?: AskQuestion[]; tool_use_id?: string; agentId?: string }
+    if (!statusPath || !askViaPet || call.agentId) return next(e)
+    const questions = call.questions ?? []
+    const isPickable = questions.length > 0 && questions.every(q => !q.multiSelect && (q.type ?? 'choice') === 'choice' && (q.options?.length ?? 0) >= 2)
+    const ask = (q: AskQuestion | undefined) => titled(q?.header ? `${t('Frage', 'Question')} · ${q.header}` : t('Frage an dich', 'A question for you'))
+    if (!isPickable) {
+      void say($, { kind: 'ask', title: ask(questions[0]), text: cut(questions[0]?.question ?? t('Claude fragt dich etwas.', 'Claude has a question.'), 200) })
+      return next(e)
+    }
+    const beneath = next(e)
+    beneath.catch(() => {})
+    const answers: Record<string, string> = {}
+    for (const [n, q] of questions.entries()) {
+      const id = `q-${call.tool_use_id ?? 'x'}-${n}`
+      await say($, { kind: 'ask', title: ask(q), text: cut(q.question, 200), ask: id, choices: q.options!.map(o => o.label) })
+      const won = await Promise.race([beneath.then(r => ({ r, c: null as string | null })), waitPick(id).then(c => ({ r: null, c }))])
+      if (won.c === null) {
+        pending.delete(id)
+        void say($, { kind: 'work', title: titled(t('Arbeite', 'Working')), text: t('Antwort erhalten, weiter geht’s.', 'Got the answer, carrying on.') })
+        return won.r!
+      }
+      answers[q.question] = won.c
+    }
+    void say($, { kind: 'work', title: titled(t('Arbeite', 'Working')), text: t('Antwort erhalten, weiter geht’s.', 'Got the answer, carrying on.') })
+    return { result: { questions, answers } } as any
+  })
+
+  // A permission request: shown, so it is not missed. With option permissions "answer" the bubble
+  // offers "allow once" and "deny" for PERMIT_WAIT_S seconds; no rule is ever added ("always" stays
+  // with Claude Code's dialog). Another hook's decision comes first; a dialog answered meanwhile
+  // takes the buttons away again.
+  on('classic.PermissionRequest', {}, async ($, e, next) => {
+    const r = await next(e)
+    const req = e as unknown as { tool_name?: string; tool_input?: Record<string, unknown> }
+    if (!statusPath || !req.tool_name || (r as { decision?: unknown })?.decision) return r
+    const what = describe(req.tool_name, req.tool_input ?? {}, lang === 'de')
+    const title = titled(t('Genehmigung nötig', 'Permission needed'))
+    if (permissions !== 'answer') {
+      void say($, { kind: 'ask', title, text: `${what} · ${t('bitte in Claude Code bestätigen', 'please confirm in Claude Code')}` })
+      return r
+    }
+    const allow = t('Einmal erlauben', 'Allow once')
+    const deny = t('Ablehnen', 'Deny')
+    const id = `perm-${(await $.clock.now()).toString(36)}-${Math.random().toString(36).slice(2, 8)}`
+    await say($, { kind: 'ask', title, text: what, ask: id, choices: [allow, deny] })
+    const gone = () => void say($, { kind: 'work', title: titled(t('Arbeite', 'Working')), text: t('In Claude Code beantwortet.', 'Answered in Claude Code.') })
+    next.signal?.addEventListener('abort', gone)
+    const env = { PET_ANSWER: `${statusPath}.answer`, PET_STATUS: statusPath, PET_ID: id, PET_WAIT: String(PERMIT_WAIT_S) }
+    const run = await $.process
+      .run(['powershell', '-NoProfile', '-NonInteractive', '-Command', WAIT], { env, timeoutMs: (PERMIT_WAIT_S + 15) * 1000 })
+      .catch(() => null)
+    next.signal?.removeEventListener('abort', gone)
+    const picked = run && run.exitCode === 0 ? parseAnswer(run.stdout) : null
+    const choice = picked && picked.id === id ? picked.choice : null
+    if (choice === allow) {
+      void say($, { kind: 'work', title: titled(t('Erlaubt', 'Allowed')), text: what })
+      return { ...r, decision: { behavior: 'allow' } } as typeof r
+    }
+    if (choice === deny) {
+      void say($, { kind: 'error', title: titled(t('Abgelehnt', 'Denied')), text: what })
+      return { ...r, decision: { behavior: 'deny', message: t('Im Desktop-Pet abgelehnt.', 'Denied in the desktop pet.') } } as typeof r
+    }
+    // no click in time: the dialog decides, as without the pet
+    if (!next.signal?.aborted) void say($, { kind: 'ask', title, text: `${what} · ${t('bitte in Claude Code bestätigen', 'please confirm in Claude Code')}` })
+    return r
+  })
+
   on('command.run', { command: 'pet' }, async ($, e) => {
     if (!isWindows) return { text: t('Das Desktop-Pet gibt es nur unter Windows.', 'The desktop pet is Windows only.') }
-    if (String(e.args ?? '').trim() === 'stop') {
+    const [first = '', second = ''] = String(e.args ?? '').trim().toLowerCase().split(/\s+/)
+    if (first === 'random' || PETS.includes(first)) {
+      const fur = FURS.includes(second) || second === 'random' ? second : look.fur
+      look = pickLook(first, fur)
+      await $.config.set({ key: 'mod-box.petKind', value: first }).catch(() => null)
+      if (second) await $.config.set({ key: 'mod-box.petFur', value: fur }).catch(() => null)
+      await ensure($)
+      await say($, { kind: 'hello', title: titled(t('Da bin ich', 'Here I am')), text: t('Wie gefalle ich dir?', 'How do I look?') })
+      return { text: t(`Das Pet ist jetzt: ${look.pet}${look.fur !== 'auto' ? ` (${look.fur})` : ''}.`, `The pet is now: ${look.pet}${look.fur !== 'auto' ? ` (${look.fur})` : ''}.`) }
+    }
+    if (first && first !== 'stop') return { text: t(`Figuren: ${PETS.join(', ')}, random. Fell: ${FURS.slice(1).join(', ')}.`, `Figures: ${PETS.join(', ')}, random. Coats: ${FURS.slice(1).join(', ')}.`) }
+    if (first === 'stop') {
       await say($, { kind: 'bye', title: titled(t('Tschüss!', 'Bye!')), text: t('Bis später.', 'See you later.') })
       return { text: t('Das Pet verabschiedet sich.', 'The pet says goodbye.') }
     }
