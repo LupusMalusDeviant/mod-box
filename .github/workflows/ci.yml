@@ -12,6 +12,7 @@ jobs:
   check:
     name: Validate and test (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
@@ -23,8 +24,17 @@ jobs:
         with:
           node-version-file: .nvmrc
 
+      # A download on the runner can hang (once 13 minutes on Windows): each try gets 4 minutes,
+      # a hung one is tried once more, and the step gives up after 10.
       - name: Install Claude Code
-        run: npm install -g @anthropic-ai/claude-code
+        shell: bash
+        timeout-minutes: 10
+        run: |
+          for try in 1 2; do
+            timeout 240 npm install -g @anthropic-ai/claude-code && exit 0
+            echo "::warning::npm install failed or hung (try $try)"
+          done
+          exit 1
 
       - name: Generated files are up to date
         shell: bash
