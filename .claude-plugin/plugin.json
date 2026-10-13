@@ -669,8 +669,20 @@
         "off",
         "on"
       ],
-      "title": "Desktop Pet: one pet per session",
-      "description": "on: every Claude Code session gets its own pet; they stand side by side, and /pet or the right-click menu picks each one's figure on its own. off: one pet for all."
+      "title": "Desktop Pet: one pet per active session",
+      "description": "on: every session whose prompt cache is warm has its own pet, side by side, each with its own figure (/pet or the right-click menu). When a session's cache goes cold its pet goes to sleep; the next message brings it back. off: one pet for all."
+    },
+    "petCacheWarn": {
+      "type": "string",
+      "default": "5",
+      "options": [
+        "off",
+        "2",
+        "5",
+        "10"
+      ],
+      "title": "Desktop Pet: warn before the cache goes cold (minutes)",
+      "description": "That many minutes before the prompt cache expires the pet says so, with a button that keeps it warm for an hour (Cache Meter on). Not while keep-warm runs."
     },
     "petAsk": {
       "type": "string",
