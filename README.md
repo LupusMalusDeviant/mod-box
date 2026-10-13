@@ -159,6 +159,8 @@ The window remembers the profile you applied last (*Default* until you apply one
 
 **Foreign code waits for trust.** A mod imported from another repo starts switched off, and profiles leave it off until you trust it: **Trust** under its ⚙, or switch it on by hand once. Imported mods show 🔒 until then, 📦 after.
 
+**What a mod may do.** The build reads each mod's source for the calls it makes, and the window shows the result next to its name: 👁 reads files or the transcript, ✎ writes files, the transcript or the prompt, ▶ runs programs, 🌐 goes online, 🔧 changes settings. Under ⚙ the same in words, with the programs by name. It is a reading of the code, not a sandbox, but it means a new mod cannot surprise you with what it touches.
+
 ## Where a mod runs
 
 Each mod declares where it works: the surfaces (terminal, desktop app, VS Code, mobile), the operating systems, and the programs it needs (`git`, `gh` signed in, Node.js, Git Bash, PowerShell, a signing script). The window compares that with the session you are in (surface, OS, and the environment check under **Health**) and puts a ⚠ with the reason next to a mod that would not, or not fully, run here. ⚙ shows the full list.

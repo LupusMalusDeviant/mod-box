@@ -52,6 +52,14 @@ describe('Settings window', () => {
       expect(await ui.find({ key: 'sel-savvyLanguage' })).toBeDefined()
     })
 
+    test(`shows what a mod may do (${surface})`, DE, async ($: any, on: any) => {
+      engine(on)
+      const ui = await pane($, surface)
+      expect(await ui.find({ type: 'Text', text: /Darf:/ })).toBeUndefined() // collapsed: marks only
+      await ui.press({ key: 'exp-filetree' })
+      expect(await ui.find({ type: 'Text', text: /Darf: .*schreibt Dateien.*startet Programme [(].*git/ })).toBeDefined()
+    })
+
     test(`saves switches and parameters via config.set (${surface})`, DE, async ($: any, on: any) => {
       const sets = engine(on)
       const ui = await pane($, surface)

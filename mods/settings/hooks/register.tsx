@@ -567,6 +567,24 @@ function card(ui: any, key: string, accent: string, head: unknown, children: unk
   )
 }
 
+// What a mod may do (read from its source at build time): short marks for the row, words for ⚙.
+type ReachInfo = (typeof CATALOG)[number]['reach']
+export function reachMarks(r: ReachInfo): string {
+  return [r.reads ? '👁' : '', r.writes ? '✎' : '', r.runs ? '▶' : '', r.network ? '🌐' : '', r.settings ? '🔧' : ''].filter(Boolean).join(' ')
+}
+export function reachText(r: ReachInfo): string {
+  const runs = r.programs.length ? `${t('startet Programme', 'runs programs')} (${r.programs.slice(0, 6).join(', ')}${r.programs.length > 6 ? ' …' : ''})` : t('startet Programme', 'runs programs')
+  const parts = [
+    r.reads ? t('👁 liest Dateien oder das Gespräch', '👁 reads files or the transcript') : '',
+    r.writes ? t('✎ schreibt Dateien, das Gespräch oder den Prompt', '✎ writes files, the transcript or the prompt') : '',
+    r.runs ? `▶ ${runs}` : '',
+    r.network ? t('🌐 geht ins Netz', '🌐 goes online') : '',
+    r.settings ? t('🔧 ändert Einstellungen', '🔧 changes settings') : '',
+    r.model ? t('✦ ruft das Modell auf', '✦ calls the model') : '',
+  ].filter(Boolean)
+  return parts.length ? parts.join(' · ') : t('nur Anzeige und Hooks, kein Dateizugriff, keine Programme, kein Netz', 'display and hooks only: no files, no programs, no network')
+}
+
 function drawMods($: EngineInterface, ui: any, rows: Map<string, ConfigRow>, notes: unknown, used: Record<string, ModUsage>, open: string[], columns: number, env: Here & { trusted: string[]; fresh: string[] }, nativeCard: unknown = null) {
   const { Box, Text, Button } = ui
   if (rows.size === 0) return <Text dimColor>{t('Keine Einstellungen gefunden. Ist die Mod Box aktiviert?', 'No settings found. Is the Mod Box enabled?')}</Text>
@@ -598,6 +616,7 @@ function drawMods($: EngineInterface, ui: any, rows: Map<string, ConfigRow>, not
             {m.imported ? <Text>{isTrusted ? ' 📦' : ' 🔒'}</Text> : null}
             {isNew ? <Text color="claude" bold>{t('  neu', '  new')}</Text> : null}
             {issues.length ? <Text color="warning">{`  ⚠ ${tx(issues[0]!)}`}</Text> : null}
+            {reachMarks(m.reach) ? <Text color={m.reach.network || m.reach.runs ? 'warning' : 'inactive'} dimColor>{`  ${reachMarks(m.reach)}`}</Text> : null}
             {m.commands.length ? <Text color="suggestion" dimColor>{`  ${m.commands[0]!.name.split(' ')[0]}`}</Text> : null}
             {used[m.toggle] ? <Text color="warning" dimColor>{`  ${usageText(used[m.toggle]!)}`}</Text> : null}
           </Box>
@@ -609,6 +628,7 @@ function drawMods($: EngineInterface, ui: any, rows: Map<string, ConfigRow>, not
         {isOpen ? (
           <Box flexDirection="column" paddingLeft={2}>
             <Text color="inactive" wrap="wrap">{`${t('Läuft auf', 'Runs on')}: ${compatText(m.compat)}`}</Text>
+            <Text color="inactive" wrap="wrap">{`${t('Darf', 'May')}: ${reachText(m.reach)}`}</Text>
             {issues.map((x, i) => (
               <Text key={`iss-${m.toggle}-${i}`} color="warning" wrap="wrap">{`⚠ ${tx(x)}`}</Text>
             ))}

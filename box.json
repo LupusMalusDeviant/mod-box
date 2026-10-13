@@ -383,9 +383,6 @@
         "contract": "mods/screen-mask/types/contract.d.ts"
       },
       "band": true,
-      "extraDirs": [
-        "mods/secret-guard/hooks"
-      ],
       "commands": [
         {
           "name": "/mask [on|off]",

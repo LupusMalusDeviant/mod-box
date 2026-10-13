@@ -122,6 +122,21 @@ test('analyze: a first guess at group, tokens, commands and where it runs', () =
   assert.equal(win.tokens, 'always')
 })
 
+test('reachOf: what a mod may do, read from its $ calls', async () => {
+  const { reachOf } = await import('./box.mjs')
+  const r = reachOf("await $.fs.read(p); await $.process.run(['gh', 'pr', 'view']); $.process.spawn({ argv: ['tail', '-f', x] }); await $.config.set({})")
+  assert.equal(r.reads, true)
+  assert.equal(r.writes, false)
+  assert.equal(r.runs, true)
+  assert.deepEqual(r.programs, ['gh', 'tail'])
+  assert.equal(r.network, true) // gh talks to GitHub
+  assert.equal(r.settings, true)
+  assert.equal(r.model, false)
+  const quiet = reachOf("on('ui.render', { component: 'AssistantMessage' }, (_$, e, next) => next(e))")
+  assert.deepEqual([quiet.reads, quiet.writes, quiet.runs, quiet.network], [false, false, false, false])
+  assert.equal(reachOf('await $.http.get(url)').network, true)
+})
+
 test('standaloneState: box state keys move to the mod plugin, the token ledger too', async () => {
   const { standaloneState } = await import('./export.mjs')
   const code = "const a = atom({ plugin: 'mod-box', key: 'hu_note' } as const, null)\nconst U = { plugin: 'mod-box', key: 'mb_usage' } as const\nconst other = { plugin: 'mod-box', key: 'ci_watch' }"

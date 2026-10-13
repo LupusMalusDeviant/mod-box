@@ -31,7 +31,6 @@ export const HOOKS: Record<string, string[]> = {
   "screenMask": [
     "command.run",
     "session.start",
-    "tool.call",
     "ui.render"
   ],
   "packageGuard": [
