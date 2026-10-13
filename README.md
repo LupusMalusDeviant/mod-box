@@ -259,7 +259,7 @@ These mods come from other repositories and **were modified for the Mod Box**. E
 | Cache Tax | [karanb192/cache-tax](https://github.com/karanb192/cache-tax) | Karan Bansal | MIT | embedded into Cache Meter (guard and auto-warm options, exported helpers, token usage) |
 | Catch Me Up | [oliverow/catch-me-up](https://github.com/oliverow/catch-me-up) | Oliver Wang | MIT | language option, token usage, state rewritten |
 | Codebase Map | [LupusMalusDeviant/codebase-map](https://github.com/LupusMalusDeviant/codebase-map) | Lupus Malus Deviant | MIT | state, matchers and paths rewritten; `@feature` in the prompt added |
-| Filetree | [data-goblin/claude-code-filetree](https://github.com/data-goblin/claude-code-filetree) | Kurt Buhler | MIT | state, matchers and paths rewritten; Features tab for the Codebase Map added |
+| Filetree | [data-goblin/claude-code-filetree](https://github.com/data-goblin/claude-code-filetree) | Kurt Buhler | MIT | state, matchers and paths rewritten; Features tab for the Codebase Map added; rows and preview kept under the desktop's size limit |
 | Next Steps | [hamzafer/claude-code-mods](https://github.com/hamzafer/claude-code-mods/tree/main/mods/next-steps) | Hamza Zafar | MIT | language option, token usage, state rewritten |
 | Savvy Progress | [JohnnyVizz/claude-kit](https://github.com/JohnnyVizz/claude-kit/tree/main/plugins/savvy-progress) | johnnyvizz | MIT | a type fix; state and tool names rewritten |
 | Visible Compact | [nvsravank/visible-compact](https://github.com/nvsravank/visible-compact) | nvsravank | MIT | state, matchers and paths rewritten |

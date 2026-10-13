@@ -188,6 +188,24 @@ group('Desktop pet: figures and clicks', () => {
     expect(writes.at(-1)!.text).toContain('title=shop · Allowed')
   })
 
+  test('permissions "answer": the question keeps its own choices, no allow/deny', { options: { ...QUIET, pet: true, petPermissions: 'answer' } }, async ($: any, on: any) => {
+    const { writes, runs } = engine(on)
+    on('classic.PermissionRequest', () => ({}))
+    clicked.permission = 'Allow once'
+    await $.session.start({ surface: 'terminal', isInteractive: true, cwd: ['C:', 'work', 'shop'].join(String.fromCharCode(92)) })
+    await wait()
+    const before = writes.length
+    const r = await $.classic.PermissionRequest({ tool_name: 'AskUserQuestion', tool_input: { questions: [] } })
+    await wait()
+    expect(r.decision).toBeUndefined()
+    expect(writes.length).toBe(before) // the question's bubble stays as it is
+    expect(runs.some(x => x.join(' ').includes('PET_WAIT'))).toBe(false)
+    const plan = await $.classic.PermissionRequest({ tool_name: 'ExitPlanMode', tool_input: { plan: 'x' } })
+    await wait()
+    expect(plan.decision).toBeUndefined()
+    expect(writes.at(-1)!.text).not.toContain('choice=')
+  })
+
   test('permissions "answer": no click, the dialog decides', { options: { ...QUIET, pet: true, petPermissions: 'answer' } }, async ($: any, on: any) => {
     engine(on)
     on('classic.PermissionRequest', () => ({}))

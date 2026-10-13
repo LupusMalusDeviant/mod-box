@@ -1,5 +1,7 @@
 import { describe, expect, mock, test } from 'claude-code/testing'
 
+import { fitRows } from '../mods/filetree/hooks/register'
+
 // The file tree's Features tab: the Codebase Map's features next to the files, its actions through
 // the Codebase Map's own command.
 const PANE = { component: 'Pane', requestId: 'filetree', props: { bodyColumns: 100, placement: 'right', scroll: { bodyRows: 40 } } }
@@ -113,5 +115,17 @@ describe('Codebase Map command', () => {
     expect(filled.at(-1)).toMatch(/update the blueprint for the feature "Core"/)
     const r = await $.command.run({ command: 'codebase-map', args: 'update nothing-like-it' })
     expect(r.text).toMatch(/Usage/)
+  })
+})
+
+describe('File tree: desktop size limit', () => {
+  test('rows past the Client limit are cut from the end farther from the cursor', () => {
+    const rows = Array.from({ length: 1000 }, (_, i) => ({ id: `r${i}`, left: [{ t: 'x'.repeat(150) }], right: [] }))
+    const fit = fitRows(rows, 'r900')
+    expect(JSON.stringify(fit).length).toBeLessThan(100_000)
+    expect(fit.some(r => r.id === 'r900')).toBe(true)
+    expect(fit.at(-1)!.id).toBe('r999') // the cursor sits near the end: the start was cut
+    const small = rows.slice(0, 10)
+    expect(fitRows(small, 'r3')).toBe(small)
   })
 })
