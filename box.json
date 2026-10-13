@@ -313,6 +313,103 @@
       }
     },
     {
+      "id": "screen-mask",
+      "toggle": "screenMask",
+      "title": "Screen Mask",
+      "title_de": "Bildschirmschutz",
+      "group": "guards",
+      "description": "For screen sharing and recordings: hides API keys, tokens, private keys, e-mail addresses, IP addresses, your login name in paths and any names you list. Only the display changes; Claude still reads the original. Nothing leaves the machine. /mask switches it.",
+      "description_de": "Für Bildschirmfreigabe und Aufnahmen: verdeckt API-Keys, Tokens, private Schlüssel, E-Mail-Adressen, IP-Adressen, deinen Benutzernamen in Pfaden und eigene Begriffe. Nur die Anzeige ändert sich; Claude liest weiter das Original. Nichts verlässt den Rechner. /mask schaltet ihn.",
+      "default": false,
+      "entry": "mods/screen-mask/hooks/register.tsx",
+      "pass": {
+        "language": "language"
+      },
+      "options": [
+        {
+          "key": "screenMaskTerms",
+          "field": "terms",
+          "type": "string",
+          "default": "",
+          "title": "Screen Mask: names and words to hide",
+          "title_de": "Bildschirmschutz: Namen und Wörter verdecken",
+          "description": "Comma separated, e.g. customer names, project code names, a server name. Case does not matter.",
+          "description_de": "Durch Komma getrennt, z. B. Kundennamen, Projekt-Codenamen, ein Servername. Gross/klein egal."
+        },
+        {
+          "key": "screenMaskEmails",
+          "field": "emails",
+          "type": "string",
+          "default": "on",
+          "options": [
+            "on",
+            "off"
+          ],
+          "title": "Screen Mask: hide e-mail addresses",
+          "title_de": "Bildschirmschutz: E-Mail-Adressen verdecken",
+          "description": "Every address becomes [e-mail].",
+          "description_de": "Jede Adresse wird zu [e-mail].",
+          "labels": {
+            "de": {
+              "on": "an",
+              "off": "aus"
+            }
+          }
+        },
+        {
+          "key": "screenMaskIps",
+          "field": "ips",
+          "type": "string",
+          "default": "on",
+          "options": [
+            "on",
+            "off"
+          ],
+          "title": "Screen Mask: hide IP addresses",
+          "title_de": "Bildschirmschutz: IP-Adressen verdecken",
+          "description": "IPv4 addresses except loopback and documentation ranges become [ip].",
+          "description_de": "IPv4-Adressen ausser Loopback und Doku-Bereichen werden zu [ip].",
+          "labels": {
+            "de": {
+              "on": "an",
+              "off": "aus"
+            }
+          }
+        }
+      ],
+      "state": {
+        "from": "screen-mask",
+        "prefix": "sm",
+        "contract": "mods/screen-mask/types/contract.d.ts"
+      },
+      "band": true,
+      "extraDirs": [
+        "mods/secret-guard/hooks"
+      ],
+      "commands": [
+        {
+          "name": "/mask [on|off]",
+          "en": "hide secrets and names on screen",
+          "de": "Geheimnisse und Namen in der Anzeige verdecken"
+        }
+      ],
+      "tokens": "none",
+      "compat": {
+        "surfaces": [
+          "terminal",
+          "desktop",
+          "vscode",
+          "mobile"
+        ],
+        "os": [
+          "windows",
+          "mac",
+          "linux"
+        ],
+        "needs": []
+      }
+    },
+    {
       "id": "package-guard",
       "toggle": "packageGuard",
       "title": "Package Guard",

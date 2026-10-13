@@ -14,7 +14,7 @@ Claude Code mods are small hook modules that change how Claude Code behaves and 
 **Highlights**
 
 - **One window** (`/mod-box`): every mod as a card with a switch, its options, commands and token cost; profiles; sources; health.
-- **Guards**: Blast Radius holds destructive shell commands, Secret Guard stops keys and `.env` files before they reach a file or commit, Package Guard holds installs of made-up, brand-new or typosquatted packages, CI Watch follows every push and pull request to the end.
+- **Guards**: Blast Radius holds destructive shell commands, Secret Guard stops keys and `.env` files before they reach a file or commit, Screen Mask hides them (and e-mails, IPs, names) on screen while you share it, Package Guard holds installs of made-up, brand-new or typosquatted packages, CI Watch follows every push and pull request to the end.
 - **Saves money and limits**: Cache Meter shows the warm cache and plan limits and stops a send to a cold cache with its price; Subagent Saver runs search subagents on Sonnet instead of your main model; auto-compact can kick in earlier.
 - **Grows with you**: import mods from any git repo or marketplace, or ask Claude to add one with the bundled `mod-box-add` skill. Profiles are rules, so new mods land in the right ones; foreign code stays off until you trust it.
 - **Knows where it runs**: each mod declares surfaces, systems and tools it needs; the window warns when one would not work here.
@@ -95,6 +95,7 @@ The same window runs in terminal Claude Code, as a side pane next to the convers
 | `blastRadius` | Blast Radius | on | Holds risky shell commands (`rm -rf`, `git reset --hard`, `git clean`, force push, migrations) and shows what they would hit. | no |
 | `packageGuard` | Package Guard | on | Before an install or `npx`/`uvx` run (npm, pnpm, yarn, bun, pip, uv, poetry, pipx, cargo) asks the public registry; holds the command when the package does not exist, is under 14 days old, was removed as malware, or looks like a well-known package and is young or thin. Mode *block* or *warn*; allow in the band or with `/pkg-allow`. Sends only the package name to the registry. | no |
 | `secretGuard` | Secret Guard | on | Stops before an API key, token, private key or non-ignored `.env` file gets into a file, `git add` or a commit. Mode *block* or *warn*; exceptions via `/secret-allow`. | no |
+| `screenMask` | Screen Mask | off | For screen sharing and recordings: hides API keys, tokens, e-mail and IP addresses, your login name in paths and names you list, in the display only. Claude still reads the original; nothing leaves the machine. `/mask` switches it; the band shows when it is on. | no |
 | `ciWatch` | CI Watch | on | Follows the GitHub Actions runs after each `git push` (via `gh`) to the end. For an open pull request it watches every check and says whether the PR is ready to merge. When a run turns red, it shows the failed step's log and/or puts an analysis request into the prompt; it can also play a sound. `/ci` shows the state. A system notification when a run ends (default: red only), since Claude Code notifies only at the end of a turn. In the desktop app, a new PR's checks are left to the app's own CI bar. | no |
 | `signGuard` | Sign Guard | off | Spots Windows builds and signs the new `.exe`, `.msi` and `.msix` files with your own script (`<script> -Exe <file>`). Mode *ask* or *auto*. | no |
 | `savvyProgress` | Savvy Progress | on | Progress bar and agents panel (`/agents-info`). | no |
@@ -122,6 +123,7 @@ The same window runs in terminal Claude Code, as a side pane next to the convers
 | `/mod-box [profiles|sources|diag]` | Mod Box | opens the window, optionally on a tab |
 | `/pkg-allow [name]` | Package Guard | allows a held package for this session |
 | `/secret-allow` | Secret Guard | the exception list: last finds, project and global entries |
+| `/mask [on\|off]` | Screen Mask | hide secrets and names on screen, or show them again |
 | `/ci` · `/ci pr <nr|url>` · `/ci stop` | CI Watch | state of the watched runs · watch a pull request · stop watching |
 | `/agents-info` | Savvy Progress | agents panel |
 | `/filetree` | Filetree | opens the file tree |
@@ -260,7 +262,7 @@ These mods come from other repositories and **were modified for the Mod Box**. E
 | Human in the Loop | [tzafrir/human-in-the-loop](https://github.com/tzafrir/human-in-the-loop) | Tzafrir Rehan | MIT | state, store key and tool names rewritten; its own prompts known by the box's plugin name |
 | Prompt Rail | [oikon48/prompt-rail](https://github.com/oikon48/prompt-rail) | oikon48 | MIT | state and store keys rewritten; presses and focus told apart from other mods by element key; mode setting under the box |
 
-Heads-up was retired in favour of "You Should Know", which ships with Claude Code; the window switches it under **Built into Claude Code**. **Cache Meter, Subagent Saver, Read Guard, Secret Guard, Package Guard, Desktop Pet, CI Watch, Sign Guard, Handoff Note**, the window and the tools were written for this box.
+Heads-up was retired in favour of "You Should Know", which ships with Claude Code; the window switches it under **Built into Claude Code**. **Cache Meter, Subagent Saver, Read Guard, Secret Guard, Screen Mask, Package Guard, Desktop Pet, CI Watch, Sign Guard, Handoff Note**, the window and the tools were written for this box.
 
 ## License
 

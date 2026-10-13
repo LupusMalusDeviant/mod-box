@@ -158,6 +158,10 @@ export type BlockedFind = {
   stopped: boolean
 }
 
+// ---- screen-mask ----
+
+
+
 // ---- package-guard ----
 
 export type PackageInfo = {
@@ -551,6 +555,9 @@ declare module 'claude-code' {
       sw_blocked: BlockedFind[]
       sw_project: string[]
       sw_global: string[]
+
+      // screen-mask
+      sm_on: boolean
 
       // package-guard
       pg_hold: PackageHold | null

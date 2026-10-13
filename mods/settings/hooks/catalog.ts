@@ -295,6 +295,147 @@ export const CATALOG: CatalogMod[] = [
     }
   },
   {
+    "id": "screen-mask",
+    "toggle": "screenMask",
+    "default": false,
+    "band": true,
+    "title": {
+      "en": "Screen Mask",
+      "de": "Bildschirmschutz"
+    },
+    "description": {
+      "en": "For screen sharing and recordings: hides API keys, tokens, private keys, e-mail addresses, IP addresses, your login name in paths and any names you list. Only the display changes; Claude still reads the original. Nothing leaves the machine. /mask switches it.",
+      "de": "Für Bildschirmfreigabe und Aufnahmen: verdeckt API-Keys, Tokens, private Schlüssel, E-Mail-Adressen, IP-Adressen, deinen Benutzernamen in Pfaden und eigene Begriffe. Nur die Anzeige ändert sich; Claude liest weiter das Original. Nichts verlässt den Rechner. /mask schaltet ihn."
+    },
+    "group": "guards",
+    "costs": null,
+    "params": [
+      {
+        "key": "screenMaskTerms",
+        "type": "string",
+        "multiple": false,
+        "title": {
+          "en": "Screen Mask: names and words to hide",
+          "de": "Bildschirmschutz: Namen und Wörter verdecken"
+        },
+        "description": {
+          "en": "Comma separated, e.g. customer names, project code names, a server name. Case does not matter.",
+          "de": "Durch Komma getrennt, z. B. Kundennamen, Projekt-Codenamen, ein Servername. Gross/klein egal."
+        },
+        "labels": {},
+        "options": null,
+        "default": ""
+      },
+      {
+        "key": "screenMaskEmails",
+        "type": "string",
+        "multiple": false,
+        "title": {
+          "en": "Screen Mask: hide e-mail addresses",
+          "de": "Bildschirmschutz: E-Mail-Adressen verdecken"
+        },
+        "description": {
+          "en": "Every address becomes [e-mail].",
+          "de": "Jede Adresse wird zu [e-mail]."
+        },
+        "labels": {
+          "de": {
+            "on": "an",
+            "off": "aus"
+          }
+        },
+        "options": [
+          "on",
+          "off"
+        ],
+        "default": "on"
+      },
+      {
+        "key": "screenMaskIps",
+        "type": "string",
+        "multiple": false,
+        "title": {
+          "en": "Screen Mask: hide IP addresses",
+          "de": "Bildschirmschutz: IP-Adressen verdecken"
+        },
+        "description": {
+          "en": "IPv4 addresses except loopback and documentation ranges become [ip].",
+          "de": "IPv4-Adressen ausser Loopback und Doku-Bereichen werden zu [ip]."
+        },
+        "labels": {
+          "de": {
+            "on": "an",
+            "off": "aus"
+          }
+        },
+        "options": [
+          "on",
+          "off"
+        ],
+        "default": "on"
+      },
+      {
+        "key": "screenMaskShow",
+        "type": "string",
+        "multiple": false,
+        "title": {
+          "en": "Screen Mask: display",
+          "de": "Bildschirmschutz: Anzeige"
+        },
+        "description": {
+          "en": "band: above the prompt. status: in the status line. off: not shown (the mod keeps working).",
+          "de": "Band: über dem Prompt. Statuszeile: in der Statuszeile. aus: nicht angezeigt (der Mod arbeitet weiter)."
+        },
+        "labels": {
+          "de": {
+            "band": "Band",
+            "status": "Statuszeile",
+            "off": "aus"
+          },
+          "en": {
+            "band": "band",
+            "status": "status line",
+            "off": "off"
+          }
+        },
+        "options": [
+          "band",
+          "status",
+          "off"
+        ],
+        "default": "band"
+      }
+    ],
+    "imported": false,
+    "upstream": "screen-mask",
+    "source": null,
+    "commands": [
+      {
+        "name": "/mask [on|off]",
+        "text": {
+          "en": "hide secrets and names on screen",
+          "de": "Geheimnisse und Namen in der Anzeige verdecken"
+        }
+      }
+    ],
+    "tokens": "none",
+    "needs": [],
+    "compat": {
+      "surfaces": [
+        "terminal",
+        "desktop",
+        "vscode",
+        "mobile"
+      ],
+      "os": [
+        "windows",
+        "mac",
+        "linux"
+      ],
+      "needs": []
+    }
+  },
+  {
     "id": "package-guard",
     "toggle": "packageGuard",
     "default": true,
@@ -2118,6 +2259,10 @@ export const PROFILES: CatalogProfile[] = [
         true
       ],
       [
+        "screenMask",
+        false
+      ],
+      [
         "packageGuard",
         true
       ],
@@ -2204,6 +2349,10 @@ export const PROFILES: CatalogProfile[] = [
       ],
       [
         "secretGuard",
+        true
+      ],
+      [
+        "screenMask",
         true
       ],
       [
@@ -2296,6 +2445,10 @@ export const PROFILES: CatalogProfile[] = [
         true
       ],
       [
+        "screenMask",
+        true
+      ],
+      [
         "packageGuard",
         true
       ],
@@ -2382,6 +2535,10 @@ export const PROFILES: CatalogProfile[] = [
       ],
       [
         "secretGuard",
+        true
+      ],
+      [
+        "screenMask",
         true
       ],
       [

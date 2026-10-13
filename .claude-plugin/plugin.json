@@ -1,7 +1,7 @@
 {
   "name": "mod-box",
   "version": "0.5.0",
-  "description": "20 Claude Code mods in one plugin, each switchable on its own; /mod-box opens the window to switch, configure and import mods.",
+  "description": "21 Claude Code mods in one plugin, each switchable on its own; /mod-box opens the window to switch, configure and import mods.",
   "author": {
     "name": "Lupus Malus Deviant"
   },
@@ -65,6 +65,12 @@
       "title": "Secret Guard",
       "description": "Stops before Claude writes API keys, tokens, private keys or a non-ignored .env into files, git add or commits. Exceptions for test keys and example files: /secret-allow.",
       "default": true
+    },
+    "screenMask": {
+      "type": "boolean",
+      "title": "Screen Mask",
+      "description": "For screen sharing and recordings: hides API keys, tokens, private keys, e-mail addresses, IP addresses, your login name in paths and any names you list. Only the display changes; Claude still reads the original. Nothing leaves the machine. /mask switches it.",
+      "default": false
     },
     "packageGuard": {
       "type": "boolean",
@@ -193,6 +199,43 @@
       ],
       "title": "Secret Guard: let placeholders pass",
       "description": "on: values with EXAMPLE, DUMMY, FAKE, PLACEHOLDER, REDACTED, SAMPLE, xxxxxx … are no secret (this covers the AWS documentation keys)."
+    },
+    "screenMaskTerms": {
+      "type": "string",
+      "default": "",
+      "title": "Screen Mask: names and words to hide",
+      "description": "Comma separated, e.g. customer names, project code names, a server name. Case does not matter."
+    },
+    "screenMaskEmails": {
+      "type": "string",
+      "default": "on",
+      "options": [
+        "on",
+        "off"
+      ],
+      "title": "Screen Mask: hide e-mail addresses",
+      "description": "Every address becomes [e-mail]."
+    },
+    "screenMaskIps": {
+      "type": "string",
+      "default": "on",
+      "options": [
+        "on",
+        "off"
+      ],
+      "title": "Screen Mask: hide IP addresses",
+      "description": "IPv4 addresses except loopback and documentation ranges become [ip]."
+    },
+    "screenMaskShow": {
+      "type": "string",
+      "default": "band",
+      "options": [
+        "band",
+        "status",
+        "off"
+      ],
+      "title": "Screen Mask: display",
+      "description": "band: above the prompt. status: in the status line. off: not shown (the mod keeps working)."
     },
     "packageMode": {
       "type": "string",
