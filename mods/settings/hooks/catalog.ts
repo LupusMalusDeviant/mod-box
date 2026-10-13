@@ -2092,8 +2092,8 @@ export const CATALOG: CatalogMod[] = [
       "de": "Codebase-Karte"
     },
     "description": {
-      "en": "Feature map of the codebase from docs/blueprints: dependency graph with live highlighting of the features Claude edits, a freshness band, a CLAUDE.md pointer for agents and mapper instructions (machine-checked edges, optional Confluence mirror) that load only when you ask for blueprint work.",
-      "de": "Feature-Karte der Codebase aus docs/blueprints: Abhängigkeitsgraph mit Live-Hervorhebung der Features, die Claude bearbeitet, ein Aktualitäts-Band, ein CLAUDE.md-Verweis für Agenten und die Mapper-Anleitung (maschinell geprüfte Kanten, optional Confluence-Spiegel), die nur bei Blueprint-Arbeit geladen wird."
+      "en": "Feature map of the codebase from docs/blueprints: dependency graph with live highlighting of the features Claude edits, a freshness band, a CLAUDE.md pointer for agents and mapper instructions (machine-checked edges, optional Confluence mirror) that load only when you ask for blueprint work. In the prompt, @ and a feature name attaches its blueprint, and a mentioned file says which feature it belongs to.",
+      "de": "Feature-Karte der Codebase aus docs/blueprints: Abhängigkeitsgraph mit Live-Hervorhebung der Features, die Claude bearbeitet, ein Aktualitäts-Band, ein CLAUDE.md-Verweis für Agenten und die Mapper-Anleitung (maschinell geprüfte Kanten, optional Confluence-Spiegel), die nur bei Blueprint-Arbeit geladen wird. Im Prompt hängt @ und ein Feature-Name dessen Blueprint an, und eine erwähnte Datei sagt, zu welchem Feature sie gehört."
     },
     "group": "display",
     "costs": {

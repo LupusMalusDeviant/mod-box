@@ -130,6 +130,8 @@ export const HOOKS: Record<string, string[]> = {
   ],
   "codebaseMap": [
     "command.run",
+    "prompt.autocomplete",
+    "prompt.mention",
     "prompt.submit",
     "session.start",
     "tool.call",

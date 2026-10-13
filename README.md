@@ -112,7 +112,7 @@ The same window runs in terminal Claude Code, as a side pane next to the convers
 | `promptRail` | Prompt Rail | off | A rail of this session's prompts above the input (terminal) or beside the transcript; hover to read one, click to jump to it (`/prompt-rail`). | no |
 | `visibleCompact` | Visible Compact | on | Before/after view of `/compact` (`/show-last-compact`). | no |
 | `catchMeUp` | Catch Me Up | off | Live summary of the session (`/catch-me-up`), kept up after turns with tools. Claude Code's built-in recap (`/recap`) is one short note when you come back; this pane stays open. | Haiku calls after turns |
-| `codebaseMap` | Codebase Map | off | Feature map from `docs/blueprints` with live highlighting of the features Claude edits, a freshness band and a `CLAUDE.md` pointer; mapper instructions with machine-checked edges load only when you ask for blueprint work (`/codebase-map`). | only blueprint runs you ask for; about 500 tokens per session for the `CLAUDE.md` pointer |
+| `codebaseMap` | Codebase Map | off | Feature map from `docs/blueprints` with live highlighting of the features Claude edits, a freshness band and a `CLAUDE.md` pointer; mapper instructions with machine-checked edges load only when you ask for blueprint work (`/codebase-map`). In the prompt, `@` and part of a feature name offers its blueprint to attach, and an `@file` gets one line on the feature it belongs to. | only blueprint runs you ask for; about 500 tokens per session for the `CLAUDE.md` pointer |
 
 <p align="center"><img src="docs/images/cache-meter.png" alt="Cache Meter opened: commands, token cost and options" width="500"></p>
 
@@ -255,7 +255,7 @@ These mods come from other repositories and **were modified for the Mod Box**. E
 | Replay Theater | [anthropics/claude-code-playground](https://github.com/anthropics/claude-code-playground/tree/main/claude-code/mods/replay-theater) | Anthropic PBC | Apache-2.0 | state, matchers and paths rewritten |
 | Cache Tax | [karanb192/cache-tax](https://github.com/karanb192/cache-tax) | Karan Bansal | MIT | embedded into Cache Meter (guard and auto-warm options, exported helpers, token usage) |
 | Catch Me Up | [oliverow/catch-me-up](https://github.com/oliverow/catch-me-up) | Oliver Wang | MIT | language option, token usage, state rewritten |
-| Codebase Map | [LupusMalusDeviant/codebase-map](https://github.com/LupusMalusDeviant/codebase-map) | Lupus Malus Deviant | MIT | state, matchers and paths rewritten |
+| Codebase Map | [LupusMalusDeviant/codebase-map](https://github.com/LupusMalusDeviant/codebase-map) | Lupus Malus Deviant | MIT | state, matchers and paths rewritten; `@feature` in the prompt added |
 | Filetree | [data-goblin/claude-code-filetree](https://github.com/data-goblin/claude-code-filetree) | Kurt Buhler | MIT | state, matchers and paths rewritten; Features tab for the Codebase Map added |
 | Next Steps | [hamzafer/claude-code-mods](https://github.com/hamzafer/claude-code-mods/tree/main/mods/next-steps) | Hamza Zafar | MIT | language option, token usage, state rewritten |
 | Savvy Progress | [JohnnyVizz/claude-kit](https://github.com/JohnnyVizz/claude-kit/tree/main/plugins/savvy-progress) | johnnyvizz | MIT | a type fix; state and tool names rewritten |
