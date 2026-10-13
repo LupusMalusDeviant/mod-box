@@ -52,6 +52,7 @@ let askViaPet = true
 let suggestViaPet = true
 let permissions: 'show' | 'answer' = 'show'
 let canType = false
+let remindSec = 60
 let hotkey = ''
 // Picks the pet may answer, by id; the answer file's last time read.
 const pending = new Map<string, (choice: string) => void>()
@@ -362,7 +363,7 @@ async function say($: EngineInterface, note: PetNote) {
   // Typing: a note that answers something names its id; everything else goes to this session's prompt.
   const typed = canType ? { ...note, free: note.free ?? promptId() } : { ...note, free: undefined }
   // name: the project, shown under the pet all the time
-  const extra = { name: project, ...(canType ? { type: 'on', hotkey, typelabel: note.free ? t('Eigene Antwort …', 'Write your own answer …') : '' } : {}) }
+  const extra = { name: project, remind: note.kind === 'ask' && remindSec ? String(remindSec) : '', ...(canType ? { type: 'on', hotkey, typelabel: note.free ? t('Eigene Antwort …', 'Write your own answer …') : '' } : {}) }
   await $.fs.write(statusPath, statusText(typed, now, look, extra)).catch(() => {})
   // asleep (one pet per active session, cache cold): the note only reaches a pet that still runs
   if (now - started > RESTART_MS && !isAsleep) void ensure($).catch(() => {})
@@ -456,6 +457,7 @@ export const register: Register = (on, options) => {
   permissions = options.permissions === 'answer' ? 'answer' : 'show'
   cacheTtlMs = (Number(options.cacheTtl) || 60) * 60_000
   canType = options.typing === 'on'
+  remindSec = options.remind === 'off' ? 0 : Number(options.remind) || 60
   hotkey = String(options.hotkey ?? 'ctrl+alt+space') === 'off' ? '' : String(options.hotkey ?? 'ctrl+alt+space')
   warnMs = options.cacheWarn === 'off' ? 0 : (Number(options.cacheWarn) || 5) * 60_000
 
@@ -513,6 +515,9 @@ export const register: Register = (on, options) => {
   on('tool.call', {}, async ($, e, next) => {
     if (!statusPath || (e as any).agentId) return next(e)
     const tool = String(e.tool)
+    // Claude's question: its own hook puts it in the bubble; a "Using AskUserQuestion" here would
+    // race it and could cover the choices.
+    if (tool === 'AskUserQuestion' && askViaPet) return next(e)
     const input = e as unknown as Record<string, unknown>
     void say($, { kind: 'work', title: titled(t('Arbeite', 'Working')), text: describe(tool, input, lang === 'de') })
     const r = await next(e)
