@@ -7,8 +7,8 @@
 // The mod writes a status file the pet reads. When Claude asks a question (AskUserQuestion) or
 // Next Steps has suggestions, the bubble shows them as buttons; a click lands in
 // <status file>.answer, which this mod picks up: the question is answered (whichever comes first,
-// the pet or the dialog in Claude Code) or the suggestion is sent. A permission request is only
-// shown: approving stays with Claude Code's own dialog.
+// the pet or the dialog in Claude Code) or the suggestion is sent. A permission request is shown;
+// with option permissions "answer" the bubble also offers "allow once" and "deny" for a while.
 import { read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
@@ -39,6 +39,7 @@ let petChoice = 'box'
 let perSession = false
 let askViaPet = true
 let suggestViaPet = true
+let permissions: 'show' | 'answer' = 'show'
 // Picks the pet may answer, by id; the answer file's last time read.
 const pending = new Map<string, (choice: string) => void>()
 let answerAt = 0
@@ -48,6 +49,8 @@ let stepsShownFor = ''
 let lastDone: PetNote | null = null
 const NEXT_STEPS = { plugin: 'mod-box', key: 'ns_steps' } as const
 const POLL_MS = 600
+// How long a permission request waits for a click in the pet (option permissions "answer").
+const PERMIT_WAIT_S = 90
 const changed = new Set<string>()
 
 const MODEL = 'haiku'
@@ -203,6 +206,14 @@ const BUILD =
   '$csc = Join-Path $env:WINDIR "Microsoft.NET\\Framework64\\v4.0.30319\\csc.exe"; ' +
   'if (-not (Test-Path $csc)) { $csc = Join-Path $env:WINDIR "Microsoft.NET\\Framework\\v4.0.30319\\csc.exe" }; ' +
   '& $csc -nologo -target:winexe -optimize+ "-out:$env:PET_EXE" -r:System.Windows.Forms.dll -r:System.Drawing.dll $env:PET_SRC; exit $LASTEXITCODE'
+// Waits for the pet's click on one permission request: prints the answer file once it names the
+// request, gives up when the status no longer offers it (answered elsewhere) or the time is over.
+const WAIT =
+  '$end = (Get-Date).AddSeconds([int]$env:PET_WAIT); ' +
+  'while ((Get-Date) -lt $end) { ' +
+  "if (Test-Path $env:PET_ANSWER) { $a = Get-Content -Raw $env:PET_ANSWER -ErrorAction SilentlyContinue; if ($a -match ('(?m)^id=' + [regex]::Escape($env:PET_ID) + '\\r?$')) { $a; exit 0 } }; " +
+  "$s = Get-Content -Raw $env:PET_STATUS -ErrorAction SilentlyContinue; if ($s -notmatch ('(?m)^ask=' + [regex]::Escape($env:PET_ID) + '\\r?$')) { exit 1 }; " +
+  'Start-Sleep -Milliseconds 250 }; exit 2'
 const START = "Start-Process -FilePath $env:PET_EXE -ArgumentList ('\"' + $env:PET_STATUS + '\"'), $env:PET_SECS"
 
 async function ensure($: EngineInterface): Promise<string | null> {
@@ -258,6 +269,7 @@ export const register: Register = (on, options) => {
   perSession = options.perSession === 'on'
   askViaPet = options.ask !== 'off'
   suggestViaPet = options.suggest !== 'off'
+  permissions = options.permissions === 'answer' ? 'answer' : 'show'
 
   on('session.start', {}, async ($, e, next) => {
     const r = await next(e)
@@ -368,17 +380,44 @@ export const register: Register = (on, options) => {
     return { result: { questions, answers } } as any
   })
 
-  // A permission request: shown, so it is not missed; the answer stays in Claude Code's dialog.
+  // A permission request: shown, so it is not missed. With option permissions "answer" the bubble
+  // offers "allow once" and "deny" for PERMIT_WAIT_S seconds; no rule is ever added ("always" stays
+  // with Claude Code's dialog). Another hook's decision comes first; a dialog answered meanwhile
+  // takes the buttons away again.
   on('classic.PermissionRequest', {}, async ($, e, next) => {
+    const r = await next(e)
     const req = e as unknown as { tool_name?: string; tool_input?: Record<string, unknown> }
-    if (statusPath && req.tool_name) {
-      void say($, {
-        kind: 'ask',
-        title: titled(t('Genehmigung nötig', 'Permission needed')),
-        text: `${describe(req.tool_name, req.tool_input ?? {}, lang === 'de')} · ${t('bitte in Claude Code bestätigen', 'please confirm in Claude Code')}`,
-      })
+    if (!statusPath || !req.tool_name || (r as { decision?: unknown })?.decision) return r
+    const what = describe(req.tool_name, req.tool_input ?? {}, lang === 'de')
+    const title = titled(t('Genehmigung nötig', 'Permission needed'))
+    if (permissions !== 'answer') {
+      void say($, { kind: 'ask', title, text: `${what} · ${t('bitte in Claude Code bestätigen', 'please confirm in Claude Code')}` })
+      return r
     }
-    return next(e)
+    const allow = t('Einmal erlauben', 'Allow once')
+    const deny = t('Ablehnen', 'Deny')
+    const id = `perm-${(await $.clock.now()).toString(36)}-${Math.random().toString(36).slice(2, 8)}`
+    await say($, { kind: 'ask', title, text: what, ask: id, choices: [allow, deny] })
+    const gone = () => void say($, { kind: 'work', title: titled(t('Arbeite', 'Working')), text: t('In Claude Code beantwortet.', 'Answered in Claude Code.') })
+    next.signal?.addEventListener('abort', gone)
+    const env = { PET_ANSWER: `${statusPath}.answer`, PET_STATUS: statusPath, PET_ID: id, PET_WAIT: String(PERMIT_WAIT_S) }
+    const run = await $.process
+      .run(['powershell', '-NoProfile', '-NonInteractive', '-Command', WAIT], { env, timeoutMs: (PERMIT_WAIT_S + 15) * 1000 })
+      .catch(() => null)
+    next.signal?.removeEventListener('abort', gone)
+    const picked = run && run.exitCode === 0 ? parseAnswer(run.stdout) : null
+    const choice = picked && picked.id === id ? picked.choice : null
+    if (choice === allow) {
+      void say($, { kind: 'work', title: titled(t('Erlaubt', 'Allowed')), text: what })
+      return { ...r, decision: { behavior: 'allow' } } as typeof r
+    }
+    if (choice === deny) {
+      void say($, { kind: 'error', title: titled(t('Abgelehnt', 'Denied')), text: what })
+      return { ...r, decision: { behavior: 'deny', message: t('Im Desktop-Pet abgelehnt.', 'Denied in the desktop pet.') } } as typeof r
+    }
+    // no click in time: the dialog decides, as without the pet
+    if (!next.signal?.aborted) void say($, { kind: 'ask', title, text: `${what} · ${t('bitte in Claude Code bestätigen', 'please confirm in Claude Code')}` })
+    return r
   })
 
   on('command.run', { command: 'pet' }, async ($, e) => {

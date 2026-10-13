@@ -8,9 +8,11 @@ const wait = (ms = 30) => new Promise(done => (globalThis as any).setTimeout(don
 
 // What the pet wrote after a click, as the test sets it: the answer file's text and its time.
 const answer = { text: '', at: 0 }
+const clicked = { permission: '' }
 
 function engine(on: any, os = 'Windows_NT', tool: (e: any) => unknown = () => ({ result: 'ok', text: 'ok' })) {
   answer.text = ''
+  clicked.permission = ''
   answer.at = 0
   const clock = mock.clock(on)
   mock.store(on)
@@ -36,6 +38,8 @@ function engine(on: any, os = 'Windows_NT', tool: (e: any) => unknown = () => ({
   on('env.get', (_$: any, e: any) => ({ value: ({ OS: os, TEMP: 'C:\\Temp', LOCALAPPDATA: 'C:\\Local' } as Record<string, string>)[e.name] }))
   on('process.run', (_$: any, e: any) => {
     runs.push([...e.argv])
+    // the permission waiter, as if the pet's button had been clicked
+    if (e.init?.env?.PET_ID && clicked.permission) return ok(`id=${e.init.env.PET_ID}`+String.fromCharCode(10)+`choice=${clicked.permission}`+String.fromCharCode(10))
     return ok()
   })
   on('tool.call', (_$: any, e: any) => tool(e))
@@ -169,6 +173,27 @@ group('Desktop pet: figures and clicks', () => {
     expect(r.decision).toBeUndefined()
     expect(writes.at(-1)!.text).toContain('title=shop · Permission needed')
     expect(writes.at(-1)!.text).toContain('text=Push the branch · please confirm in Claude Code')
+  })
+
+  test('permissions "answer": allow once from the pet, never a rule', { options: { ...QUIET, pet: true, petPermissions: 'answer' } }, async ($: any, on: any) => {
+    const { writes } = engine(on)
+    on('classic.PermissionRequest', () => ({}))
+    clicked.permission = 'Allow once' // what the waiter reads from the pet's answer file
+    await $.session.start({ surface: 'terminal', isInteractive: true, cwd: 'C:\\work\\shop' })
+    const r = await $.classic.PermissionRequest({ tool_name: 'Bash', tool_input: { command: 'git push', description: 'Push the branch' } })
+    expect(r.decision).toEqual({ behavior: 'allow' })
+    const offered = writes.find(w => w.text.includes('choice=Allow once'))!.text
+    expect(offered).toContain('choice=Allow once'+String.fromCharCode(10)+'choice=Deny')
+    await wait()
+    expect(writes.at(-1)!.text).toContain('title=shop · Allowed')
+  })
+
+  test('permissions "answer": no click, the dialog decides', { options: { ...QUIET, pet: true, petPermissions: 'answer' } }, async ($: any, on: any) => {
+    engine(on)
+    on('classic.PermissionRequest', () => ({}))
+    await $.session.start({ surface: 'terminal', isInteractive: true, cwd: 'C:\\work\\shop' })
+    const r = await $.classic.PermissionRequest({ tool_name: 'Bash', tool_input: { command: 'git push' } })
+    expect(r.decision).toBeUndefined()
   })
 
   test('Next Steps suggestions become buttons; a click sends one', { options: { ...QUIET, pet: true, nextSteps: true } }, async ($: any, on: any) => {

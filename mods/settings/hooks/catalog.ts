@@ -2413,6 +2413,34 @@ export const CATALOG: CatalogMod[] = [
           "off"
         ],
         "default": "on"
+      },
+      {
+        "key": "petPermissions",
+        "type": "string",
+        "multiple": false,
+        "title": {
+          "en": "Desktop Pet: permission requests",
+          "de": "Desktop-Pet: Genehmigungsanfragen"
+        },
+        "description": {
+          "en": "show: the pet only says that Claude Code is waiting for your approval. answer: the bubble also offers \"allow once\" and \"deny\" for 90 seconds (never \"always\"; no rule is added). Mind that the pet stays on top: a click there approves.",
+          "de": "anzeigen: Das Pet sagt nur, dass Claude Code auf deine Genehmigung wartet. beantworten: Die Blase bietet 90 Sekunden lang auch \"Einmal erlauben\" und \"Ablehnen\" (nie \"immer\"; es wird keine Regel angelegt). Bedenke, dass das Pet immer im Vordergrund steht: Ein Klick dort genehmigt."
+        },
+        "labels": {
+          "de": {
+            "show": "anzeigen",
+            "answer": "beantworten"
+          },
+          "en": {
+            "show": "show",
+            "answer": "answer"
+          }
+        },
+        "options": [
+          "show",
+          "answer"
+        ],
+        "default": "show"
       }
     ],
     "imported": false,

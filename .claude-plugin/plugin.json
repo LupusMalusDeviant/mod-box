@@ -692,6 +692,16 @@
       "title": "Desktop Pet: next-step suggestions",
       "description": "With Next Steps on, its suggestions appear as buttons in the bubble; a click sends one as your next prompt."
     },
+    "petPermissions": {
+      "type": "string",
+      "default": "show",
+      "options": [
+        "show",
+        "answer"
+      ],
+      "title": "Desktop Pet: permission requests",
+      "description": "show: the pet only says that Claude Code is waiting for your approval. answer: the bubble also offers \"allow once\" and \"deny\" for 90 seconds (never \"always\"; no rule is added). Mind that the pet stays on top: a click there approves."
+    },
     "promptRailMode": {
       "type": "string",
       "title": "Prompt Rail: mode",
