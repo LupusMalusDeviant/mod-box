@@ -106,7 +106,7 @@ The same window runs in terminal Claude Code, as a side pane next to the convers
 | `readGuard` | Read Guard | on | Holds a whole-file `Read` (no offset/limit) above the limit (default 50 KB), of a lockfile, minified code or a source map, and the same via `cat`, `type` or `Get-Content`; tells Claude the size, a token estimate and a better way (Grep, offset/limit). A second try at the same file goes through, and so does a `Read` with `allow_large` (Claude Code 2.1.296+). Claude Code itself stops a Read only at about 25,000 tokens. | no |
 | `subagentSaver` | Subagent Saver | on | Search subagents (Explore) that got no model of their own run on Sonnet (or Haiku) instead of inheriting the main model. An explicit model, forks, teammates and plugin agents stay untouched; the band shows how many were routed. | no |
 | `handoff` | Handoff Note | on | `/handoff` writes `.claude/handoff.local.md`, and a new session offers to continue from it. | one request over the warm cache |
-| `pet` | Desktop Pet | off | Windows only: a little cardboard box on the desktop, always on top, that says in a speech bubble what Claude is doing (file read or changed, command running, what a guard held) and sums up each turn. Drag it anywhere; right-click for quiet time. Built once with the C# compiler that ships with Windows into `%LOCALAPPDATA%\mod-box\pet`, signed with the Sign Guard script when one is set. | only with summary *haiku* |
+| `pet` | Desktop Pet | off | Windows only: a little companion on the desktop, always on top, that says in a speech bubble what Claude is doing (file read or changed, command running, what a guard held) and sums up each turn. A cardboard box or one of twelve figures (cat, dog, fox, bunny, hamster, owl, penguin, frog, axolotl, dragon, robot, ghost), cat, dog and bunny in nine coats, or a random one per session. Claude's questions and Next Steps' suggestions show as buttons in the bubble: a click answers or sends them, and whichever answers first, the pet or Claude Code's dialog, counts. Permission requests are shown; approving stays in Claude Code's dialog. Optionally one pet per session, side by side. Drag it anywhere; right-click for quiet time. Built once with the C# compiler that ships with Windows into `%LOCALAPPDATA%\mod-box\pet`, signed with the Sign Guard script when one is set. | only with summary *haiku* |
 | `ccSplitDiffView` | Split Diff | off | Draws the result of Edit and Write as a side-by-side diff with line numbers; only the drawing changes. | no |
 | `humanInTheLoop` | Human in the Loop | off | Claude hands you tasks only a person can do (a secret to put in place, an account it cannot reach, a decision); they stay in the band and in `/my-tasks` until you answer or mark them done. | no |
 | `promptRail` | Prompt Rail | off | A rail of this session's prompts above the input (terminal) or beside the transcript; hover to read one, click to jump to it (`/prompt-rail`). | no |
@@ -132,10 +132,13 @@ The same window runs in terminal Claude Code, as a side pane next to the convers
 | `/replay` | Replay Theater | steps through the last turn's edits |
 | `/keepwarm <6h|90m|always|off|status>` · `/cache-tax` | Cache Meter | keeps the cache warm · cache costs of this session |
 | `/pet [stop]` | Desktop Pet | shows the pet, or sends it off |
+| `/pet <figure> [coat]` | Desktop Pet | picks a figure, e.g. `/pet cat calico`, `/pet random` |
 | `/handoff` | Handoff Note | writes the handoff note |
 | `/show-last-compact` | Visible Compact | before/after of the last `/compact` |
 | `/catch-me-up` | Catch Me Up | live summary pane |
 | `/codebase-map [create\|update [feature]\|check\|publish [feature]]` | Codebase Map | opens the feature map; with an argument, prepares the blueprint prompt (for one feature, if named) |
+
+<p align="center"><img src="docs/images/pets.png" alt="The desktop pet's figures in every state: hello, working, done, asking, error; the cat, dog and bunny in their coats" width="760"><br><img src="docs/images/pet-question.png" alt="The cat asks Claude's question with three buttons in its bubble" width="340"></p>
 
 The window lists them too: next to each mod's name, and in full under ⚙.
 

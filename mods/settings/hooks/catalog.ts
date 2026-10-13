@@ -2173,8 +2173,8 @@ export const CATALOG: CatalogMod[] = [
       "de": "Desktop-Pet"
     },
     "description": {
-      "en": "A little cardboard box on the Windows desktop, always on top, that says in a speech bubble what Claude is doing: the file it reads or changes, the command that runs, what a guard held, and a short summary at the end of a turn. Drag it anywhere, right-click for quiet time. Built once with the C# compiler that ships with Windows and signed with the Sign Guard script when one is set. /pet shows it, /pet stop sends it off.",
-      "de": "Eine kleine Pappbox auf dem Windows-Desktop, immer im Vordergrund, die in einer Sprechblase sagt, was Claude gerade tut: welche Datei er liest oder ändert, welcher Befehl läuft, was ein Wächter angehalten hat, und am Ende des Turns eine kurze Zusammenfassung. Frei verschiebbar, Rechtsklick für Ruhe. Wird einmal mit dem C#-Compiler von Windows gebaut und mit dem Skript des Signier-Wächters signiert, wenn eines gesetzt ist. /pet zeigt es, /pet stop verabschiedet es."
+      "en": "A little companion on the Windows desktop, always on top: a cardboard box or one of twelve figures (cat, dog, fox, bunny, hamster, owl, penguin, frog, axolotl, dragon, robot, ghost; cat, dog and bunny in nine coats). It says in a speech bubble what Claude is doing, shows permission requests, and lets you click Claude's questions and Next Steps' suggestions right in the bubble. Drag it anywhere, right-click for quiet time; optionally one pet per session. Built once with the C# compiler that ships with Windows and signed with the Sign Guard script when one is set. /pet shows it, /pet cat calico picks a figure, /pet stop sends it off.",
+      "de": "Ein kleiner Begleiter auf dem Windows-Desktop, immer im Vordergrund: eine Pappbox oder eine von zwölf Figuren (Katze, Hund, Fuchs, Hase, Hamster, Eule, Pinguin, Frosch, Axolotl, Drache, Roboter, Geist; Katze, Hund und Hase in neun Fellfarben). Er sagt in einer Sprechblase, was Claude gerade tut, zeigt Genehmigungsanfragen an und lässt dich Claudes Fragen und die Vorschläge von Next Steps direkt in der Blase anklicken. Frei verschiebbar, Rechtsklick für Ruhe; auf Wunsch ein Pet pro Sitzung. Wird einmal mit dem C#-Compiler von Windows gebaut und mit dem Skript des Signier-Wächters signiert, wenn eines gesetzt ist. /pet zeigt es, /pet cat calico wählt eine Figur, /pet stop verabschiedet es."
     },
     "group": "display",
     "costs": null,
@@ -2222,6 +2222,197 @@ export const CATALOG: CatalogMod[] = [
           "haiku"
         ],
         "default": "off"
+      },
+      {
+        "key": "petKind",
+        "type": "string",
+        "multiple": false,
+        "title": {
+          "en": "Desktop Pet: figure",
+          "de": "Desktop-Pet: Figur"
+        },
+        "description": {
+          "en": "Who stands on the desktop. random: a different one each session. /pet cat calico switches it too.",
+          "de": "Wer auf dem Desktop steht. Zufall: jede Sitzung eine andere. /pet cat calico wechselt auch."
+        },
+        "labels": {
+          "de": {
+            "box": "Karton",
+            "cat": "Katze",
+            "dog": "Hund",
+            "fox": "Fuchs",
+            "bunny": "Hase",
+            "hamster": "Hamster",
+            "owl": "Eule",
+            "penguin": "Pinguin",
+            "frog": "Frosch",
+            "axolotl": "Axolotl",
+            "dragon": "Drache",
+            "robot": "Roboter",
+            "ghost": "Geist",
+            "random": "Zufall (pro Sitzung)"
+          },
+          "en": {
+            "box": "cardboard box",
+            "cat": "cat",
+            "dog": "dog",
+            "fox": "fox",
+            "bunny": "bunny",
+            "hamster": "hamster",
+            "owl": "owl",
+            "penguin": "penguin",
+            "frog": "frog",
+            "axolotl": "axolotl",
+            "dragon": "dragon",
+            "robot": "robot",
+            "ghost": "ghost",
+            "random": "random (per session)"
+          }
+        },
+        "options": [
+          "box",
+          "cat",
+          "dog",
+          "fox",
+          "bunny",
+          "hamster",
+          "owl",
+          "penguin",
+          "frog",
+          "axolotl",
+          "dragon",
+          "robot",
+          "ghost",
+          "random"
+        ],
+        "default": "box"
+      },
+      {
+        "key": "petFur",
+        "type": "string",
+        "multiple": false,
+        "title": {
+          "en": "Desktop Pet: coat (cat, dog, bunny)",
+          "de": "Desktop-Pet: Fell (Katze, Hund, Hase)"
+        },
+        "description": {
+          "en": "The coat colour of cat, dog and bunny.",
+          "de": "Die Fellfarbe von Katze, Hund und Hase."
+        },
+        "labels": {
+          "de": {
+            "auto": "passend zur Figur",
+            "ginger": "rot getigert",
+            "black": "schwarz",
+            "white": "weiß",
+            "grey": "grau getigert",
+            "brown": "braun getigert",
+            "cream": "creme",
+            "calico": "glückskatze (dreifarbig)",
+            "siamese": "siam",
+            "tuxedo": "schwarz-weiß (Frack)",
+            "random": "Zufall"
+          },
+          "en": {
+            "auto": "the figure's own",
+            "ginger": "ginger tabby",
+            "black": "black",
+            "white": "white",
+            "grey": "grey tabby",
+            "brown": "brown tabby",
+            "cream": "cream",
+            "calico": "calico",
+            "siamese": "siamese",
+            "tuxedo": "tuxedo",
+            "random": "random"
+          }
+        },
+        "options": [
+          "auto",
+          "ginger",
+          "black",
+          "white",
+          "grey",
+          "brown",
+          "cream",
+          "calico",
+          "siamese",
+          "tuxedo",
+          "random"
+        ],
+        "default": "auto"
+      },
+      {
+        "key": "petPerSession",
+        "type": "string",
+        "multiple": false,
+        "title": {
+          "en": "Desktop Pet: one pet per session",
+          "de": "Desktop-Pet: ein Pet pro Sitzung"
+        },
+        "description": {
+          "en": "on: every Claude Code session gets its own pet; they stand side by side. off: one pet for all.",
+          "de": "an: jede Claude-Code-Sitzung bekommt ihr eigenes Pet; sie stehen nebeneinander. aus: eines für alle."
+        },
+        "labels": {
+          "de": {
+            "on": "an",
+            "off": "aus"
+          }
+        },
+        "options": [
+          "off",
+          "on"
+        ],
+        "default": "off"
+      },
+      {
+        "key": "petAsk",
+        "type": "string",
+        "multiple": false,
+        "title": {
+          "en": "Desktop Pet: answer Claude's questions",
+          "de": "Desktop-Pet: Claudes Fragen beantworten"
+        },
+        "description": {
+          "en": "Claude's questions (AskUserQuestion) appear as buttons in the bubble too; the first answer counts, the pet's or the dialog's.",
+          "de": "Claudes Fragen (AskUserQuestion) erscheinen auch als Knöpfe in der Blase; die erste Antwort zählt, die vom Pet oder die im Dialog."
+        },
+        "labels": {
+          "de": {
+            "on": "an",
+            "off": "aus"
+          }
+        },
+        "options": [
+          "on",
+          "off"
+        ],
+        "default": "on"
+      },
+      {
+        "key": "petSuggest",
+        "type": "string",
+        "multiple": false,
+        "title": {
+          "en": "Desktop Pet: next-step suggestions",
+          "de": "Desktop-Pet: Vorschläge für den nächsten Schritt"
+        },
+        "description": {
+          "en": "With Next Steps on, its suggestions appear as buttons in the bubble; a click sends one as your next prompt.",
+          "de": "Ist Next Steps an, erscheinen seine Vorschläge als Knöpfe in der Blase; ein Klick schickt einen als nächsten Prompt."
+        },
+        "labels": {
+          "de": {
+            "on": "an",
+            "off": "aus"
+          }
+        },
+        "options": [
+          "on",
+          "off"
+        ],
+        "default": "on"
       }
     ],
     "imported": false,
@@ -2233,6 +2424,13 @@ export const CATALOG: CatalogMod[] = [
         "text": {
           "en": "show the desktop pet",
           "de": "das Desktop-Pet zeigen"
+        }
+      },
+      {
+        "name": "/pet <figure> [coat]",
+        "text": {
+          "en": "pick a figure, e.g. /pet cat calico",
+          "de": "Figur wählen, z. B. /pet cat calico"
         }
       },
       {
@@ -2267,7 +2465,7 @@ export const CATALOG: CatalogMod[] = [
       ],
       "network": false,
       "model": true,
-      "settings": false
+      "settings": true
     }
   },
   {

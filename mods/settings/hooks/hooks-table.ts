@@ -139,6 +139,7 @@ export const HOOKS: Record<string, string[]> = {
     "ui.render"
   ],
   "pet": [
+    "classic.PermissionRequest",
     "command.run",
     "session.end",
     "session.start",

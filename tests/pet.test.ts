@@ -1,20 +1,29 @@
 import { describe as group, expect, mock, test } from 'claude-code/testing'
 
-import { describe, gist, statusText } from '../mods/pet/hooks/register'
+import { describe, gist, parseAnswer, pickLook, statusText } from '../mods/pet/hooks/register'
 
 const QUIET = { language: 'en', filetree: false, savvyProgress: false, replayTheater: false, cacheMeter: false, readGuard: false, packageGuard: false }
 const ok = (stdout = '') => ({ value: { exitCode: 0, stdout, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } })
 const wait = (ms = 30) => new Promise(done => (globalThis as any).setTimeout(done, ms))
 
-function engine(on: any, os = 'Windows_NT') {
-  mock.clock(on)
+// What the pet wrote after a click, as the test sets it: the answer file's text and its time.
+const answer = { text: '', at: 0 }
+
+function engine(on: any, os = 'Windows_NT', tool: (e: any) => unknown = () => ({ result: 'ok', text: 'ok' })) {
+  answer.text = ''
+  answer.at = 0
+  const clock = mock.clock(on)
   mock.store(on)
   const writes: Array<{ path: string; text: string }> = []
   const runs: string[][] = []
   on('command.register', () => ({ value: {} }))
   on('ui.toast', () => ({ value: undefined }))
   on('fs.exists', () => ({ value: false }))
-  on('fs.stat', (_$: any, e: any) => (/Pet\.cs$/.test(e.path) ? { value: { kind: 'file', size: 1, mtimeMs: 5, isLink: false } } : { deny: 'ENOENT' }))
+  on('fs.stat', (_$: any, e: any) =>
+    /Pet\.cs$/.test(e.path) ? { value: { kind: 'file', size: 1, mtimeMs: 5, isLink: false } }
+    : /\.answer$/.test(e.path) && answer.at ? { value: { kind: 'file', size: 1, mtimeMs: answer.at, isLink: false } }
+    : { deny: 'ENOENT' })
+  on('fs.read', (_$: any, e: any) => (/\.answer$/.test(e.path) && answer.at ? { value: answer.text } : { deny: 'ENOENT' }))
   on('fs.write', (_$: any, e: any) => {
     writes.push({ path: e.path, text: e.text })
     return { value: undefined }
@@ -29,10 +38,17 @@ function engine(on: any, os = 'Windows_NT') {
     runs.push([...e.argv])
     return ok()
   })
-  on('tool.call', () => ({ result: 'ok', text: 'ok' }))
+  on('tool.call', (_$: any, e: any) => tool(e))
   on('turn.start', (_$: any, e: any) => ({ turnId: e.turnId }))
   on('turn.complete', () => ({ text: '' }))
-  return { writes, runs }
+  return { writes, runs, clock }
+}
+
+// The pet's click: the answer file for the question last shown.
+function click(writes: Array<{ text: string }>, choice: string) {
+  const id = /^ask=(.*)$/m.exec(writes.at(-1)!.text)?.[1]
+  answer.text = `id=${id}\nchoice=${choice}\n`
+  answer.at += 1
 }
 
 group('Desktop pet: words', () => {
@@ -104,5 +120,91 @@ group('Desktop pet: in the session', () => {
     await $.session.start({ surface: 'terminal', isInteractive: true, cwd: 'C:\\work\\shop' })
     await wait()
     expect(writes).toEqual([])
+  })
+})
+
+group('Desktop pet: figures and clicks', () => {
+  test('the status file carries the figure and the choices; the answer file is read back', () => {
+    const text = statusText({ kind: 'ask', title: 'q', text: 'Which one?', ask: 'q-1-0', choices: ['A', 'B'] }, 7, { pet: 'cat', fur: 'calico' })
+    expect(text).toBe('at=7\nkind=ask\ntitle=q\ntext=Which one?\npet=cat\nfur=calico\nask=q-1-0\nchoice=A\nchoice=B\n')
+    expect(parseAnswer('id=q-1-0\nchoice=B\n')).toEqual({ id: 'q-1-0', choice: 'B' })
+    expect(parseAnswer('id=\nchoice=B')).toBe(null)
+    expect(pickLook('cat', 'tuxedo')).toEqual({ pet: 'cat', fur: 'tuxedo' })
+    expect(pickLook('unicorn', 'plaid')).toEqual({ pet: 'box', fur: 'auto' })
+    expect(pickLook('random', 'auto', () => 0).pet).toBe('cat') // never the box by chance
+  })
+
+  test("Claude's question: a click in the pet answers it", { options: { ...QUIET, pet: true, petKind: 'cat' } }, async ($: any, on: any) => {
+    // the dialog waits
+    const { writes, clock } = engine(on, 'Windows_NT', e => (e.tool === 'AskUserQuestion' ? new Promise(() => {}) : { result: 'ok', text: 'ok' }))
+    await $.session.start({ surface: 'terminal', isInteractive: true, cwd: 'C:\\work\\shop' })
+    await wait()
+    const questions = [{ question: 'Which database?', header: 'DB', multiSelect: false, options: [{ label: 'PostgreSQL', description: '' }, { label: 'SQLite', description: '' }] }]
+    const call = $.tool.call({ tool: 'AskUserQuestion', questions })
+    await wait()
+    const shown = writes.at(-1)!.text
+    expect(shown).toContain('pet=cat')
+    expect(shown).toContain('choice=PostgreSQL\nchoice=SQLite')
+    click(writes, 'SQLite')
+    await clock.advance(700)
+    const r = await call
+    expect(r.result.answers).toEqual({ 'Which database?': 'SQLite' })
+  })
+
+  test("Claude's question answered in the dialog first: that answer counts", { options: { ...QUIET, pet: true } }, async ($: any, on: any) => {
+    const { writes } = engine(on, 'Windows_NT', e => (e.tool === 'AskUserQuestion' ? { result: { questions: e.questions, answers: { 'Go?': 'Yes' } }, text: 'Yes' } : { result: 'ok', text: 'ok' }))
+    await $.session.start({ surface: 'terminal', isInteractive: true, cwd: 'C:\\work\\shop' })
+    const r = await $.tool.call({ tool: 'AskUserQuestion', questions: [{ question: 'Go?', header: 'Go', multiSelect: false, options: [{ label: 'Yes', description: '' }, { label: 'No', description: '' }] }] })
+    expect(r.result.answers).toEqual({ 'Go?': 'Yes' })
+    await wait()
+    expect(writes.at(-1)!.text).not.toContain('choice=')
+  })
+
+  test('a permission request is shown, not answered', { options: { ...QUIET, pet: true } }, async ($: any, on: any) => {
+    const { writes } = engine(on)
+    on('classic.PermissionRequest', () => ({}))
+    await $.session.start({ surface: 'terminal', isInteractive: true, cwd: 'C:\\work\\shop' })
+    const r = await $.classic.PermissionRequest({ tool_name: 'Bash', tool_input: { command: 'git push', description: 'Push the branch' } })
+    await wait()
+    expect(r.decision).toBeUndefined()
+    expect(writes.at(-1)!.text).toContain('title=shop · Permission needed')
+    expect(writes.at(-1)!.text).toContain('text=Push the branch · please confirm in Claude Code')
+  })
+
+  test('Next Steps suggestions become buttons; a click sends one', { options: { ...QUIET, pet: true, nextSteps: true } }, async ($: any, on: any) => {
+    const { writes, clock } = engine(on)
+    const sent: string[] = []
+    on('prompt.submit', (_$: any, e: any) => {
+      sent.push(e.text)
+      return { text: e.text }
+    })
+    on('agent.list', () => ({ value: [] }))
+    on('session.messages', () => ({ value: [{ role: 'user', text: 'fix the login' }] }))
+    on('model.complete', () => ({ value: { isAnswered: true, text: 'Run the login tests\nOpen a draft PR', usage: { input_tokens: 1, output_tokens: 1, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 } } }))
+    await $.session.start({ surface: 'terminal', isInteractive: true, cwd: 'C:\\work\\shop' })
+    await $.turn.complete({ turnId: 't1', answer: 'Fixed the login check. The test passes now, all green.', durationMs: 5, isAborted: false, reason: 'answer' })
+    await wait()
+    await clock.advance(700)
+    await wait()
+    expect(writes.at(-1)!.text).toContain('choice=Run the login tests\nchoice=Open a draft PR')
+    click(writes, 'Open a draft PR')
+    await clock.advance(700)
+    await wait()
+    expect(sent).toContain('Open a draft PR')
+  })
+
+  test('/pet fox picks the figure and keeps it in the settings', { options: { ...QUIET, pet: true } }, async ($: any, on: any) => {
+    const { writes } = engine(on)
+    const sets: Array<{ key: string; value: unknown }> = []
+    on('config.set', (_$: any, e: any) => {
+      sets.push({ key: e.key, value: e.value })
+      return { value: e.value }
+    })
+    on('command.run', () => ({ text: 'NOBODY' }))
+    await $.session.start({ surface: 'terminal', isInteractive: true, cwd: 'C:\\work\\shop' })
+    const r = await $.command.run({ command: 'pet', args: 'fox' })
+    expect(r.text).toContain('fox')
+    expect(sets).toContainEqual({ key: 'mod-box.petKind', value: 'fox' })
+    expect(writes.at(-1)!.text).toContain('pet=fox')
   })
 })
