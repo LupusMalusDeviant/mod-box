@@ -1,6 +1,6 @@
 import { describe as group, expect, mock, test } from 'claude-code/testing'
 
-import { cacheState, describe, gist, parseAnswer, parseLook, pickLook, statusText } from '../mods/pet/hooks/register'
+import { cacheState, describe, gist, lastQuestion, parseAnswer, parseLook, pickLook, statusText } from '../mods/pet/hooks/register'
 
 const QUIET = { language: 'en', filetree: false, savvyProgress: false, replayTheater: false, cacheMeter: false, readGuard: false, packageGuard: false }
 const ok = (stdout = '') => ({ value: { exitCode: 0, stdout, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } })
@@ -72,6 +72,14 @@ group('Desktop pet: words', () => {
   test('takes the gist of an answer without markdown', () => {
     expect(gist('**Done.** I fixed `login.ts` and added a test.\n\n```ts\ncode\n```\nMore details follow here.')).toBe('Done. I fixed login.ts and added a test. More details follow here.')
     expect(gist('A'.repeat(400)).length).toBeLessThanOrEqual(170)
+  })
+
+  test('finds the question an answer ends with', () => {
+    const nl = String.fromCharCode(10)
+    expect(lastQuestion(['The name tag is built.', '', 'Shall I **push**, open the PR and merge? Then I rebuild the pet.'].join(nl))).toBe('Shall I push, open the PR and merge?')
+    expect(lastQuestion(['Is this a question? Not at the end.', '', 'Done, all green.'].join(nl))).toBe(null)
+    expect(lastQuestion('See [the run](https://x.test/run?id=4) for details.')).toBe(null)
+    expect(lastQuestion('Ready. Which one?')).toBe('Which one?')
   })
 
   test('writes key=value lines with escaped newlines', () => {
@@ -453,6 +461,7 @@ group('Desktop pet: typing', () => {
     await $.session.start({ surface: 'terminal', isInteractive: true, cwd: CWD })
     await wait()
     const status = writes.at(-1)!.text
+    expect(status).toMatch(/^name=shop$/m)
     expect(status).toContain('free=prompt-s')
     expect(status).toContain('type=on' + NL + 'hotkey=ctrl+alt+space')
     type(writes, 'run the boss fight tests')

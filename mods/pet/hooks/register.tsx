@@ -150,6 +150,16 @@ export function gist(answer: string, max = 170): string {
   return cut(out || plain, max)
 }
 
+/** The question an answer ends with (in its last paragraph), without markdown; null when none. Pure. */
+export function lastQuestion(answer: string, max = 200): string | null {
+  const paragraphs = answer.replace(/```[\s\S]*?```/g, ' ').split(/\n\s*\n/).map(p => p.trim()).filter(Boolean)
+  const last = paragraphs.at(-1) ?? ''
+  if (!last.includes('?')) return null
+  const sentences = gist(last, 100_000).match(/[^.!?]+[.!?]+|[^.!?]+$/g) ?? []
+  const question = [...sentences].reverse().find(s => s.trim().endsWith('?'))
+  return question ? cut(question.trim(), max) : null
+}
+
 /** The status file the pet reads: key=value lines, newlines in the text escaped. */
 export function statusText(note: PetNote, at: number, figure?: PetLook, extra: Record<string, string> = {}): string {
   const esc = (s: string) => s.replace(/\r?\n/g, '\\n')
@@ -351,7 +361,8 @@ async function say($: EngineInterface, note: PetNote) {
   const now = await $.clock.now()
   // Typing: a note that answers something names its id; everything else goes to this session's prompt.
   const typed = canType ? { ...note, free: note.free ?? promptId() } : { ...note, free: undefined }
-  const extra = canType ? { type: 'on', hotkey, typelabel: note.free ? t('Eigene Antwort …', 'Write your own answer …') : '' } : {}
+  // name: the project, shown under the pet all the time
+  const extra = { name: project, ...(canType ? { type: 'on', hotkey, typelabel: note.free ? t('Eigene Antwort …', 'Write your own answer …') : '' } : {}) }
   await $.fs.write(statusPath, statusText(typed, now, look, extra)).catch(() => {})
   // asleep (one pet per active session, cache cold): the note only reaches a pet that still runs
   if (now - started > RESTART_MS && !isAsleep) void ensure($).catch(() => {})
@@ -533,16 +544,21 @@ export const register: Register = (on, options) => {
       steps ? t(`${steps} Schritt${steps === 1 ? '' : 'e'}`, `${steps} step${steps === 1 ? '' : 's'}`) : '',
       changed.size ? t(`${changed.size} Datei${changed.size === 1 ? '' : 'en'} geändert`, `${changed.size} file${changed.size === 1 ? '' : 's'} changed`) : '',
     ].filter(Boolean)
-    const isQuestion = /\?\s*$/.test(e.answer.trim())
+    // An answer that ends by asking you something: the pet shows that question (it stays, like
+    // Claude's own questions), with the summary in front when Haiku made one.
+    const question = lastQuestion(e.answer)
+    const isQuestion = question !== null
     const kind: PetKind = isQuestion ? 'ask' : 'done'
     const title = titled([isQuestion ? t('Frage an dich', 'A question for you') : t('Fertig', 'Done'), ...facts].join(' · '))
-    lastDone = { kind, title, text: gist(e.answer) || t('Fertig.', 'Done.') }
+    const first = question ?? (gist(e.answer) || t('Fertig.', 'Done.'))
+    lastDone = { kind, title, text: first }
     if (suggestViaPet && !isQuestion) watchStepsUntil = (await $.clock.now()) + 45_000
     void (async () => {
-      await say($, { kind, title, text: gist(e.answer) || t('Fertig.', 'Done.') })
+      await say($, { kind, title, text: first })
       if (summary === 'haiku' && e.answer.trim().length > 200) {
-        const text = await sum($, e.answer).catch(() => null)
-        if (text) {
+        const said = await sum($, e.answer).catch(() => null)
+        if (said) {
+          const text = question ? `${said}\n${question}` : said
           lastDone = { kind, title, text }
           await say($, { kind, title, text })
         }

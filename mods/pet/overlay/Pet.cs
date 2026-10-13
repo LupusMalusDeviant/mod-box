@@ -97,6 +97,8 @@ namespace ModBox
         public string Free = "";
         public string Hotkey = "";
         public string TypeLabel = "";
+        /// The project the pet stands for (its tag, always shown).
+        public string Name = "";
 
         public static Status Read(string path)
         {
@@ -118,6 +120,7 @@ namespace ModBox
                 else if (key == "free") s.Free = value;
                 else if (key == "hotkey") s.Hotkey = value;
                 else if (key == "typelabel") s.TypeLabel = value;
+                else if (key == "name") s.Name = value;
             }
             return s;
         }
@@ -125,7 +128,7 @@ namespace ModBox
 
     sealed class PetWindow : Form
     {
-        const int W = 340, H = 340, BODY = 64, BUTTON = 26;
+        const int W = 340, H = 340, BODY = 64, BUTTON = 26, TAG = 18;
         readonly string statusPath;
         readonly int bubbleMs;
         readonly System.Windows.Forms.Timer timer = new System.Windows.Forms.Timer();
@@ -287,12 +290,12 @@ namespace ModBox
             input = new InputBox(Accent(), (project.Length > 0 ? project + "  \u00b7  " : "") + "Enter senden \u00b7 Shift+Enter neue Zeile \u00b7 Esc", text =>
             {
                 if (!WriteAnswer(target, text)) return;
-                status = new Status { Kind = "work", Title = "\u2713", Text = text, Pet = status.Pet, Fur = status.Fur, CanType = status.CanType, Free = status.Free, Hotkey = status.Hotkey };
+                status = new Status { Kind = "work", Title = "\u2713", Text = text, Pet = status.Pet, Fur = status.Fur, CanType = status.CanType, Free = status.Free, Hotkey = status.Hotkey, Name = status.Name };
                 isBubble = true;
                 shownAt = DateTime.Now;
                 Draw();
             });
-            input.Open(new Point(Left + 8, Top + H - BODY - 10 - InputBox.HEIGHT - 8));
+            input.Open(new Point(Left + 8, Top + H - BODY - 10 - TAG - InputBox.HEIGHT - 8));
         }
 
         protected override void OnMouseDown(MouseEventArgs e)
@@ -402,7 +405,7 @@ namespace ModBox
         void Pick(string choice)
         {
             if (!WriteAnswer(status.Ask, choice)) return;
-            status = new Status { Kind = "work", Title = "\u2713", Text = choice, Pet = status.Pet, Fur = status.Fur };
+            status = new Status { Kind = "work", Title = "\u2713", Text = choice, Pet = status.Pet, Fur = status.Fur, CanType = status.CanType, Free = status.Free, Hotkey = status.Hotkey, Name = status.Name };
             hovered = -1;
             Cursor = Cursors.Default;
             shownAt = DateTime.Now;
@@ -414,7 +417,7 @@ namespace ModBox
         {
             base.OnMouseClick(e);
             // a click on the pet itself brings the last message back
-            if (e.Button == MouseButtons.Left && !isBubble && e.Y > H - BODY - 30) { isBubble = true; shownAt = DateTime.Now; Draw(); }
+            if (e.Button == MouseButtons.Left && !isBubble && e.Y > H - BODY - 30 - TAG) { isBubble = true; shownAt = DateTime.Now; Draw(); }
         }
 
         Color Accent() { return painter.Accent(); }
@@ -428,7 +431,7 @@ namespace ModBox
         /// For the preview: Claude's question with three choices, the second under the pointer.
         public void ShowChoices()
         {
-            status = new Status { Kind = "ask", Title = "shop · A question for you", Text = "Which database should the new service use?", Pet = "cat", Fur = "ginger", Ask = "q" };
+            status = new Status { Kind = "ask", Title = "shop · A question for you", Text = "Which database should the new service use?", Pet = "cat", Fur = "ginger", Ask = "q", Name = "shop" };
             status.Choices.AddRange(new[] { "PostgreSQL (Recommended)", "SQLite", "Keep the JSON files" });
             status.CanType = true;
             status.Free = "q";
@@ -447,14 +450,43 @@ namespace ModBox
                     g.TextRenderingHint = TextRenderingHint.AntiAliasGridFit;
                     g.Clear(Color.Transparent);
                     int bob = (int)Math.Round(Math.Sin(tick / 6.0) * (status.Kind == "work" ? 3 : 1.5));
-                    var body = new Rectangle(W - BODY - 18, H - BODY - 10 + bob, BODY, BODY);
+                    var body = new Rectangle(W - BODY - 18, H - BODY - 10 - TAG + bob, BODY, BODY);
                     painter.Kind = status.Kind; painter.Pet = status.Pet; painter.Fur = status.Fur; painter.Tick = tick;
                     if (isBubble) DrawBubble(g, body);
                     else { bubbleRect = Rectangle.Empty; buttons.Clear(); }
                     painter.Paint(g, body);
+                    DrawTag(g, body);
                 }
             }
             return bmp;
+        }
+
+        // The project's name under the pet, always: which session this one is.
+        void DrawTag(Graphics g, Rectangle body)
+        {
+            if (status.Name.Length == 0) return;
+            using (var font = new Font("Segoe UI Semibold", 8.5f))
+            {
+                string name = status.Name;
+                var size = g.MeasureString(name, font);
+                while (size.Width > W - 24 && name.Length > 2)
+                {
+                    name = name.Substring(0, name.Length - 2) + "\u2026";
+                    size = g.MeasureString(name, font);
+                }
+                int w = (int)Math.Ceiling(size.Width) + 12, h = 17;
+                int x = Math.Max(4, Math.Min(W - w - 4, body.Left + body.Width / 2 - w / 2));
+                var rect = new Rectangle(x, H - TAG - 4, w, h);
+                using (var path = Rounded(rect, 8))
+                using (var fill = new SolidBrush(Color.FromArgb(225, 34, 34, 40)))
+                using (var pen = new Pen(Accent(), 1.4f))
+                using (var text = new SolidBrush(Color.FromArgb(235, 235, 240)))
+                {
+                    g.FillPath(fill, path);
+                    g.DrawPath(pen, path);
+                    g.DrawString(name, font, text, x + 6, rect.Top + (h - size.Height) / 2);
+                }
+            }
         }
 
         void DrawBubble(Graphics g, Rectangle body)
@@ -471,7 +503,7 @@ namespace ModBox
                 int choicesH = n == 0 ? 0 : n * (BUTTON + 5) + 4;
                 int bw = (int)Math.Min(maxW, Math.Max(Math.Max(textSize.Width, titleSize.Width) + 26, n > 0 ? 240 : 0));
                 int head = painter.Headroom();
-                int bh = (int)Math.Min(H - BODY - 30 - head, textSize.Height + titleSize.Height + 20 + choicesH);
+                int bh = (int)Math.Min(H - BODY - 30 - TAG - head, textSize.Height + titleSize.Height + 20 + choicesH);
                 var r = new Rectangle(W - bw - 8, body.Top - bh - 14 - head, bw, bh);
                 bubbleRect = r;
                 using (var path = Rounded(r, 12))
