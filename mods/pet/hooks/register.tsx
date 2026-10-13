@@ -16,6 +16,10 @@
 // that keeps it warm, when the Cache Meter is on). With one pet per session a session's pet stays
 // only while its cache is warm: it goes to sleep when the cache is cold and is back with the next
 // message.
+// With option typing on, a hotkey, the pet's menu or a button in the bubble opens a small input box
+// over the desktop: the text goes to this session as the next prompt, or as the answer to Claude's
+// open question (free text, "Other"), or in place of a suggestion. Any program of the same user can
+// write the answer file, so this is off by default.
 import { read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
@@ -24,7 +28,7 @@ import type { UsageBook } from '../../settings/hooks/usage'
 
 export type PetKind = 'hello' | 'work' | 'done' | 'ask' | 'error' | 'bye' | 'cold'
 /** One message for the bubble; with `ask` and `choices`, buttons whose click answers `ask`. */
-export type PetNote = { kind: PetKind; title: string; text: string; ask?: string; choices?: string[] }
+export type PetNote = { kind: PetKind; title: string; text: string; ask?: string; choices?: string[]; free?: string }
 /** Which figure stands on the desktop and, for cat, dog and bunny, its coat. */
 export type PetLook = { pet: string; fur: string }
 
@@ -47,6 +51,8 @@ let perSession = false
 let askViaPet = true
 let suggestViaPet = true
 let permissions: 'show' | 'answer' = 'show'
+let canType = false
+let hotkey = ''
 // Picks the pet may answer, by id; the answer file's last time read.
 const pending = new Map<string, (choice: string) => void>()
 let answerAt = 0
@@ -145,11 +151,13 @@ export function gist(answer: string, max = 170): string {
 }
 
 /** The status file the pet reads: key=value lines, newlines in the text escaped. */
-export function statusText(note: PetNote, at: number, figure?: PetLook): string {
+export function statusText(note: PetNote, at: number, figure?: PetLook, extra: Record<string, string> = {}): string {
   const esc = (s: string) => s.replace(/\r?\n/g, '\\n')
   const lines = [`at=${at}`, `kind=${note.kind}`, `title=${esc(note.title)}`, `text=${esc(note.text)}`]
   if (figure) lines.push(`pet=${figure.pet}`, `fur=${figure.fur}`)
   if (note.ask && note.choices?.length) lines.push(`ask=${note.ask}`, ...note.choices.map(c => `choice=${esc(c)}`))
+  if (note.free) lines.push(`free=${note.free}`)
+  for (const [k, v] of Object.entries(extra)) if (v) lines.push(`${k}=${esc(v)}`)
   return [...lines, ''].join('\n')
 }
 
@@ -202,6 +210,17 @@ function listenForLook($: EngineInterface) {
     const next = parseLook(choice, look)
     const [named = '', coat = ''] = choice.trim().toLowerCase().split(/\s+/)
     if (next) void applyLook($, next, named, coat !== '').catch(() => {})
+  })
+}
+
+const promptId = () => `prompt-${sessionId.replace(/[^\w-]/g, '').slice(0, 8) || 'x'}`
+
+// Typed in the pet with nothing open: the session's next prompt (queued when a turn runs).
+function listenForPrompt($: EngineInterface) {
+  if (!canType) return
+  pending.set(promptId(), text => {
+    listenForPrompt($)
+    void sendSuggestion($, text).catch(() => {})
   })
 }
 
@@ -292,7 +311,7 @@ async function poll($: EngineInterface) {
     const id = `ns-${s.turnId}`
     for (const key of [...pending.keys()]) if (key.startsWith('ns-')) pending.delete(key)
     pending.set(id, text => void sendSuggestion($, text))
-    await say($, { ...lastDone, ask: id, choices: s.items })
+    await say($, { ...lastDone, ask: id, choices: s.items, free: id })
   }
 }
 
@@ -304,7 +323,10 @@ async function sendSuggestion($: EngineInterface, text: string) {
 async function say($: EngineInterface, note: PetNote) {
   if (!statusPath) return
   const now = await $.clock.now()
-  await $.fs.write(statusPath, statusText(note, now, look)).catch(() => {})
+  // Typing: a note that answers something names its id; everything else goes to this session's prompt.
+  const typed = canType ? { ...note, free: note.free ?? promptId() } : { ...note, free: undefined }
+  const extra = canType ? { type: 'on', hotkey, typelabel: note.free ? t('Eigene Antwort …', 'Write your own answer …') : '' } : {}
+  await $.fs.write(statusPath, statusText(typed, now, look, extra)).catch(() => {})
   if (now - started > RESTART_MS) void ensure($).catch(() => {})
 }
 
@@ -395,6 +417,8 @@ export const register: Register = (on, options) => {
   suggestViaPet = options.suggest !== 'off'
   permissions = options.permissions === 'answer' ? 'answer' : 'show'
   cacheTtlMs = (Number(options.cacheTtl) || 60) * 60_000
+  canType = options.typing === 'on'
+  hotkey = String(options.hotkey ?? 'ctrl+alt+space') === 'off' ? '' : String(options.hotkey ?? 'ctrl+alt+space')
   warnMs = options.cacheWarn === 'off' ? 0 : (Number(options.cacheWarn) || 5) * 60_000
 
   on('session.start', {}, async ($, e, next) => {
@@ -411,6 +435,7 @@ export const register: Register = (on, options) => {
       if (mine && PETS.includes(mine.pet)) look = mine
     }
     listenForLook($)
+    listenForPrompt($)
     lastRequestAt = (await $.clock.now()) || 1
     $.clock.every(POLL_MS, () => void poll($).catch(() => {}))
     project = base(await $.session.cwd().catch(() => ''))
@@ -498,7 +523,7 @@ export const register: Register = (on, options) => {
     const call = e as unknown as { questions?: AskQuestion[]; tool_use_id?: string; agentId?: string }
     if (!statusPath || !askViaPet || call.agentId) return next(e)
     const questions = call.questions ?? []
-    const isPickable = questions.length > 0 && questions.every(q => !q.multiSelect && (q.type ?? 'choice') === 'choice' && (q.options?.length ?? 0) >= 2)
+    const isPickable = questions.length > 0 && questions.every(q => !q.multiSelect && (((q.type ?? 'choice') === 'choice' && (q.options?.length ?? 0) >= 2) || (canType && q.type === 'text')))
     const ask = (q: AskQuestion | undefined) => titled(q?.header ? `${t('Frage', 'Question')} · ${q.header}` : t('Frage an dich', 'A question for you'))
     if (!isPickable) {
       void say($, { kind: 'ask', title: ask(questions[0]), text: cut(questions[0]?.question ?? t('Claude fragt dich etwas.', 'Claude has a question.'), 200) })
@@ -509,7 +534,7 @@ export const register: Register = (on, options) => {
     const answers: Record<string, string> = {}
     for (const [n, q] of questions.entries()) {
       const id = `q-${call.tool_use_id ?? 'x'}-${n}`
-      await say($, { kind: 'ask', title: ask(q), text: cut(q.question, 200), ask: id, choices: q.options!.map(o => o.label) })
+      await say($, { kind: 'ask', title: ask(q), text: cut(q.question, 200), ask: id, choices: (q.options ?? []).map(o => o.label), free: id })
       const won = await Promise.race([beneath.then(r => ({ r, c: null as string | null })), waitPick(id).then(c => ({ r: null, c }))])
       if (won.c === null) {
         pending.delete(id)

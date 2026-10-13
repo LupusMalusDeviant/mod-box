@@ -4,6 +4,9 @@
 // <status file>.answer, which the mod picks up. No network, nothing else goes to Claude.
 // Drag it anywhere; right-click for its menu, where "Figur" picks the figure and coat (written
 // to the answer file with id "look"; the mod keeps it for the session or as the setting).
+// When the mod allows typing (type=on), a hotkey (hotkey=ctrl+alt+space), the menu or a
+// "write your own" button in the bubble opens a small input box; Enter writes the text under the
+// id the mod named (free=…), Esc closes it, and the window that had the focus gets it back.
 //
 //   ModBoxPet.exe <status file> [bubble seconds]
 //   ModBoxPet.exe --preview <file.png>      (every figure in every state, for a look)
@@ -35,6 +38,7 @@ namespace ModBox
             if (args.Length < 1) return 2;
             if (args[0] == "--preview" && args.Length > 1) { Preview.Render(args[1]); return 0; }
             if (args[0] == "--preview-bubble" && args.Length > 1) { Preview.RenderBubble(args[1]); return 0; }
+            if (args[0] == "--preview-input" && args.Length > 1) { Preview.RenderInput(args[1]); return 0; }
             bool isFirst;
             using (var mutex = new Mutex(true, "Local\\ModBoxPet-" + HashOf(args[0].ToLowerInvariant()), out isFirst))
             {
@@ -88,6 +92,11 @@ namespace ModBox
         /// What a pick answers (Claude's question or the suggestions of one turn), and the choices.
         public string Ask = "";
         public List<string> Choices = new List<string>();
+        /// Typing: allowed, where a typed text goes, the hotkey, and the label of the bubble's write button.
+        public bool CanType;
+        public string Free = "";
+        public string Hotkey = "";
+        public string TypeLabel = "";
 
         public static Status Read(string path)
         {
@@ -105,6 +114,10 @@ namespace ModBox
                 else if (key == "fur") s.Fur = value;
                 else if (key == "ask") s.Ask = value;
                 else if (key == "choice" && value.Length > 0) s.Choices.Add(value);
+                else if (key == "type") s.CanType = value == "on";
+                else if (key == "free") s.Free = value;
+                else if (key == "hotkey") s.Hotkey = value;
+                else if (key == "typelabel") s.TypeLabel = value;
             }
             return s;
         }
@@ -153,6 +166,9 @@ namespace ModBox
             menu.Items.Add("Zurück in die Ecke", null, (s, e) => { Location = CornerLocation(); SavePosition(); });
             menu.Items.Add(new ToolStripSeparator());
             menu.Items.Add(FigureMenu());
+            var write = new ToolStripMenuItem("Antworten / Nachricht an Claude …", null, (s, e) => OpenInput());
+            menu.Items.Insert(0, write);
+            menu.Opening += (s, e) => { write.Visible = status.CanType && status.Free.Length > 0; };
             menu.Items.Add(new ToolStripSeparator());
             menu.Items.Add("Beenden", null, (s, e) => Close());
             ContextMenuStrip = menu;
@@ -217,6 +233,7 @@ namespace ModBox
                     if (next.Text.Length > 0)
                     {
                         status = next;
+                        ApplyHotkey();
                         lastNews = DateTime.Now;
                         if (DateTime.Now >= snoozeUntil || next.Kind == "error" || next.Kind == "ask")
                         {
@@ -239,13 +256,52 @@ namespace ModBox
             Draw();
         }
 
+        const string TYPE_BUTTON = "\u0001type";
+        InputBox input;
+        string hotkeyOn = "";
+
+        // Registers the hotkey the mod names (one per desktop: a second pet with the same one gets none).
+        void ApplyHotkey()
+        {
+            string want = status.CanType ? status.Hotkey : "";
+            if (want == hotkeyOn) return;
+            if (hotkeyOn.Length > 0) Native.UnregisterHotKey(Handle, 1);
+            hotkeyOn = "";
+            int mods, key;
+            if (want.Length > 0 && Native.ParseHotkey(want, out mods, out key) && Native.RegisterHotKey(Handle, 1, mods | Native.MOD_NOREPEAT, key)) hotkeyOn = want;
+        }
+
+        protected override void WndProc(ref Message m)
+        {
+            if (m.Msg == Native.WM_HOTKEY) { OpenInput(); return; }
+            base.WndProc(ref m);
+        }
+
+        // The input box above the pet; what is typed goes under the id the mod named.
+        void OpenInput()
+        {
+            if (!status.CanType || status.Free.Length == 0) return;
+            if (input != null && !input.IsDisposed) { input.Focus(); return; }
+            string target = status.Free;
+            string project = status.Title.Contains(" \u00b7 ") ? status.Title.Substring(0, status.Title.IndexOf(" \u00b7 ")) : "";
+            input = new InputBox(Accent(), (project.Length > 0 ? project + "  \u00b7  " : "") + "Enter senden \u00b7 Shift+Enter neue Zeile \u00b7 Esc", text =>
+            {
+                if (!WriteAnswer(target, text)) return;
+                status = new Status { Kind = "work", Title = "\u2713", Text = text, Pet = status.Pet, Fur = status.Fur, CanType = status.CanType, Free = status.Free, Hotkey = status.Hotkey };
+                isBubble = true;
+                shownAt = DateTime.Now;
+                Draw();
+            });
+            input.Open(new Point(Left + 8, Top + H - BODY - 10 - InputBox.HEIGHT - 8));
+        }
+
         protected override void OnMouseDown(MouseEventArgs e)
         {
             base.OnMouseDown(e);
             if (e.Button != MouseButtons.Left) return;
             if (isBubble)
                 foreach (var bt in buttons)
-                    if (bt.Key.Contains(e.Location)) { Pick(bt.Value); return; }
+                    if (bt.Key.Contains(e.Location)) { if (bt.Value == TYPE_BUTTON) OpenInput(); else Pick(bt.Value); return; }
             if (isBubble && bubbleRect.Contains(e.Location) && e.Clicks == 2) { isBubble = false; Draw(); return; }
             Native.ReleaseCapture();
             Native.SendMessage(Handle, Native.WM_NCLBUTTONDOWN, (IntPtr)Native.HTCAPTION, IntPtr.Zero);
@@ -374,6 +430,9 @@ namespace ModBox
         {
             status = new Status { Kind = "ask", Title = "shop · A question for you", Text = "Which database should the new service use?", Pet = "cat", Fur = "ginger", Ask = "q" };
             status.Choices.AddRange(new[] { "PostgreSQL (Recommended)", "SQLite", "Keep the JSON files" });
+            status.CanType = true;
+            status.Free = "q";
+            status.TypeLabel = "Write your own answer \u2026";
             hovered = 1;
             isBubble = true;
         }
@@ -407,7 +466,8 @@ namespace ModBox
                 int maxW = W - 24;
                 var textSize = g.MeasureString(text, font, maxW - 24);
                 var titleSize = title.Length > 0 ? g.MeasureString(title, titleFont, maxW - 24) : SizeF.Empty;
-                int n = status.Choices.Count;
+                bool hasWrite = status.CanType && status.Free.Length > 0 && status.TypeLabel.Length > 0;
+                int n = status.Choices.Count + (hasWrite ? 1 : 0);
                 int choicesH = n == 0 ? 0 : n * (BUTTON + 5) + 4;
                 int bw = (int)Math.Min(maxW, Math.Max(Math.Max(textSize.Width, titleSize.Width) + 26, n > 0 ? 240 : 0));
                 int head = painter.Headroom();
@@ -453,7 +513,8 @@ namespace ModBox
                     for (int i = 0; i < n; i++)
                     {
                         var rect = new Rectangle(r.Left + 10, by + i * (BUTTON + 5), r.Width - 20, BUTTON);
-                        buttons.Add(new KeyValuePair<Rectangle, string>(rect, status.Choices[i]));
+                        bool isWrite = i >= status.Choices.Count;
+                        buttons.Add(new KeyValuePair<Rectangle, string>(rect, isWrite ? TYPE_BUTTON : status.Choices[i]));
                         bool isOver = i == hovered;
                         using (var path = Rounded(rect, 7))
                         using (var fill = new SolidBrush(isOver ? accent : Color.FromArgb(40, accent)))
@@ -463,7 +524,7 @@ namespace ModBox
                             g.DrawPath(pen, path);
                         }
                         using (var ink = new SolidBrush(isOver ? Color.White : Color.FromArgb(40, 40, 46)))
-                            g.DrawString((i + 1) + "  " + status.Choices[i], label, ink, new RectangleF(rect.Left + 8, rect.Top + 4, rect.Width - 14, rect.Height - 4), new StringFormat { Trimming = StringTrimming.EllipsisCharacter, FormatFlags = StringFormatFlags.NoWrap });
+                            g.DrawString(isWrite ? "\u270e  " + status.TypeLabel : (i + 1) + "  " + status.Choices[i], label, ink, new RectangleF(rect.Left + 8, rect.Top + 4, rect.Width - 14, rect.Height - 4), new StringFormat { Trimming = StringTrimming.EllipsisCharacter, FormatFlags = StringFormatFlags.NoWrap });
                     }
             }
         }
@@ -760,8 +821,8 @@ namespace ModBox
             }
             if (c.Pattern == "tuxedo") Oval(g, c.Light, c.Light, 0, cx - 9, b.Top + 38, 18, 22);
             var paw = c.Pattern == "points" ? c.Point : c.Pattern == "tuxedo" ? c.Light : c.Main;
-            Oval(g, paw, c.Line, 1.6f, b.Left + 17, b.Bottom - 9, 12, 9);
-            Oval(g, paw, c.Line, 1.6f, b.Left + 35, b.Bottom - 9, 12, 9);
+            Oval(g, paw, c.Line, 1.4f, b.Left + 18, b.Bottom - 8, 10, 7);
+            Oval(g, paw, c.Line, 1.4f, b.Left + 36, b.Bottom - 8, 10, 7);
             // ears: up on a question, flat on an error, a twitch now and then while working
             float up = Kind == "ask" ? 5 : 0, flat = Kind == "error" ? 1 : 0, tw = IsWork && (Tick / 4) % 6 == 0 ? 3 : 0;
             var ear = c.Pattern == "points" ? c.Point : c.Main;
@@ -1144,6 +1205,23 @@ namespace ModBox
             }
         }
 
+        /// The input box as it opens, for a look.
+        public static void RenderInput(string path)
+        {
+            using (var box = new InputBox(Color.FromArgb(240, 180, 60), "shop  \u00b7  Enter senden \u00b7 Shift+Enter neue Zeile \u00b7 Esc", t => { }))
+            {
+                box.Location = new Point(-4000, -4000);
+                box.Show();
+                Application.DoEvents();
+                box.SetText("Nimm SQLite, aber mit WAL-Modus");
+                using (var bmp = new Bitmap(box.Width, box.Height))
+                {
+                    box.DrawToBitmap(bmp, new Rectangle(0, 0, box.Width, box.Height));
+                    bmp.Save(path, ImageFormat.Png);
+                }
+            }
+        }
+
         /// One pet window's drawing with a question and its choices, for a look at the buttons.
         public static void RenderBubble(string path)
         {
@@ -1156,8 +1234,107 @@ namespace ModBox
         }
     }
 
+    // A small dark box for one message: a normal window (the pet's layered one cannot hold a text box).
+    sealed class InputBox : Form
+    {
+        public const int HEIGHT = 92;
+        readonly TextBox box;
+        readonly Color accent;
+        IntPtr previous = IntPtr.Zero;
+        bool isGivingBack;
+
+        public InputBox(Color accent, string hint, Action<string> send)
+        {
+            this.accent = accent;
+            FormBorderStyle = FormBorderStyle.None;
+            ShowInTaskbar = false;
+            TopMost = true;
+            StartPosition = FormStartPosition.Manual;
+            Size = new Size(324, HEIGHT);
+            BackColor = Color.FromArgb(34, 34, 40);
+            Padding = new Padding(10, 6, 10, 8);
+            var label = new Label { Text = hint, ForeColor = Color.FromArgb(170, 170, 180), Dock = DockStyle.Top, Height = 20, Font = new Font("Segoe UI", 8.5f) };
+            box = new TextBox { Multiline = true, Dock = DockStyle.Fill, BorderStyle = BorderStyle.None, BackColor = Color.FromArgb(46, 46, 54), ForeColor = Color.White, Font = new Font("Segoe UI", 10.5f) };
+            box.KeyDown += (s, e) =>
+            {
+                if (e.KeyCode == Keys.Enter && !e.Shift)
+                {
+                    e.SuppressKeyPress = true;
+                    string text = box.Text.Trim();
+                    if (text.Length > 0) send(text);
+                    GiveBack();
+                }
+                else if (e.KeyCode == Keys.Escape)
+                {
+                    e.SuppressKeyPress = true;
+                    GiveBack();
+                }
+            };
+            Controls.Add(box);
+            Controls.Add(label);
+            // clicked away (back into the game): just close, the focus is where the person put it
+            Deactivate += (s, e) => { if (!isGivingBack) Close(); };
+        }
+
+        public void SetText(string text) { box.Text = text; }
+
+        public void Open(Point at)
+        {
+            previous = Native.GetForegroundWindow();
+            var area = Screen.FromPoint(at).WorkingArea;
+            Location = new Point(Math.Max(area.Left, Math.Min(at.X, area.Right - Width)), Math.Max(area.Top, Math.Min(at.Y, area.Bottom - Height)));
+            Show();
+            Native.SetForegroundWindow(Handle);
+            Activate();
+            box.Focus();
+        }
+
+        // Enter or Esc: close and hand the focus back to the window that had it (the game).
+        void GiveBack()
+        {
+            isGivingBack = true;
+            Close();
+            if (previous != IntPtr.Zero) Native.SetForegroundWindow(previous);
+        }
+
+        protected override void OnPaint(PaintEventArgs e)
+        {
+            base.OnPaint(e);
+            using (var pen = new Pen(accent, 2f)) e.Graphics.DrawRectangle(pen, 1, 1, Width - 3, Height - 3);
+        }
+    }
+
     static class Native
     {
+        public const int WM_HOTKEY = 0x0312, MOD_ALT = 1, MOD_CONTROL = 2, MOD_SHIFT = 4, MOD_WIN = 8, MOD_NOREPEAT = 0x4000;
+        [DllImport("user32.dll")] public static extern bool RegisterHotKey(IntPtr h, int id, int mods, int key);
+        [DllImport("user32.dll")] public static extern bool UnregisterHotKey(IntPtr h, int id);
+        [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
+        [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr h);
+
+        /// "ctrl+alt+space", "ctrl+shift+f9", "alt+q": modifier flags and the virtual key.
+        public static bool ParseHotkey(string text, out int mods, out int key)
+        {
+            mods = 0;
+            key = 0;
+            foreach (var raw in text.ToLowerInvariant().Split('+'))
+            {
+                string p = raw.Trim();
+                if (p == "ctrl" || p == "control") mods |= MOD_CONTROL;
+                else if (p == "alt") mods |= MOD_ALT;
+                else if (p == "shift") mods |= MOD_SHIFT;
+                else if (p == "win") mods |= MOD_WIN;
+                else if (p == "space") key = (int)Keys.Space;
+                else if (p.Length == 1 && char.IsLetterOrDigit(p[0])) key = char.ToUpperInvariant(p[0]);
+                else if (p.Length >= 2 && p[0] == 'f')
+                {
+                    int n;
+                    if (int.TryParse(p.Substring(1), out n) && n >= 1 && n <= 24) key = (int)Keys.F1 + n - 1;
+                }
+            }
+            return key != 0 && mods != 0;
+        }
+
         public const int WS_EX_LAYERED = 0x80000, WS_EX_TOOLWINDOW = 0x80, WS_EX_NOACTIVATE = 0x8000000;
         public const int WM_NCLBUTTONDOWN = 0xA1, HTCAPTION = 2;
         const int ULW_ALPHA = 2;

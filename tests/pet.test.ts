@@ -386,3 +386,76 @@ group('Desktop pet: the prompt cache', () => {
     expect(writes.some(w => /Cache is (cooling|cold)/.test(w.text))).toBe(false)
   })
 })
+
+group('Desktop pet: typing', () => {
+  const CWD = ['C:', 'work', 'shop'].join(String.fromCharCode(92))
+  const NL = String.fromCharCode(10)
+  const TYPING = { ...QUIET, pet: true, petTyping: 'on' }
+  // what the pet writes after Enter in its input box: the id the status named under free=
+  const type = (writes: Array<{ text: string }>, text: string) => {
+    const id = /^free=(.*)$/m.exec(writes.at(-1)!.text)?.[1]
+    answer.text = `id=${id}${NL}choice=${text}${NL}`
+    answer.at += 1
+  }
+
+  test('the status names where typed text goes, the hotkey and the write button', () => {
+    const text = statusText({ kind: 'ask', title: 'q', text: 'Which?', ask: 'q-1-0', choices: ['A'], free: 'q-1-0' }, 7, undefined, { type: 'on', hotkey: 'ctrl+alt+space', typelabel: 'Write …' })
+    expect(text).toBe(['at=7', 'kind=ask', 'title=q', 'text=Which?', 'ask=q-1-0', 'choice=A', 'free=q-1-0', 'type=on', 'hotkey=ctrl+alt+space', 'typelabel=Write …', ''].join(NL))
+  })
+
+  test('typed with nothing open: the next prompt of this session', { options: TYPING }, async ($: any, on: any) => {
+    const { writes, clock } = engine(on)
+    const sent: string[] = []
+    on('prompt.submit', (_$: any, e: any) => {
+      sent.push(e.text)
+      return { text: e.text }
+    })
+    await $.session.start({ surface: 'terminal', isInteractive: true, cwd: CWD })
+    await wait()
+    const status = writes.at(-1)!.text
+    expect(status).toContain('free=prompt-s')
+    expect(status).toContain('type=on' + NL + 'hotkey=ctrl+alt+space')
+    type(writes, 'run the boss fight tests')
+    await clock.advance(700)
+    await wait()
+    expect(sent).toEqual(['run the boss fight tests'])
+  })
+
+  test("typed during Claude's question: its free-text answer", { options: TYPING }, async ($: any, on: any) => {
+    const { writes, clock } = engine(on, 'Windows_NT', e => (e.tool === 'AskUserQuestion' ? new Promise(() => {}) : { result: 'ok', text: 'ok' }))
+    await $.session.start({ surface: 'terminal', isInteractive: true, cwd: CWD })
+    await wait()
+    const questions = [
+      { question: 'Which database?', header: 'DB', multiSelect: false, options: [{ label: 'PostgreSQL', description: '' }, { label: 'SQLite', description: '' }] },
+      { question: 'Name of the table?', header: 'Name', type: 'text' },
+    ]
+    const call = $.tool.call({ tool: 'AskUserQuestion', questions })
+    await wait()
+    expect(writes.at(-1)!.text).toContain('typelabel=Write your own answer …')
+    type(writes, 'SQLite with WAL')
+    await clock.advance(700)
+    await wait()
+    expect(writes.at(-1)!.text).toContain('text=Name of the table?')
+    type(writes, 'enemies')
+    await clock.advance(700)
+    const r = await call
+    expect(r.result.answers).toEqual({ 'Which database?': 'SQLite with WAL', 'Name of the table?': 'enemies' })
+  })
+
+  test('typing off: no input, a typed text is not taken', { options: { ...QUIET, pet: true } }, async ($: any, on: any) => {
+    const { writes, clock } = engine(on)
+    const sent: string[] = []
+    on('prompt.submit', (_$: any, e: any) => {
+      sent.push(e.text)
+      return { text: e.text }
+    })
+    await $.session.start({ surface: 'terminal', isInteractive: true, cwd: CWD })
+    await wait()
+    expect(writes.at(-1)!.text).not.toMatch(/^(free|type|hotkey)=/m)
+    answer.text = `id=prompt-s${NL}choice=rm -rf${NL}`
+    answer.at += 1
+    await clock.advance(700)
+    await wait()
+    expect(sent).toEqual([])
+  })
+})

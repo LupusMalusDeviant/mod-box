@@ -714,6 +714,28 @@
       "title": "Desktop Pet: permission requests",
       "description": "show: the pet only says that Claude Code is waiting for your approval. answer: the bubble also offers \"allow once\" and \"deny\" for 90 seconds (never \"always\"; no rule is added). Mind that the pet stays on top: a click there approves."
     },
+    "petTyping": {
+      "type": "string",
+      "default": "off",
+      "options": [
+        "off",
+        "on"
+      ],
+      "title": "Desktop Pet: type answers in the pet",
+      "description": "on: a hotkey, the pet's menu or a button in the bubble opens a small input box; the text goes to Claude as the next prompt, as the answer to its open question, or in place of a suggestion. Typing takes the keyboard from the game for a moment (borderless windowed mode is fine). Any program of your user can write the pet's answer file, hence off by default."
+    },
+    "petHotkey": {
+      "type": "string",
+      "default": "ctrl+alt+space",
+      "options": [
+        "ctrl+alt+space",
+        "ctrl+shift+space",
+        "ctrl+alt+c",
+        "off"
+      ],
+      "title": "Desktop Pet: hotkey for typing",
+      "description": "Opens the input box from anywhere, also from a game. With several pets the first one gets it."
+    },
     "promptRailMode": {
       "type": "string",
       "title": "Prompt Rail: mode",
