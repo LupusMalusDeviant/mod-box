@@ -3,7 +3,8 @@
 // command runs, when a guard holds something, and a short summary when the turn is done. It works
 // from the events alone, no tokens; with option summary "haiku" the end of a turn is put in one
 // sentence by Haiku. The pet is its own little program (overlay/Pet.cs), compiled once with the
-// C# compiler that ships with Windows and signed with the Sign Guard script, when one is set.
+// C# compiler that ships with Windows and signed with the Sign Guard script (or, as there, the
+// sign-binary skill's when none is set and it exists).
 // The mod writes a status file the pet reads. When Claude asks a question (AskUserQuestion) or
 // Next Steps has suggestions, the bubble shows them as buttons; a click lands in
 // <status file>.answer, which this mod picks up: the question is answered (whichever comes first,
@@ -257,6 +258,15 @@ const WAIT =
   'Start-Sleep -Milliseconds 250 }; exit 2'
 const START = "Start-Process -FilePath $env:PET_EXE -ArgumentList ('\"' + $env:PET_STATUS + '\"'), $env:PET_SECS"
 
+// The script that signs the pet: Sign Guard's, or as there the sign-binary skill's when none is
+// set; nothing when that is not there either.
+async function signer($: EngineInterface): Promise<string> {
+  if (signScript) return signScript
+  const home = (await $.env.get('USERPROFILE')) || (await $.env.get('HOME')) || ''
+  const skill = `${home}\\.claude\\skills\\sign-binary\\sign.ps1`
+  return home && (await $.fs.exists(skill).catch(() => false)) ? skill : ''
+}
+
 async function ensure($: EngineInterface): Promise<string | null> {
   if (!isWindows || !statusPath) return null
   started = await $.clock.now()
@@ -271,9 +281,10 @@ async function ensure($: EngineInterface): Promise<string | null> {
   if (!exeAt || exeAt < srcAt) {
     const built = await $.process.run(['powershell', '-NoProfile', '-NonInteractive', '-Command', BUILD], { env, timeoutMs: 60_000 })
     if (built.exitCode !== 0) return cut(built.stdout || built.stderr || 'csc failed', 200)
-    if (signScript) {
+    const script = await signer($)
+    if (script) {
       await $.process
-        .run(['powershell', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', signScript, '-Exe', exe], { timeoutMs: 120_000 })
+        .run(['powershell', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', script, '-Exe', exe], { timeoutMs: 120_000 })
         .catch(() => null)
     }
   }
