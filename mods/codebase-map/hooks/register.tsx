@@ -1,5 +1,5 @@
 // Modified for mod-box (https://github.com/LupusMalusDeviant/mod-box): state keys under mod-box with prefix cm2, {} matchers, $.plugin.root paths into mods/codebase-map/; no redraw for unchanged state, the graph fits the pane (against flicker).
-// Original: https://github.com/LupusMalusDeviant/codebase-map (version 0.4.0).
+// Original: https://github.com/LupusMalusDeviant/codebase-map (version 0.4.1).
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 

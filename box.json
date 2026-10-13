@@ -1491,7 +1491,7 @@
       "source": {
         "url": "https://github.com/LupusMalusDeviant/codebase-map",
         "license": "MIT",
-        "version": "0.4.0"
+        "version": "0.4.1"
       },
       "title_de": "Codebase-Karte",
       "costs": "Only when you ask for blueprint work: creating a blueprint reads the whole repo once (hundreds of thousands of tokens on a large repo), an update reads only the changed features. While a blueprint exists, the CLAUDE.md pointer adds about 500 tokens per session (switch off with the CLAUDE.md option).",
