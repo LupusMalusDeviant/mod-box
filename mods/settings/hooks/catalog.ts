@@ -1356,8 +1356,8 @@ export const CATALOG: CatalogMod[] = [
       "de": "Cache-Meter"
     },
     "description": {
-      "en": "Band: time left on the warm cache, hit rate, context as weather, plan limits, compact and keep-warm buttons; stops one send to a cold cache and names its cost (Cache Tax runs inside).",
-      "de": "Band: Restzeit des warmen Caches, Trefferquote, Kontext als Wetter, Abo-Limits, Knöpfe für Compact und Warmhalten; hält eine Nachricht an einen kalten Cache einmal an und nennt die Kosten (Cache Tax läuft darin)."
+      "en": "Band: time left on the warm cache, hit rate, context as weather with its trend over 12 turns, plan limits, compact and keep-warm buttons; stops one send to a cold cache and names its cost (Cache Tax runs inside).",
+      "de": "Band: Restzeit des warmen Caches, Trefferquote, Kontext als Wetter mit Verlauf über 12 Runden, Abo-Limits, Knöpfe für Compact und Warmhalten; hält eine Nachricht an einen kalten Cache einmal an und nennt die Kosten (Cache Tax läuft darin)."
     },
     "group": "context",
     "costs": {

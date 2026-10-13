@@ -372,6 +372,8 @@ export type MeterInfo = {
   window: number | null
   /** The subscription's rate-limit windows (5 hours, week), as the status line has them. */
   limits: Array<{ kind: string; percentUsed: number; resetsAt?: string }>
+  /** Context fill after each of the last turns (percent, oldest first), for the trend line. */
+  trend: number[]
 }
 
 // ---- subagent-saver ----

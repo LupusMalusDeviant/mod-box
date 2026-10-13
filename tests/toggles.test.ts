@@ -8,12 +8,14 @@ const wait = () => new Promise(done => (globalThis as any).setTimeout(done, 10))
 
 let clock: any = null
 let statusLine: Array<string | undefined> = []
+let ctxPct = 45
 
 // Stands for the engine beneath the Mod Box.
 function engine(on: any, rows: unknown[] = []) {
   clock = mock.clock(on)
   mock.store(on)
   statusLine = []
+  ctxPct = 45
   on('command.register', () => ({ value: {} }))
   on('env.get', () => ({ value: undefined }))
   on('fs.exists', () => ({ value: false }))
@@ -26,7 +28,7 @@ function engine(on: any, rows: unknown[] = []) {
     return { value: undefined }
   })
   on('session.start', (_$: any, e: any) => ({ sessionId: 's', cwd: e.cwd }))
-  on('session.usage', () => ({ value: { startedAt: 0, context: { tokens: 90_000, window: 200_000, percent: 45 }, rateLimits: [{ kind: 'five_hour', percentUsed: 42 }] } }))
+  on('session.usage', () => ({ value: { startedAt: 0, context: { tokens: ctxPct * 2_000, window: 200_000, percent: ctxPct }, rateLimits: [{ kind: 'five_hour', percentUsed: 42 }] } }))
   on('turn.start', (_$: any, e: any) => ({ turnId: e.turnId }))
   on('turn.complete', () => ({ text: '' }))
   on('prompt.submit', () => ({ text: '' }))
@@ -70,6 +72,21 @@ describe('Switches and band', () => {
     const ui = await band($)
     expect(await ui.find({ type: 'Text', text: /Kontext/ })).toBeDefined()
     expect(await ui.find({ type: 'Text', text: /42%/ })).toBeDefined()
+  })
+
+  test('layout "lines": the context trend over the last turns', { options: { ...QUIET, bandLayout: 'lines' } }, async ($: any, on: any) => {
+    engine(on)
+    await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
+    await clock.advance(1_000)
+    for (const [n, pct] of [20, 30, 40].entries()) {
+      ctxPct = pct
+      await $.turn.start({ text: 'weiter', turnId: `t${n}` })
+      await $.turn.complete({ reason: 'answer', answer: 'ok', durationMs: 1, isAborted: false, turnId: `t${n}`, usage: { input_tokens: 10, cache_read_input_tokens: 90, cache_creation_input_tokens: 0, output_tokens: 1, model: 'claude-opus-5-5' } })
+    }
+    await wait()
+    const ui = await band($)
+    expect(await ui.find({ type: 'Text', text: /▂▃▄/ })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: /\+10\.0%\/Runde, voll in ~6/ })).toBeDefined()
   })
 
   test('Cache Meter in the status line instead of the band', { options: { ...QUIET, cacheMeterShow: 'status' } }, async ($: any, on: any) => {

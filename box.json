@@ -1017,8 +1017,8 @@
       "title": "Cache Meter",
       "title_de": "Cache-Meter",
       "group": "context",
-      "description": "Band: time left on the warm cache, hit rate, context as weather, plan limits, compact and keep-warm buttons; stops one send to a cold cache and names its cost (Cache Tax runs inside).",
-      "description_de": "Band: Restzeit des warmen Caches, Trefferquote, Kontext als Wetter, Abo-Limits, Knöpfe für Compact und Warmhalten; hält eine Nachricht an einen kalten Cache einmal an und nennt die Kosten (Cache Tax läuft darin).",
+      "description": "Band: time left on the warm cache, hit rate, context as weather with its trend over 12 turns, plan limits, compact and keep-warm buttons; stops one send to a cold cache and names its cost (Cache Tax runs inside).",
+      "description_de": "Band: Restzeit des warmen Caches, Trefferquote, Kontext als Wetter mit Verlauf über 12 Runden, Abo-Limits, Knöpfe für Compact und Warmhalten; hält eine Nachricht an einen kalten Cache einmal an und nennt die Kosten (Cache Tax läuft darin).",
       "default": true,
       "entry": "mods/cache-meter/hooks/register.tsx",
       "pass": {

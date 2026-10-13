@@ -117,7 +117,7 @@
     "cacheMeter": {
       "type": "boolean",
       "title": "Cache Meter",
-      "description": "Band: time left on the warm cache, hit rate, context as weather, plan limits, compact and keep-warm buttons; stops one send to a cold cache and names its cost (Cache Tax runs inside). Costs tokens: keep-warm requests, only when switched on.",
+      "description": "Band: time left on the warm cache, hit rate, context as weather with its trend over 12 turns, plan limits, compact and keep-warm buttons; stops one send to a cold cache and names its cost (Cache Tax runs inside). Costs tokens: keep-warm requests, only when switched on.",
       "default": true
     },
     "subagentSaver": {

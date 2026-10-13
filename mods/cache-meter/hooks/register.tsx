@@ -1,7 +1,8 @@
 // Cache Meter: one line above the prompt (through the Mod Box band manager) with
 // 1. how long the prompt cache stays warm (countdown from the last request),
 // 2. the last turn's hit rate (how much came from the cache),
-// 3. how full the context window is, as weather (sun to thunderstorm),
+// 3. how full the context window is, as weather (sun to thunderstorm), with its trend over the
+//    last 12 turns as a sparkline (idea from token-weather in anthropics/claude-code-playground),
 // 4. the plan's rate-limit windows (5 h / week),
 // 5. keep-warm and the cold-send guard of Cache Tax, which runs embedded here (no band of its own):
 //    a "keep warm" button, the cost of a cold resend, and the guard that stops one cold send.
@@ -21,11 +22,13 @@ const info = atom({ plugin: 'mod-box', key: 'cm_info' } as const, {
   tokens: null,
   window: null,
   limits: [],
+  trend: [],
 } as MeterInfo)
 // A tick so the countdown moves without a new turn.
 const tick = atom({ plugin: 'mod-box', key: 'cm_tick' } as const, 0)
 
 const TICK_MS = 15_000
+const TREND_TURNS = 12
 
 // Display language and options (module level: band() runs from the band manager).
 let lang: 'de' | 'en' = 'en'
@@ -112,6 +115,7 @@ export const register: Register = (on, options) => {
     }
     await update($, info, i => ({ ...i, hit, lastAt: i.lastAt || now }))
     await refreshContext($)
+    await addTrendPoint($)
     return r
   })
 
@@ -121,6 +125,7 @@ export const register: Register = (on, options) => {
     if (!e.agentId) {
       await update($, info, i => ({ ...i, lastAt: 0, hit: null }))
       await refreshContext($)
+      await addTrendPoint($)
     }
     return r
   })
@@ -172,6 +177,8 @@ export async function band($: EngineInterface, e: any): Promise<BandPart | null>
       {`  ·  ${weather(pct)} ${t('Kontext', 'context')} `}
       <Text color={pct < 50 ? 'green' : pct < 75 ? 'yellow' : 'red'} bold>{`${pct}%`}</Text>
       {i.tokens != null && i.window ? <Text dimColor>{` (${fmtTok(i.tokens)}/${fmtTok(i.window)})`}</Text> : null}
+      {(i.trend ?? []).length >= 2 ? <Text color={pct < 50 ? 'green' : pct < 75 ? 'yellow' : 'red'} dimColor>{` ${sparkline(i.trend)}`}</Text> : null}
+      {trendText(i.trend ?? []) ? <Text dimColor>{` ${trendText(i.trend ?? [])}`}</Text> : null}
     </Text>
   )
   const limits = showLimits && i.limits?.length ? (
@@ -240,6 +247,26 @@ async function refreshContext($: EngineInterface) {
     window: context.window || null,
     limits: (rateLimits ?? []).map(l => ({ kind: l.kind, percentUsed: l.percentUsed, ...(l.resetsAt ? { resetsAt: l.resetsAt } : {}) })),
   }))
+}
+
+async function addTrendPoint($: EngineInterface) {
+  await update($, info, i => (i.percent == null ? i : { ...i, trend: [...(i.trend ?? []), i.percent].slice(-TREND_TURNS) }))
+}
+
+const BARS = '▁▂▃▄▅▆▇█'
+/** The context fill of the last turns as one bar each, on a fixed 0–100 % scale. */
+export function sparkline(points: number[]): string {
+  return points.map(p => BARS[Math.min(BARS.length - 1, Math.max(0, Math.floor((p / 100) * BARS.length)))]).join('')
+}
+
+/** Average growth per turn over the trend, and how many turns are left at that pace (no compact in between). */
+export function trendText(points: number[]): string {
+  const steps = points.slice(1).map((p, n) => p - points[n]!).filter(d => d >= 0)
+  if (steps.length < 2) return ''
+  const per = steps.reduce((a, b) => a + b, 0) / steps.length
+  if (per < 0.5) return t('· stabil', '· steady')
+  const left = Math.floor((100 - points[points.length - 1]!) / per)
+  return t(`· +${per.toFixed(1)}%/Runde, voll in ~${left}`, `· +${per.toFixed(1)}%/turn, full in ~${left}`)
 }
 
 // five_hour -> 5h, seven_day -> week, everything else stays readable.
