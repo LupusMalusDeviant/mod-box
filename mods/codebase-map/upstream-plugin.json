@@ -1,6 +1,6 @@
 {
   "name": "codebase-map",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "description": "Feature-level codebase blueprints with a live map inside Claude Code: on-demand mapper instructions with machine-checked edges, an interactive feature map with live highlighting, a freshness band, a CLAUDE.md pointer and an optional Confluence mirror.",
   "author": {
     "name": "Lupus Malus Deviant"
