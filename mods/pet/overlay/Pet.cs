@@ -821,8 +821,8 @@ namespace ModBox
             }
             if (c.Pattern == "tuxedo") Oval(g, c.Light, c.Light, 0, cx - 9, b.Top + 38, 18, 22);
             var paw = c.Pattern == "points" ? c.Point : c.Pattern == "tuxedo" ? c.Light : c.Main;
-            Oval(g, paw, c.Line, 1.6f, b.Left + 17, b.Bottom - 9, 12, 9);
-            Oval(g, paw, c.Line, 1.6f, b.Left + 35, b.Bottom - 9, 12, 9);
+            Oval(g, paw, c.Line, 1.4f, b.Left + 18, b.Bottom - 8, 10, 7);
+            Oval(g, paw, c.Line, 1.4f, b.Left + 36, b.Bottom - 8, 10, 7);
             // ears: up on a question, flat on an error, a twitch now and then while working
             float up = Kind == "ask" ? 5 : 0, flat = Kind == "error" ? 1 : 0, tw = IsWork && (Tick / 4) % 6 == 0 ? 3 : 0;
             var ear = c.Pattern == "points" ? c.Point : c.Main;
