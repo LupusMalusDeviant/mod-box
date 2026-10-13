@@ -2347,12 +2347,12 @@ export const CATALOG: CatalogMod[] = [
         "type": "string",
         "multiple": false,
         "title": {
-          "en": "Desktop Pet: one pet per session",
-          "de": "Desktop-Pet: ein Pet pro Sitzung"
+          "en": "Desktop Pet: one pet per active session",
+          "de": "Desktop-Pet: ein Pet pro aktiver Sitzung"
         },
         "description": {
-          "en": "on: every Claude Code session gets its own pet; they stand side by side, and /pet or the right-click menu picks each one's figure on its own. off: one pet for all.",
-          "de": "an: jede Claude-Code-Sitzung bekommt ihr eigenes Pet; sie stehen nebeneinander, und /pet oder das Rechtsklick-Menü wählt die Figur für jedes einzeln. aus: eines für alle."
+          "en": "on: every session whose prompt cache is warm has its own pet, side by side, each with its own figure (/pet or the right-click menu). When a session's cache goes cold its pet goes to sleep; the next message brings it back. off: one pet for all.",
+          "de": "an: jede Sitzung mit warmem Prompt-Cache hat ihr eigenes Pet, nebeneinander, jedes mit eigener Figur (/pet oder Rechtsklick-Menü). Wird der Cache einer Sitzung kalt, legt sich ihr Pet schlafen; die nächste Nachricht holt es zurück. aus: eines für alle."
         },
         "labels": {
           "de": {
@@ -2365,6 +2365,31 @@ export const CATALOG: CatalogMod[] = [
           "on"
         ],
         "default": "off"
+      },
+      {
+        "key": "petCacheWarn",
+        "type": "string",
+        "multiple": false,
+        "title": {
+          "en": "Desktop Pet: warn before the cache goes cold (minutes)",
+          "de": "Desktop-Pet: warnen, bevor der Cache kalt wird (Minuten)"
+        },
+        "description": {
+          "en": "That many minutes before the prompt cache expires the pet says so, with a button that keeps it warm for an hour (Cache Meter on). Not while keep-warm runs.",
+          "de": "So viele Minuten bevor der Prompt-Cache abläuft, sagt das Pet Bescheid, mit einem Knopf, der ihn eine Stunde warm hält (Cache-Meter an). Nicht, solange Warmhalten läuft."
+        },
+        "labels": {
+          "de": {
+            "off": "aus"
+          }
+        },
+        "options": [
+          "off",
+          "2",
+          "5",
+          "10"
+        ],
+        "default": "5"
       },
       {
         "key": "petAsk",

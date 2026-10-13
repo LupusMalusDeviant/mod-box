@@ -12,13 +12,17 @@
 // with option permissions "answer" the bubble also offers "allow once" and "deny" for a while.
 // The pet's right-click menu picks its figure (answer id "look"), as /pet <figure> [coat] does:
 // with one pet per session for that session alone, otherwise as the setting for every session.
+// The pet watches the prompt cache too: a few minutes before it goes cold it warns (with a button
+// that keeps it warm, when the Cache Meter is on). With one pet per session a session's pet stays
+// only while its cache is warm: it goes to sleep when the cache is cold and is back with the next
+// message.
 import { read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
 import { addUsage, USAGE_STORE } from '../../settings/hooks/usage'
 import type { UsageBook } from '../../settings/hooks/usage'
 
-export type PetKind = 'hello' | 'work' | 'done' | 'ask' | 'error' | 'bye'
+export type PetKind = 'hello' | 'work' | 'done' | 'ask' | 'error' | 'bye' | 'cold'
 /** One message for the bubble; with `ask` and `choices`, buttons whose click answers `ask`. */
 export type PetNote = { kind: PetKind; title: string; text: string; ask?: string; choices?: string[] }
 /** Which figure stands on the desktop and, for cat, dog and bunny, its coat. */
@@ -52,6 +56,17 @@ let stepsShownFor = ''
 let lastDone: PetNote | null = null
 const NEXT_STEPS = { plugin: 'mod-box', key: 'ns_steps' } as const
 const POLL_MS = 600
+// The prompt cache: how long it stays warm (the Cache Meter's setting), when the pet warns.
+let cacheTtlMs = 60 * 60_000
+let warnMs = 5 * 60_000
+let lastRequestAt = 0
+let isTurnRunning = false
+let warnedFor = 0
+let coldFor = 0
+let isAsleep = false
+let cacheCheckedAt = 0
+const CACHE_CHECK_MS = 5_000
+const KEEP_WARM_ARGS = '1h'
 // Tools whose permission request is the person's own decision (a plan to approve): never answered by the pet.
 const PERSONAL_TOOLS = ['ExitPlanMode', 'EnterPlanMode']
 // How long a permission request waits for a click in the pet (option permissions "answer").
@@ -194,8 +209,65 @@ const waitPick = (id: string) => new Promise<string>(resolve => pending.set(id, 
 
 // Reads the pet's answer file while something waits for a click, and offers Next Steps'
 // suggestions once they are there.
+/** Where the cache stands: minutes left while warm, or cold; null before the first request. Pure. */
+export function cacheState(lastAt: number, now: number, ttlMs: number, warnBeforeMs: number): 'warm' | 'cooling' | 'cold' | null {
+  if (!lastAt) return null
+  const left = lastAt + ttlMs - now
+  return left <= 0 ? 'cold' : warnBeforeMs > 0 && left <= warnBeforeMs ? 'cooling' : 'warm'
+}
+
+// Keep-warm (the Cache Meter's /keepwarm) holds the cache: no warning, no sleep meanwhile.
+async function isKeptWarm($: EngineInterface, now: number): Promise<boolean> {
+  if ((await $.store.get('always').catch(() => null)) === true) return true
+  const deadline = await $.store.get(`deadline:${sessionId}`).catch(() => null)
+  return typeof deadline === 'number' && deadline > now
+}
+
+async function checkCache($: EngineInterface) {
+  if (isTurnRunning || !lastRequestAt) return
+  const now = await $.clock.now()
+  if (now - cacheCheckedAt < CACHE_CHECK_MS) return
+  cacheCheckedAt = now
+  const state = cacheState(lastRequestAt, now, cacheTtlMs, warnMs)
+  if (state === 'warm' || state === null) return
+  if (await isKeptWarm($, now)) return
+  if (state === 'cooling' && warnedFor !== lastRequestAt) {
+    warnedFor = lastRequestAt
+    const minutes = Math.max(1, Math.ceil((lastRequestAt + cacheTtlMs - now) / 60_000))
+    const keep = t('Warm halten (1 Std.)', 'Keep warm (1 h)')
+    const canKeep = (await $.command.list().catch(() => [] as Array<{ name: string }>)).some(c => c.name === 'keepwarm')
+    const id = `warm-${lastRequestAt}`
+    if (canKeep) {
+      pending.set(id, choice => {
+        if (choice !== keep) return void say($, { kind: 'cold', title: titled(t('Cache', 'Cache')), text: t('Gut, ich lasse ihn abkühlen.', 'Fine, I let it cool down.') })
+        void $.command.run({ command: 'keepwarm', args: KEEP_WARM_ARGS }).catch(() => $.ui.toast(t(`Bitte /keepwarm ${KEEP_WARM_ARGS} eingeben.`, `Please type /keepwarm ${KEEP_WARM_ARGS}.`)))
+        void say($, { kind: 'work', title: titled(t('Cache', 'Cache')), text: t('Ich halte ihn eine Stunde warm.', 'Keeping it warm for an hour.') })
+      })
+    }
+    await say($, {
+      kind: 'ask',
+      title: titled(t('Cache kühlt ab', 'Cache is cooling')),
+      text: t(`Noch ${minutes} Min. warm. Danach liest die nächste Nachricht den ganzen Kontext neu.`, `Warm for ${minutes} more min. After that the next message re-reads the whole context.`),
+      ...(canKeep ? { ask: id, choices: [keep, t('Abkühlen lassen', 'Let it cool')] } : {}),
+    })
+    return
+  }
+  if (state === 'cold' && coldFor !== lastRequestAt) {
+    coldFor = lastRequestAt
+    pending.delete(`warm-${lastRequestAt}`)
+    if (perSession) {
+      // One pet per active session: this one goes to sleep until the next message.
+      isAsleep = true
+      await say($, { kind: 'bye', title: titled(t('Cache ist kalt', 'Cache is cold')), text: t('Ich lege mich schlafen. Mit der nächsten Nachricht bin ich wieder da.', "I'm going to sleep. I'll be back with your next message.") })
+    } else {
+      await say($, { kind: 'cold', title: titled(t('Cache ist kalt', 'Cache is cold')), text: t('Die nächste Nachricht liest den ganzen Kontext neu.', 'The next message re-reads the whole context.') })
+    }
+  }
+}
+
 async function poll($: EngineInterface) {
   if (!statusPath) return
+  await checkCache($).catch(() => {})
   if (pending.size > 0) {
     const at = await $.fs.stat(`${statusPath}.answer`).then(x => x.mtimeMs).catch(() => 0)
     if (at && at !== answerAt) {
@@ -322,6 +394,8 @@ export const register: Register = (on, options) => {
   askViaPet = options.ask !== 'off'
   suggestViaPet = options.suggest !== 'off'
   permissions = options.permissions === 'answer' ? 'answer' : 'show'
+  cacheTtlMs = (Number(options.cacheTtl) || 60) * 60_000
+  warnMs = options.cacheWarn === 'off' ? 0 : (Number(options.cacheWarn) || 5) * 60_000
 
   on('session.start', {}, async ($, e, next) => {
     const r = await next(e)
@@ -337,6 +411,7 @@ export const register: Register = (on, options) => {
       if (mine && PETS.includes(mine.pet)) look = mine
     }
     listenForLook($)
+    lastRequestAt = (await $.clock.now()) || 1
     $.clock.every(POLL_MS, () => void poll($).catch(() => {}))
     project = base(await $.session.cwd().catch(() => ''))
     await $.command.register({ name: 'pet', description: t('Desktop-Pet: zeigen, verabschieden (stop) oder Figur wählen (z. B. /pet cat calico)', 'Desktop Pet: show it, send it off (stop) or pick a figure (e.g. /pet cat calico)'), argumentHint: '[stop | <figure> [coat]]' })
@@ -349,6 +424,13 @@ export const register: Register = (on, options) => {
 
   on('turn.start', {}, async ($, e, next) => {
     const r = await next(e)
+    if ((e as { agentId?: string }).agentId) return r
+    isTurnRunning = true
+    lastRequestAt = (await $.clock.now()) || 1
+    if (isAsleep && statusPath) {
+      isAsleep = false
+      void ensure($).catch(() => {})
+    }
     steps = 0
     changed.clear()
     watchStepsUntil = 0
@@ -378,6 +460,8 @@ export const register: Register = (on, options) => {
   on('turn.complete', {}, async ($, e, next) => {
     const r = await next(e)
     if (!statusPath || e.agentId) return r
+    isTurnRunning = false
+    lastRequestAt = (await $.clock.now()) || 1
     if (e.reason === 'aborted' || e.isAborted) {
       void say($, { kind: 'ask', title: titled(t('Abgebrochen', 'Stopped')), text: t('Du hast unterbrochen. Ich warte.', 'You stopped it. Waiting for you.') })
       return r

@@ -512,6 +512,7 @@ namespace ModBox
                 case "done": return Color.FromArgb(80, 190, 120);
                 case "ask": return Color.FromArgb(240, 180, 60);
                 case "work": return Color.FromArgb(90, 150, 240);
+                case "cold": return Color.FromArgb(110, 196, 222);
                 default: return Color.FromArgb(215, 120, 80);
             }
         }

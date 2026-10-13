@@ -1,6 +1,6 @@
 import { describe as group, expect, mock, test } from 'claude-code/testing'
 
-import { describe, gist, parseAnswer, parseLook, pickLook, statusText } from '../mods/pet/hooks/register'
+import { cacheState, describe, gist, parseAnswer, parseLook, pickLook, statusText } from '../mods/pet/hooks/register'
 
 const QUIET = { language: 'en', filetree: false, savvyProgress: false, replayTheater: false, cacheMeter: false, readGuard: false, packageGuard: false }
 const ok = (stdout = '') => ({ value: { exitCode: 0, stdout, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } })
@@ -316,5 +316,73 @@ group('Desktop pet: skins per session', () => {
     await clock.advance(700)
     await wait()
     expect(writes.at(-1)!.text).toContain('pet=dragon')
+  })
+})
+
+group('Desktop pet: the prompt cache', () => {
+  const CWD = ['C:', 'work', 'shop'].join(String.fromCharCode(92))
+  const MIN = 60_000
+  // A 5-minute cache (the API's), so the clock has little to run through.
+  const FIVE = { ...QUIET, pet: true, cacheMeterTtl: '5', petCacheWarn: '2' }
+  const turn = async ($: any, id: string) => {
+    await $.turn.start({ text: 'go on', turnId: id })
+    await $.turn.complete({ turnId: id, answer: 'Done with that part of the work now.', durationMs: 5, isAborted: false, reason: 'answer' })
+  }
+
+  test('warm, cooling, cold', () => {
+    expect(cacheState(0, 10, 5 * MIN, 2 * MIN)).toBe(null)
+    expect(cacheState(1_000, 1_000 + 2 * MIN, 5 * MIN, 2 * MIN)).toBe('warm')
+    expect(cacheState(1_000, 1_000 + 4 * MIN, 5 * MIN, 2 * MIN)).toBe('cooling')
+    expect(cacheState(1_000, 1_000 + 4 * MIN, 5 * MIN, 0)).toBe('warm')
+    expect(cacheState(1_000, 1_000 + 6 * MIN, 5 * MIN, 2 * MIN)).toBe('cold')
+  })
+
+  test('warns before the cache goes cold; the button keeps it warm', { options: FIVE }, async ($: any, on: any) => {
+    const { writes, clock } = engine(on)
+    const ran: string[] = []
+    on('command.list', () => ({ value: [{ name: 'keepwarm' }] }))
+    on('command.run', (_$: any, e: any) => {
+      ran.push(`${e.command} ${e.args ?? ''}`)
+      return { text: 'ok' }
+    })
+    await clock.advance(1_000)
+    await $.session.start({ surface: 'terminal', isInteractive: true, cwd: CWD })
+    await turn($, 't1')
+    await clock.advance(3.5 * MIN)
+    await wait()
+    const warned = writes.find(w => w.text.includes('Cache is cooling'))
+    expect(warned?.text).toContain('choice=Keep warm (1 h)')
+    click(writes.filter(w => w.text.includes('Cache is cooling')) as any, 'Keep warm (1 h)')
+    await clock.advance(1_000)
+    await wait()
+    expect(ran).toContain('keepwarm 1h')
+  })
+
+  test('one pet per active session: asleep when the cache is cold, back with the next message', { options: { ...FIVE, petPerSession: 'on' } }, async ($: any, on: any) => {
+    const { writes, runs, clock } = engine(on)
+    on('command.list', () => ({ value: [] }))
+    await clock.advance(1_000)
+    await $.session.start({ surface: 'terminal', isInteractive: true, cwd: CWD })
+    await turn($, 't1')
+    await clock.advance(6 * MIN)
+    await wait()
+    expect(writes.at(-1)!.text).toContain('kind=bye')
+    expect(writes.at(-1)!.text).toContain('Cache is cold')
+    const starts = runs.filter(r => r.join(' ').includes('Start-Process')).length
+    await $.turn.start({ text: 'and now the tests', turnId: 't2' })
+    await wait()
+    expect(runs.filter(r => r.join(' ').includes('Start-Process')).length).toBe(starts + 1)
+    expect(writes.at(-1)!.text).toContain('kind=work')
+  })
+
+  test('no warning while keep-warm holds the cache', { options: FIVE }, async ($: any, on: any) => {
+    const { writes, clock } = engine(on, 'Windows_NT', undefined, { 'deadline:s': 10 * 60 * 60_000 })
+    on('command.list', () => ({ value: [{ name: 'keepwarm' }] }))
+    await clock.advance(1_000)
+    await $.session.start({ surface: 'terminal', isInteractive: true, cwd: CWD })
+    await turn($, 't1')
+    await clock.advance(6 * MIN)
+    await wait()
+    expect(writes.some(w => /Cache is (cooling|cold)/.test(w.text))).toBe(false)
   })
 })

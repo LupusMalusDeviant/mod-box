@@ -70,7 +70,7 @@ export const register: Register = (on, options) => {
   if (isOn(o, "readGuard", true)) (m15 as any)(on, { "limitKb": opt(o, "readLimit", "50"), "mode": opt(o, "readMode", "block"), "shell": opt(o, "readShell", "on"), "language": opt(o, "language", "en") })
   if (isOn(o, "catchMeUp", false)) (m16 as any)(on, { "language": opt(o, "language", "en") })
   if (isOn(o, "codebaseMap", false)) (m17 as any)(on, { "claudeMd": opt(o, "codebaseMapClaudeMd", "auto"), "language": opt(o, "language", "en") })
-  if (isOn(o, "pet", false)) (m18 as any)(on, { "bubble": opt(o, "petBubble", "9"), "summary": opt(o, "petSummary", "off"), "kind": opt(o, "petKind", "box"), "fur": opt(o, "petFur", "auto"), "perSession": opt(o, "petPerSession", "off"), "ask": opt(o, "petAsk", "on"), "suggest": opt(o, "petSuggest", "on"), "permissions": opt(o, "petPermissions", "show"), "language": opt(o, "language", "en"), "signScript": opt(o, "signScript", "") })
+  if (isOn(o, "pet", false)) (m18 as any)(on, { "bubble": opt(o, "petBubble", "9"), "summary": opt(o, "petSummary", "off"), "kind": opt(o, "petKind", "box"), "fur": opt(o, "petFur", "auto"), "perSession": opt(o, "petPerSession", "off"), "cacheWarn": opt(o, "petCacheWarn", "5"), "ask": opt(o, "petAsk", "on"), "suggest": opt(o, "petSuggest", "on"), "permissions": opt(o, "petPermissions", "show"), "language": opt(o, "language", "en"), "signScript": opt(o, "signScript", ""), "cacheTtl": opt(o, "cacheMeterTtl", "60") })
   if (isOn(o, "ccSplitDiffView", false)) (m19 as any)(on, {  })
   if (isOn(o, "humanInTheLoop", false)) (m20 as any)(on, {  })
   if (isOn(o, "promptRail", false)) (m21 as any)(on, { "mode": opt(o, "promptRailMode", "horizontal") })
