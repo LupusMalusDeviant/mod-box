@@ -1,6 +1,6 @@
 import { describe as group, expect, mock, test } from 'claude-code/testing'
 
-import { describe, gist, parseAnswer, pickLook, statusText } from '../mods/pet/hooks/register'
+import { describe, gist, parseAnswer, parseLook, pickLook, statusText } from '../mods/pet/hooks/register'
 
 const QUIET = { language: 'en', filetree: false, savvyProgress: false, replayTheater: false, cacheMeter: false, readGuard: false, packageGuard: false }
 const ok = (stdout = '') => ({ value: { exitCode: 0, stdout, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } })
@@ -10,12 +10,12 @@ const wait = (ms = 30) => new Promise(done => (globalThis as any).setTimeout(don
 const answer = { text: '', at: 0 }
 const clicked = { permission: '' }
 
-function engine(on: any, os = 'Windows_NT', tool: (e: any) => unknown = () => ({ result: 'ok', text: 'ok' })) {
+function engine(on: any, os = 'Windows_NT', tool: (e: any) => unknown = () => ({ result: 'ok', text: 'ok' }), stored: Record<string, unknown> = {}) {
   answer.text = ''
   clicked.permission = ''
   answer.at = 0
   const clock = mock.clock(on)
-  mock.store(on)
+  mock.store(on, stored)
   const writes: Array<{ path: string; text: string }> = []
   const runs: string[][] = []
   on('command.register', () => ({ value: {} }))
@@ -231,5 +231,59 @@ group('Desktop pet: figures and clicks', () => {
     expect(r.text).toContain('fox')
     expect(sets).toContainEqual({ key: 'mod-box.petKind', value: 'fox' })
     expect(writes.at(-1)!.text).toContain('pet=fox')
+  })
+})
+
+group('Desktop pet: skins per session', () => {
+  const CWD = ['C:', 'work', 'shop'].join(String.fromCharCode(92))
+  // the right-click menu's pick, as the pet writes it
+  const menu = (choice: string) => {
+    answer.text = 'id=look' + String.fromCharCode(10) + 'choice=' + choice + String.fromCharCode(10)
+    answer.at += 1
+  }
+  const settings = (on: any) => {
+    const sets: Array<{ key: string; value: unknown }> = []
+    on('config.set', (_$: any, e: any) => {
+      sets.push({ key: e.key, value: e.value })
+      return { value: e.value }
+    })
+    return sets
+  }
+
+  test('figure and coat from a menu pick or /pet', () => {
+    expect(parseLook('cat calico', { pet: 'box', fur: 'auto' })).toEqual({ pet: 'cat', fur: 'calico' })
+    expect(parseLook('dog', { pet: 'cat', fur: 'black' })).toEqual({ pet: 'dog', fur: 'black' })
+    expect(parseLook('unicorn', { pet: 'cat', fur: 'black' })).toBe(null)
+  })
+
+  test('one pet per session: /pet sets this session only, kept for a restart', { options: { ...QUIET, pet: true, petPerSession: 'on' } }, async ($: any, on: any) => {
+    // chosen before a restart
+    const { writes } = engine(on, 'Windows_NT', undefined, { 'pet:looks': { s: { pet: 'owl', fur: 'auto' } } })
+    const sets = settings(on)
+    on('command.run', () => ({ text: 'NOBODY' }))
+    await $.session.start({ surface: 'terminal', isInteractive: true, cwd: CWD })
+    await wait()
+    expect(writes.at(-1)!.text).toContain('pet=owl')
+    const r = await $.command.run({ command: 'pet', args: 'fox' })
+    expect(r.text).toContain("This session's pet is now: fox")
+    expect(sets).toEqual([]) // the setting for all sessions stays
+    expect(writes.at(-1)!.text).toContain('pet=fox')
+  })
+
+  test('right-click › Figur: one pet for all keeps it as the setting', { options: { ...QUIET, pet: true } }, async ($: any, on: any) => {
+    const { writes, clock } = engine(on)
+    const sets = settings(on)
+    await $.session.start({ surface: 'terminal', isInteractive: true, cwd: CWD })
+    await wait()
+    menu('cat calico')
+    await clock.advance(700)
+    await wait()
+    expect(writes.at(-1)!.text).toContain('pet=cat' + String.fromCharCode(10) + 'fur=calico')
+    expect(sets).toEqual([{ key: 'mod-box.petKind', value: 'cat' }, { key: 'mod-box.petFur', value: 'calico' }])
+    // a second pick works too
+    menu('dragon')
+    await clock.advance(700)
+    await wait()
+    expect(writes.at(-1)!.text).toContain('pet=dragon')
   })
 })

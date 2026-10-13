@@ -2,7 +2,8 @@
 // speech bubble. It reads a status file the pet mod writes (key=value lines) and draws; when the
 // status offers choices (Claude's question, the next-step suggestions), a click on one is written to
 // <status file>.answer, which the mod picks up. No network, nothing else goes to Claude.
-// Drag it anywhere; right-click for its menu.
+// Drag it anywhere; right-click for its menu, where "Figur" picks the figure and coat (written
+// to the answer file with id "look"; the mod keeps it for the session or as the setting).
 //
 //   ModBoxPet.exe <status file> [bubble seconds]
 //   ModBoxPet.exe --preview <file.png>      (every figure in every state, for a look)
@@ -151,6 +152,8 @@ namespace ModBox
             menu.Items.Add("10 Minuten Ruhe", null, (s, e) => { snoozeUntil = DateTime.Now.AddMinutes(10); isBubble = false; Draw(); });
             menu.Items.Add("Zurück in die Ecke", null, (s, e) => { Location = CornerLocation(); SavePosition(); });
             menu.Items.Add(new ToolStripSeparator());
+            menu.Items.Add(FigureMenu());
+            menu.Items.Add(new ToolStripSeparator());
             menu.Items.Add("Beenden", null, (s, e) => Close());
             ContextMenuStrip = menu;
 
@@ -269,17 +272,80 @@ namespace ModBox
             Draw();
         }
 
-        // A choice was clicked: write it for the mod (whole file at once), show it as taken.
-        void Pick(string choice)
+        static readonly string[][] FigureNames = {
+            new[] { "box", "Karton" }, new[] { "cat", "Katze" }, new[] { "dog", "Hund" }, new[] { "fox", "Fuchs" },
+            new[] { "bunny", "Hase" }, new[] { "hamster", "Hamster" }, new[] { "owl", "Eule" }, new[] { "penguin", "Pinguin" },
+            new[] { "frog", "Frosch" }, new[] { "axolotl", "Axolotl" }, new[] { "dragon", "Drache" }, new[] { "robot", "Roboter" },
+            new[] { "ghost", "Geist" },
+        };
+        static readonly string[][] CoatNames = {
+            new[] { "ginger", "rot getigert" }, new[] { "black", "schwarz" }, new[] { "white", "weiß" }, new[] { "grey", "grau getigert" },
+            new[] { "brown", "braun getigert" }, new[] { "cream", "creme" }, new[] { "calico", "dreifarbig" }, new[] { "siamese", "Siam" },
+            new[] { "tuxedo", "schwarz-weiß" },
+        };
+
+        // Right-click › Figur: every figure; cat, dog and bunny with their coats. Ticks show the current one.
+        ToolStripMenuItem FigureMenu()
+        {
+            var root = new ToolStripMenuItem("Figur");
+            foreach (var f in FigureNames)
+            {
+                string pet = f[0];
+                var item = new ToolStripMenuItem(f[1]);
+                if (pet == "cat" || pet == "dog" || pet == "bunny")
+                {
+                    foreach (var c in CoatNames)
+                    {
+                        string fur = c[0];
+                        var coat = new ToolStripMenuItem(c[1], null, (s, e) => ChooseLook(pet, fur));
+                        item.DropDownItems.Add(coat);
+                    }
+                    item.DropDownOpening += (s, e) => { foreach (ToolStripMenuItem c in item.DropDownItems) c.Checked = status.Pet == pet && CoatNames[item.DropDownItems.IndexOf(c)][0] == status.Fur; };
+                }
+                else item.Click += (s, e) => ChooseLook(pet, "auto");
+                root.DropDownItems.Add(item);
+            }
+            root.DropDownItems.Add(new ToolStripSeparator());
+            root.DropDownItems.Add(new ToolStripMenuItem("Zufall", null, (s, e) => ChooseLook("random", "")));
+            root.DropDownOpening += (s, e) =>
+            {
+                foreach (var it in root.DropDownItems)
+                {
+                    var m = it as ToolStripMenuItem;
+                    if (m == null) continue;
+                    int at = Array.FindIndex(FigureNames, f => f[1] == m.Text);
+                    m.Checked = at >= 0 && FigureNames[at][0] == status.Pet;
+                }
+            };
+            return root;
+        }
+
+        // A figure from the menu: shown at once, written for the mod, which keeps it.
+        void ChooseLook(string pet, string fur)
+        {
+            WriteAnswer("look", fur.Length > 0 ? pet + " " + fur : pet);
+            if (pet != "random") { status.Pet = pet; status.Fur = fur; }
+            Draw();
+        }
+
+        // Whole file at once (a temp file moved in place), so the mod never reads half of it.
+        bool WriteAnswer(string id, string choice)
         {
             try
             {
                 string tmp = answerPath + ".tmp";
-                File.WriteAllText(tmp, "id=" + status.Ask + "\nchoice=" + choice.Replace("\r", "").Replace("\n", "\\n") + "\n");
+                File.WriteAllText(tmp, "id=" + id + "\nchoice=" + choice.Replace("\r", "").Replace("\n", "\\n") + "\n");
                 if (File.Exists(answerPath)) File.Delete(answerPath);
                 File.Move(tmp, answerPath);
+                return true;
             }
-            catch { return; }
+            catch { return false; }
+        }
+
+        // A choice was clicked: write it for the mod, show it as taken.
+        void Pick(string choice)
+        {
+            if (!WriteAnswer(status.Ask, choice)) return;
             status = new Status { Kind = "work", Title = "\u2713", Text = choice, Pet = status.Pet, Fur = status.Fur };
             hovered = -1;
             Cursor = Cursors.Default;

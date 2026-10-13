@@ -2173,8 +2173,8 @@ export const CATALOG: CatalogMod[] = [
       "de": "Desktop-Pet"
     },
     "description": {
-      "en": "A little companion on the Windows desktop, always on top: a cardboard box or one of twelve figures (cat, dog, fox, bunny, hamster, owl, penguin, frog, axolotl, dragon, robot, ghost; cat, dog and bunny in nine coats). It says in a speech bubble what Claude is doing, shows permission requests, and lets you click Claude's questions and Next Steps' suggestions right in the bubble. Drag it anywhere, right-click for quiet time; optionally one pet per session. Built once with the C# compiler that ships with Windows and signed with the Sign Guard script when one is set. /pet shows it, /pet cat calico picks a figure, /pet stop sends it off.",
-      "de": "Ein kleiner Begleiter auf dem Windows-Desktop, immer im Vordergrund: eine Pappbox oder eine von zwölf Figuren (Katze, Hund, Fuchs, Hase, Hamster, Eule, Pinguin, Frosch, Axolotl, Drache, Roboter, Geist; Katze, Hund und Hase in neun Fellfarben). Er sagt in einer Sprechblase, was Claude gerade tut, zeigt Genehmigungsanfragen an und lässt dich Claudes Fragen und die Vorschläge von Next Steps direkt in der Blase anklicken. Frei verschiebbar, Rechtsklick für Ruhe; auf Wunsch ein Pet pro Sitzung. Wird einmal mit dem C#-Compiler von Windows gebaut und mit dem Skript des Signier-Wächters signiert, wenn eines gesetzt ist. /pet zeigt es, /pet cat calico wählt eine Figur, /pet stop verabschiedet es."
+      "en": "A little companion on the Windows desktop, always on top: a cardboard box or one of twelve figures (cat, dog, fox, bunny, hamster, owl, penguin, frog, axolotl, dragon, robot, ghost; cat, dog and bunny in nine coats). It says in a speech bubble what Claude is doing, shows permission requests, and lets you click Claude's questions and Next Steps' suggestions right in the bubble. Drag it anywhere; right-click for quiet time or another figure; optionally one pet per session, each with its own figure. Built once with the C# compiler that ships with Windows and signed with the Sign Guard script when one is set. /pet shows it, /pet cat calico picks a figure, /pet stop sends it off.",
+      "de": "Ein kleiner Begleiter auf dem Windows-Desktop, immer im Vordergrund: eine Pappbox oder eine von zwölf Figuren (Katze, Hund, Fuchs, Hase, Hamster, Eule, Pinguin, Frosch, Axolotl, Drache, Roboter, Geist; Katze, Hund und Hase in neun Fellfarben). Er sagt in einer Sprechblase, was Claude gerade tut, zeigt Genehmigungsanfragen an und lässt dich Claudes Fragen und die Vorschläge von Next Steps direkt in der Blase anklicken. Frei verschiebbar; Rechtsklick für Ruhe oder eine andere Figur; auf Wunsch ein Pet pro Sitzung, jedes mit eigener Figur. Wird einmal mit dem C#-Compiler von Windows gebaut und mit dem Skript des Signier-Wächters signiert, wenn eines gesetzt ist. /pet zeigt es, /pet cat calico wählt eine Figur, /pet stop verabschiedet es."
     },
     "group": "display",
     "costs": null,
@@ -2351,8 +2351,8 @@ export const CATALOG: CatalogMod[] = [
           "de": "Desktop-Pet: ein Pet pro Sitzung"
         },
         "description": {
-          "en": "on: every Claude Code session gets its own pet; they stand side by side. off: one pet for all.",
-          "de": "an: jede Claude-Code-Sitzung bekommt ihr eigenes Pet; sie stehen nebeneinander. aus: eines für alle."
+          "en": "on: every Claude Code session gets its own pet; they stand side by side, and /pet or the right-click menu picks each one's figure on its own. off: one pet for all.",
+          "de": "an: jede Claude-Code-Sitzung bekommt ihr eigenes Pet; sie stehen nebeneinander, und /pet oder das Rechtsklick-Menü wählt die Figur für jedes einzeln. aus: eines für alle."
         },
         "labels": {
           "de": {
