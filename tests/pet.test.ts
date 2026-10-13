@@ -9,10 +9,13 @@ const wait = (ms = 30) => new Promise(done => (globalThis as any).setTimeout(don
 // What the pet wrote after a click, as the test sets it: the answer file's text and its time.
 const answer = { text: '', at: 0 }
 const clicked = { permission: '' }
+// Whether the sign-binary skill's script is there.
+const skill = { there: false }
 
 function engine(on: any, os = 'Windows_NT', tool: (e: any) => unknown = () => ({ result: 'ok', text: 'ok' }), stored: Record<string, unknown> = {}) {
   answer.text = ''
   clicked.permission = ''
+  skill.there = false
   answer.at = 0
   const clock = mock.clock(on)
   mock.store(on, stored)
@@ -20,7 +23,7 @@ function engine(on: any, os = 'Windows_NT', tool: (e: any) => unknown = () => ({
   const runs: string[][] = []
   on('command.register', () => ({ value: {} }))
   on('ui.toast', () => ({ value: undefined }))
-  on('fs.exists', () => ({ value: false }))
+  on('fs.exists', (_$: any, e: any) => ({ value: skill.there && /sign\.ps1$/.test(e.path) }))
   on('fs.stat', (_$: any, e: any) =>
     /Pet\.cs$/.test(e.path) ? { value: { kind: 'file', size: 1, mtimeMs: 5, isLink: false } }
     : /\.answer$/.test(e.path) && answer.at ? { value: { kind: 'file', size: 1, mtimeMs: answer.at, isLink: false } }
@@ -35,7 +38,7 @@ function engine(on: any, os = 'Windows_NT', tool: (e: any) => unknown = () => ({
   on('session.start', (_$: any, e: any) => ({ sessionId: 's', cwd: e.cwd }))
   on('session.cwd', () => ({ value: 'C:\\work\\shop' }))
   on('session.usage', () => ({ value: { startedAt: 0, context: { window: 200_000 }, rateLimits: [] } }))
-  on('env.get', (_$: any, e: any) => ({ value: ({ OS: os, TEMP: 'C:\\Temp', LOCALAPPDATA: 'C:\\Local' } as Record<string, string>)[e.name] }))
+  on('env.get', (_$: any, e: any) => ({ value: ({ OS: os, TEMP: 'C:\\Temp', LOCALAPPDATA: 'C:\\Local', USERPROFILE: 'C:\\Users\\me' } as Record<string, string>)[e.name] }))
   on('process.run', (_$: any, e: any) => {
     runs.push([...e.argv])
     // the permission waiter, as if the pet's button had been clicked
@@ -100,6 +103,16 @@ group('Desktop pet: in the session', () => {
     expect(last).toContain('kind=done')
     expect(last).toContain('title=shop · Done · 1 step · 1 file changed')
     expect(last).toContain('text=Fixed the login check. The test passes now.')
+  })
+
+  test('signs a fresh build with the sign-binary skill when no script is set', { options: { ...QUIET, pet: true } }, async ($: any, on: any) => {
+    const { runs } = engine(on)
+    skill.there = true
+    await $.session.start({ surface: 'terminal', isInteractive: true, cwd: 'C:\\work\\shop' })
+    await wait()
+    const ps = runs.filter(r => r[0] === 'powershell')
+    expect(ps).toHaveLength(3) // build, sign, start
+    expect(ps[1]!.join(' ')).toMatch(/sign-binary.sign\.ps1 -Exe .*ModBoxPet\.exe$/)
   })
 
   test('a question at the end is an "ask"', { options: { ...QUIET, pet: true } }, async ($: any, on: any) => {
