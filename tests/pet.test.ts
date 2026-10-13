@@ -375,6 +375,46 @@ group('Desktop pet: the prompt cache', () => {
     expect(writes.at(-1)!.text).toContain('kind=work')
   })
 
+  const PER = { ...FIVE, petPerSession: 'on' }
+  const starts = (runs: string[][]) => runs.filter(r => r.join(' ').includes('Start-Process')).length
+
+  test('started again (plugin reloaded) with a cold cache: no pet until the next message', { options: PER }, async ($: any, on: any) => {
+    const { writes, runs, clock } = engine(on, 'Windows_NT', undefined, { 'pet:active': { s: 1_000 } })
+    on('command.list', () => ({ value: [] }))
+    await clock.advance(7 * MIN)
+    await $.session.start({ surface: 'terminal', isInteractive: true, cwd: CWD })
+    await wait()
+    expect(writes.at(-1)!.text).toContain('kind=bye')
+    expect(starts(runs)).toBe(0)
+    await clock.advance(2 * MIN)
+    await wait()
+    expect(starts(runs)).toBe(0)
+    await $.turn.start({ text: 'go on', turnId: 't1' })
+    await wait()
+    expect(starts(runs)).toBeGreaterThan(0)
+  })
+
+  test('started again with a warm cache: the pet stays', { options: PER }, async ($: any, on: any) => {
+    const { writes, runs, clock } = engine(on, 'Windows_NT', undefined, { 'pet:active': { s: 1_000 } })
+    on('command.list', () => ({ value: [] }))
+    await clock.advance(2 * MIN)
+    await $.session.start({ surface: 'terminal', isInteractive: true, cwd: CWD })
+    await wait()
+    expect(writes.at(-1)!.text).toContain('kind=hello')
+    expect(starts(runs)).toBeGreaterThan(0)
+  })
+
+  test('an old session taken up again, its time unknown: asleep', { options: PER }, async ($: any, on: any) => {
+    const { writes, runs, clock } = engine(on)
+    on('command.list', () => ({ value: [] }))
+    on('session.messages', () => ({ value: [{ role: 'user', text: 'fix the login' }] }))
+    await clock.advance(1_000)
+    await $.session.start({ surface: 'terminal', isInteractive: true, cwd: CWD })
+    await wait()
+    expect(writes.at(-1)!.text).toContain('kind=bye')
+    expect(starts(runs)).toBe(0)
+  })
+
   test('no warning while keep-warm holds the cache', { options: FIVE }, async ($: any, on: any) => {
     const { writes, clock } = engine(on, 'Windows_NT', undefined, { 'deadline:s': 10 * 60 * 60_000 })
     on('command.list', () => ({ value: [{ name: 'keepwarm' }] }))

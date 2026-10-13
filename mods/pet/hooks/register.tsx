@@ -180,6 +180,32 @@ export function pickLook(pet: string, fur: string, roll = Math.random): PetLook 
 const LOOKS_STORE = 'pet:looks'
 const LOOKS_KEPT = 40
 let sessionId = ''
+// ...and when each one last sent a request, so a session that only starts again (the plugin
+// reloaded, the app reopened) knows whether its cache is still warm.
+const ACTIVE_STORE = 'pet:active'
+
+async function markRequest($: EngineInterface) {
+  lastRequestAt = (await $.clock.now()) || 1
+  if (!perSession || !sessionId) return
+  const all = ((await $.store.get(ACTIVE_STORE).catch(() => null)) ?? {}) as Record<string, number>
+  delete all[sessionId]
+  const kept = Object.entries(all).slice(-(LOOKS_KEPT - 1))
+  await $.store.set(ACTIVE_STORE, Object.fromEntries([...kept, [sessionId, lastRequestAt]])).catch(() => {})
+}
+
+// One pet per active session, at the start: a session whose cache is cold (or an old one taken up
+// again, its time unknown) has no pet until its next message; a pet still running for it leaves.
+async function startsAsleep($: EngineInterface, now: number): Promise<boolean> {
+  if (!perSession || !sessionId) return false
+  const known = (((await $.store.get(ACTIVE_STORE).catch(() => null)) ?? {}) as Record<string, number>)[sessionId]
+  if (typeof known === 'number') {
+    lastRequestAt = known
+    return cacheState(known, now, cacheTtlMs, 0) === 'cold'
+  }
+  const isOld = (await $.session.messages().catch(() => [])).length > 0
+  if (isOld) lastRequestAt = 0
+  return isOld
+}
 
 /** "cat calico", "random", "fox": the figure and coat a menu click or /pet names. Pure, for the tests. */
 export function parseLook(text: string, current: PetLook): PetLook | null {
@@ -327,7 +353,8 @@ async function say($: EngineInterface, note: PetNote) {
   const typed = canType ? { ...note, free: note.free ?? promptId() } : { ...note, free: undefined }
   const extra = canType ? { type: 'on', hotkey, typelabel: note.free ? t('Eigene Antwort …', 'Write your own answer …') : '' } : {}
   await $.fs.write(statusPath, statusText(typed, now, look, extra)).catch(() => {})
-  if (now - started > RESTART_MS) void ensure($).catch(() => {})
+  // asleep (one pet per active session, cache cold): the note only reaches a pet that still runs
+  if (now - started > RESTART_MS && !isAsleep) void ensure($).catch(() => {})
 }
 
 type AskQuestion = { question: string; header?: string; multiSelect?: boolean; type?: string; options?: Array<{ label: string }> }
@@ -436,10 +463,17 @@ export const register: Register = (on, options) => {
     }
     listenForLook($)
     listenForPrompt($)
-    lastRequestAt = (await $.clock.now()) || 1
+    const now = (await $.clock.now()) || 1
+    lastRequestAt = now
+    isAsleep = await startsAsleep($, now)
+    coldFor = isAsleep ? lastRequestAt : 0
     $.clock.every(POLL_MS, () => void poll($).catch(() => {}))
     project = base(await $.session.cwd().catch(() => ''))
     await $.command.register({ name: 'pet', description: t('Desktop-Pet: zeigen, verabschieden (stop) oder Figur wählen (z. B. /pet cat calico)', 'Desktop Pet: show it, send it off (stop) or pick a figure (e.g. /pet cat calico)'), argumentHint: '[stop | <figure> [coat]]' })
+    if (isAsleep) {
+      await say($, { kind: 'bye', title: titled(t('Cache ist kalt', 'Cache is cold')), text: t('Ich schlafe, bis du hier wieder schreibst.', "I'm asleep until you write here again.") })
+      return r
+    }
     void (async () => {
       await say($, { kind: 'hello', title: titled(t('Hallo!', 'Hello!')), text: t('Ich schaue Claude über die Schulter.', "I'm watching over Claude's shoulder.") })
       await ensure($)
@@ -451,7 +485,7 @@ export const register: Register = (on, options) => {
     const r = await next(e)
     if ((e as { agentId?: string }).agentId) return r
     isTurnRunning = true
-    lastRequestAt = (await $.clock.now()) || 1
+    await markRequest($)
     if (isAsleep && statusPath) {
       isAsleep = false
       void ensure($).catch(() => {})
@@ -486,7 +520,7 @@ export const register: Register = (on, options) => {
     const r = await next(e)
     if (!statusPath || e.agentId) return r
     isTurnRunning = false
-    lastRequestAt = (await $.clock.now()) || 1
+    await markRequest($)
     if (e.reason === 'aborted' || e.isAborted) {
       void say($, { kind: 'ask', title: titled(t('Abgebrochen', 'Stopped')), text: t('Du hast unterbrochen. Ich warte.', 'You stopped it. Waiting for you.') })
       return r
@@ -596,6 +630,7 @@ export const register: Register = (on, options) => {
     if (!isWindows) return { text: t('Das Desktop-Pet gibt es nur unter Windows.', 'The desktop pet is Windows only.') }
     const [first = '', second = ''] = String(e.args ?? '').trim().toLowerCase().split(/\s+/)
     const next = parseLook(String(e.args ?? ''), look)
+    if (first !== 'stop') isAsleep = false
     if (next) {
       await ensure($)
       await applyLook($, next, first, second !== '')
