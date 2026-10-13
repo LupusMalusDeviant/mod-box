@@ -39,20 +39,28 @@ const keysOf = v => (v && typeof v === 'object' && !Array.isArray(v) ? Object.ke
  * `root` (a collection repo usually has one license at its top for all its plugins).
  */
 function licenseOf(dir, manifest, root) {
-  if (manifest?.license) return { license: manifest.license, licenseFile: null }
+  if (manifest?.license) return { license: manifest.license, licenseFile: null, licenseFiles: [] }
   let d = path.resolve(dir)
   const stop = root ? path.resolve(root) : d
   for (let i = 0; i < 6; i++) {
-    const lf = listDir(d, n => /^(licen[cs]e|copying)(\.(md|txt))?$/i.test(n))[0]
-    if (lf) {
-      const text = fs.readFileSync(path.join(d, lf), 'utf8')
-      const id = (text.match(/\b(MIT|Apache-2\.0|Apache License|BSD|ISC|MPL|LGPL|AGPL|GPL|Unlicense)\b/i) ?? [null, 'see ' + lf])[1]
-      return { license: /^Apache License$/i.test(id) ? 'Apache-2.0' : id, licenseFile: path.join(d, lf) }
+    // LICENSE, LICENSE.md, COPYING, and dual licenses as LICENSE-MIT + LICENSE-APACHE
+    const files = listDir(d, n => /^(licen[cs]e|copying)([-_.][\w.-]+)?$/i.test(n)).sort()
+    if (files.length) {
+      const ids = files.map(lf => {
+        const text = fs.readFileSync(path.join(d, lf), 'utf8')
+        const id = (text.match(/\b(MIT|Apache-2\.0|Apache License|BSD|ISC|MPL|LGPL|AGPL|GPL|Unlicense)\b/i) ?? [null, 'see ' + lf])[1]
+        if (/^Apache License$/i.test(id)) return 'Apache-2.0'
+        // the MIT text itself often never says "MIT": its first sentence, or the file name, tells
+        if (String(id).startsWith('see ') && (/Permission is hereby granted, free of charge/i.test(text) || /-MIT$/i.test(lf))) return 'MIT'
+        if (String(id).startsWith('see ') && /-APACHE(-2\.0)?$/i.test(lf)) return 'Apache-2.0'
+        return id
+      })
+      return { license: [...new Set(ids)].join(' OR '), licenseFile: path.join(d, files[0]), licenseFiles: files.map(lf => path.join(d, lf)) }
     }
     if (d === stop || path.dirname(d) === d) break
     d = path.dirname(d)
   }
-  return { license: null, licenseFile: null }
+  return { license: null, licenseFile: null, licenseFiles: [] }
 }
 
 /** Everything a plugin folder declares or ships, read without running anything. */
@@ -132,7 +140,7 @@ export function inventory(dir, { root = null } = {}) {
   const tools = [...new Set([...code.matchAll(/tool\.register\(\s*\{[^}]*?name:\s*['"`]([\w:-]+)/g)].map(m => m[1]))]
   const usesPluginEnv = /CLAUDE_PLUGIN_(ROOT|DATA)/.test(code)
 
-  const { license, licenseFile } = licenseOf(dir, manifest, root)
+  const { license, licenseFile, licenseFiles } = licenseOf(dir, manifest, root)
 
   return {
     name: manifest?.name ?? path.basename(dir),
@@ -140,6 +148,7 @@ export function inventory(dir, { root = null } = {}) {
     description: manifest?.description ?? '',
     license,
     licenseFile,
+    licenseFiles,
     hasManifest: !!manifest,
     hooksJsonError: hooksJson?.__error ?? null,
     modules,

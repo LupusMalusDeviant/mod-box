@@ -112,6 +112,33 @@ describe('Profiles and sources', () => {
     expect(imp?.slice(2)).toEqual(['import', '--url', 'owner/repo', '--plugin', 'token-weather', '--strategy', 'auto', '--lang', 'de'])
     expect(await ui.find({ type: 'Text', text: /Hinweis A/ })).toBeDefined()
   })
+
+  test('community catalogue: search, see what a mod may do, import it', DE, async ($: any, on: any) => {
+    engine(on)
+    const calls: string[][] = []
+    on('process.run', (_$: any, e: any) => {
+      calls.push([...e.argv])
+      const out = e.argv[2] === 'modcat'
+        ? { ok: true, total: 2, count: 4000, generated: '2026-10-13', mods: [
+            { name: 'split-view', repo: 'someone/split-view', path: '', url: 'https://github.com/someone/split-view', description: 'Diffs side by side', reach: { level: 1, name: 'draws', labels: ['draws'] }, license: 'MIT', stars: 12, pushedAt: '2026-10-12', validated: 'passed', inBox: false },
+            { name: 'prompt-rail', repo: 'oikon48/prompt-rail', path: '', url: '', description: 'Rail', reach: { level: 2, name: 'writes or runs', labels: ['runs commands'] }, license: 'MIT', stars: 30, pushedAt: null, validated: 'passed', inBox: true },
+          ] }
+        : e.argv[2] === 'import' ? { ok: true, id: 'split-view', toggle: 'splitView', notes: [] } : { ok: true, sources: [] }
+      return { value: { exitCode: 0, stdout: JSON.stringify(out) + '\n', stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
+    })
+    on('command.run', () => ({ text: '' }))
+    await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
+    const ui = await pane($, 'terminal')
+    await ui.press({ key: 'tab-sources' })
+    await ui.input({ key: 'modcat-q', text: 'diff' })
+    expect(calls.find(c => c[2] === 'modcat')?.slice(3)).toEqual(['--query', 'diff', '--limit', '20', '--lang', 'de'])
+    expect(await ui.find({ type: 'Text', text: /2 Treffer von 4000 Mods/ })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: /writes or runs/ })).toBeDefined()
+    // already in the box: no import button
+    expect(await ui.find({ key: 'mc-imp-oikon48/prompt-rail:prompt-rail' })).toBeUndefined()
+    await ui.press({ key: 'mc-imp-someone/split-view:split-view' })
+    expect(calls.find(c => c[2] === 'import')?.slice(2, 7)).toEqual(['import', '--url', 'https://github.com/someone/split-view', '--plugin', 'split-view'])
+  })
 })
 
 describe('Language and design', () => {

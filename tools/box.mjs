@@ -6,6 +6,7 @@
 //       the userConfig in .claude-plugin/plugin.json, mods/<id>/types/index.d.ts (re-exports)
 //       and mods/settings/hooks/catalog.ts (what the window shows).
 //   node tools/box.mjs catalog [--url <git-link>]... [--refresh]
+//   node tools/box.mjs modcat [--query <words>] [--limit <n>] [--refresh]   (community mod catalogue)
 //       Lists the connected Claude marketplaces and your own Git links with their plugins.
 //   node tools/box.mjs import --dir <repo-or-marketplace-folder> [--plugin <name>]
 //   node tools/box.mjs import --url <git-link> [--plugin <name>]
@@ -24,6 +25,7 @@ import { fileURLToPath } from 'node:url'
 import { exportMods } from './export.mjs'
 import { componentsOf, inventory, verdictOf } from './inspect.mjs'
 import * as native from './native.mjs'
+import { modcat } from './modcat.mjs'
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const BOX = path.join(ROOT, 'box.json')
@@ -777,7 +779,9 @@ function importMod(a) {
     const sourceCode = walk(pluginDir).filter(p => CODE_EXT.test(p) && !/[\\/]node_modules[\\/]/.test(p)).map(p => fs.readFileSync(p, 'utf8')).join('\n')
     copyTree(pluginDir, target, report, lost, sourceCode)
     fs.rmSync(path.join(target, 'hooks', 'hooks.json'), { force: true })
-    if (inv.licenseFile && !fs.existsSync(path.join(target, path.basename(inv.licenseFile)))) fs.copyFileSync(inv.licenseFile, path.join(target, path.basename(inv.licenseFile)))
+    for (const lf of inv.licenseFiles?.length ? inv.licenseFiles : inv.licenseFile ? [inv.licenseFile] : []) {
+      if (!fs.existsSync(path.join(target, path.basename(lf)))) fs.copyFileSync(lf, path.join(target, path.basename(lf)))
+    }
     const entries = modules.map(m => path.resolve(target, 'hooks', m))
     for (const e of entries) if (!fs.existsSync(e)) lost.push(t(`Hooks-Modul ${path.basename(e)}`, `hooks module ${path.basename(e)}`))
     if (lost.length) throw new Error(t(`Beim Übernehmen ginge etwas verloren: ${lost.join(', ')}. Nichts geändert.`, `Something would be lost on import: ${lost.join(', ')}. Nothing changed.`))
@@ -1493,7 +1497,8 @@ if (isMain) {
     else if (cmd === 'inspect') result = inspectCmd(a)
     else if (cmd === 'native') result = nativeCmd(a)
     else if (cmd === 'reimport') result = importMod({ ...a, as: a._[1] })
-    else result = { ok: false, error: 'commands: build | validate | release | catalog [--url L]... [--refresh] | import (--dir D | --url L) [--plugin N] | analyze <id|dir> | remove <id> | updates | diff <id> | update <id>' }
+    else if (cmd === 'modcat') result = await modcat(a, readJson(BOX))
+    else result = { ok: false, error: 'commands: build | validate | release | catalog [--url L]... [--refresh] | modcat [--query Q] [--limit N] [--refresh] | import (--dir D | --url L) [--plugin N] | analyze <id|dir> | remove <id> | updates | diff <id> | update <id>' }
   } catch (err) {
     result = { ok: false, error: String(err.message ?? err) }
   }

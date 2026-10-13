@@ -126,6 +126,24 @@ export type HookError = {
 
 export type EnvCheck = { id: string; ok: boolean | null; text: string }
 
+/** One mod of the community catalogue (tools/modcat.mjs). */
+export type CatalogHit = {
+  name: string
+  repo: string
+  path: string
+  url: string
+  description: string
+  /** What Claude's validator says it can do: level, a name (reads, draws, writes or runs, network …) and labels. */
+  reach: { level: number; name: string; labels: string[] }
+  license: string | null
+  stars: number
+  pushedAt: string | null
+  validated: string | null
+  inBox: boolean
+}
+
+export type ModCatalog = { query: string; total: number; count: number; generated: string | null; mods: CatalogHit[]; error?: string }
+
 // ---- secret-guard ----
 
 /** A find the guard stopped (or warned about); the value itself is never kept, only its hash. */
@@ -446,6 +464,62 @@ export type MapActivity = {
   agentId: string | null
 }
 
+// ---- human-in-the-loop ----
+
+/**
+ * What Claude needs from the user: something done (`do`), an answer in
+ * their own words (`answer`), or one of a few options (`choose`).
+ */
+export type TaskKind = 'do' | 'answer' | 'choose'
+
+/**
+ * Where a task stands: waiting for the user (`open`), fulfilled (`done`),
+ * turned down (`rejected`), or taken back by Claude (`withdrawn`).
+ */
+export type TaskState = 'open' | 'done' | 'rejected' | 'withdrawn'
+
+/**
+ * Whether Claude has heard of the user's latest move on the task: nothing
+ * to tell (`none`), told nothing yet (`pending`), or told (`delivered`).
+ */
+export type TaskUpdate = 'none' | 'pending' | 'delivered'
+
+/** A task Claude gave the user. */
+export type Task = {
+  /** Counts up per project: #1, #2, … */
+  id: number
+  title: string
+  why: string
+  doneWhen?: string
+  kind: TaskKind
+  options?: readonly string[]
+  state: TaskState
+  /** The user's answer, or the option they chose. */
+  answer?: string
+  /** Why the user rejected it, or why Claude withdrew it. */
+  reason?: string
+  update: TaskUpdate
+  /** The session that assigned it. */
+  sessionId: string
+  createdMs: number
+  updatedMs: number
+}
+
+/**
+ * The selected task's field, when the pane shows one in place of its
+ * buttons: an answer, or a reason for rejecting. `held` is an answer held
+ * back because it looks like a secret.
+ */
+export type Editing = {
+  id: number
+  field: 'answer' | 'reason'
+  held?: string
+}
+
+// ---- prompt-rail ----
+
+
+
 declare module 'claude-code' {
   interface PluginState {
     'mod-box': {
@@ -471,6 +545,7 @@ declare module 'claude-code' {
       mb_debugLines: string[] | null
       mb_updatedAt: number
       mb_diff: { id: string; from: string; to: string; text: string } | null
+      mb_modcat: ModCatalog | null
 
       // secret-guard
       sw_blocked: BlockedFind[]
@@ -530,6 +605,17 @@ declare module 'claude-code' {
       cm2_active: MapActivity[]
       cm2_touched: { [slug: string]: string[] }
       cm2_unassigned: string[]
+
+      // human-in-the-loop
+      hitl_tasks: readonly Task[]
+      hitl_nextId: number
+      hitl_selectedId: number | null
+      hitl_editing: Editing | null
+      hitl_loadedFor: string | null
+      hitl_isWorking: boolean
+
+      // prompt-rail
+      pr_moved: number
     }
   }
 }

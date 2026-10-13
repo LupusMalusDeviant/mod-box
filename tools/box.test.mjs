@@ -131,3 +131,42 @@ test('standaloneState: box state keys move to the mod plugin, the token ledger t
   assert.match(r.code, /plugin: 'mod-box', key: 'ci_watch'/)
   assert.equal(r.usesLedger, true)
 })
+
+test('modcat: slims the catalogue and searches it by words, most stars first', async () => {
+  const { slim, search } = await import('./modcat.mjs')
+  const data = slim({
+    generated: 'g',
+    mods: [
+      { name: 'a', repo: 'x/a', description: 'shows a diff', reach: { level: 1, name: 'draws', labels: ['draws'] }, stars: 5, validate: { status: 'passed' } },
+      { name: 'b', repo: 'x/b', description: 'side by side diff view', stars: 50 },
+      { name: 'old', repo: 'x/old', description: 'diff', stars: 99, archived: true },
+      { name: 'agents-md', repo: 'anthropics/claude-code', description: 'diff', kind: 'builtin', stars: 1000 },
+    ],
+  })
+  assert.equal(data.mods.length, 2)
+  assert.equal(data.mods[0].validated, 'passed')
+  const hits = search(data.mods, 'diff', 10, m => m.name === 'a')
+  assert.deepEqual(hits.mods.map(m => [m.name, m.inBox]), [['b', false], ['a', true]])
+  assert.equal(search(data.mods, 'side view', 10).total, 1)
+  assert.equal(search(data.mods, '', 1).total, 2)
+})
+
+test('inspect: a dual license as LICENSE-MIT and LICENSE-APACHE counts, the MIT text named by its first sentence', async () => {
+  const fs = await import('node:fs')
+  const os = await import('node:os')
+  const path = await import('node:path')
+  const { inventory } = await import('./inspect.mjs')
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mb-lic-'))
+  try {
+    fs.mkdirSync(path.join(dir, 'hooks'))
+    fs.writeFileSync(path.join(dir, 'hooks', 'hooks.json'), '{ "modules": ["./register.ts"] }')
+    fs.writeFileSync(path.join(dir, 'hooks', 'register.ts'), 'export const register = () => {}')
+    fs.writeFileSync(path.join(dir, 'LICENSE-APACHE'), '                                 Apache License\n                           Version 2.0, January 2004\n')
+    fs.writeFileSync(path.join(dir, 'LICENSE-MIT'), 'Copyright (c) 2026 Someone\n\nPermission is hereby granted, free of charge, to any person obtaining a copy\n')
+    const inv = inventory(dir)
+    assert.equal(inv.license, 'Apache-2.0 OR MIT')
+    assert.deepEqual(inv.licenseFiles.map(f => path.basename(f)), ['LICENSE-APACHE', 'LICENSE-MIT'])
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
+})

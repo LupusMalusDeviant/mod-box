@@ -20,6 +20,9 @@ import { register as m14 } from '../mods/read-guard/hooks/register' // read-guar
 import { register as m15 } from '../mods/catch-me-up/hooks/register.js' // catch-me-up
 import { register as m16 } from '../mods/codebase-map/hooks/register' // codebase-map
 import { register as m17 } from '../mods/pet/hooks/register' // pet
+import { register as m18 } from '../mods/cc-split-diff-view/hooks/register' // cc-split-diff-view
+import { register as m19 } from '../mods/human-in-the-loop/hooks/register' // human-in-the-loop
+import { register as m20 } from '../mods/prompt-rail/hooks/index' // prompt-rail
 
 export function isOn(options: Record<string, unknown>, key: string, fallback: boolean): boolean {
   const v = options[key]
@@ -66,4 +69,7 @@ export const register: Register = (on, options) => {
   if (isOn(o, "catchMeUp", false)) (m15 as any)(on, { "language": opt(o, "language", "en") })
   if (isOn(o, "codebaseMap", false)) (m16 as any)(on, { "claudeMd": opt(o, "codebaseMapClaudeMd", "auto"), "language": opt(o, "language", "en") })
   if (isOn(o, "pet", false)) (m17 as any)(on, { "bubble": opt(o, "petBubble", "9"), "summary": opt(o, "petSummary", "off"), "language": opt(o, "language", "en"), "signScript": opt(o, "signScript", "") })
+  if (isOn(o, "ccSplitDiffView", false)) (m18 as any)(on, {  })
+  if (isOn(o, "humanInTheLoop", false)) (m19 as any)(on, {  })
+  if (isOn(o, "promptRail", false)) (m20 as any)(on, { "mode": opt(o, "promptRailMode", "horizontal") })
 }

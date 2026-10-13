@@ -121,6 +121,24 @@ export type HookError = {
 
 export type EnvCheck = { id: string; ok: boolean | null; text: string }
 
+/** One mod of the community catalogue (tools/modcat.mjs). */
+export type CatalogHit = {
+  name: string
+  repo: string
+  path: string
+  url: string
+  description: string
+  /** What Claude's validator says it can do: level, a name (reads, draws, writes or runs, network …) and labels. */
+  reach: { level: number; name: string; labels: string[] }
+  license: string | null
+  stars: number
+  pushedAt: string | null
+  validated: string | null
+  inBox: boolean
+}
+
+export type ModCatalog = { query: string; total: number; count: number; generated: string | null; mods: CatalogHit[]; error?: string }
+
 declare module 'claude-code' {
   interface PluginState {
     settings: {
@@ -145,6 +163,7 @@ declare module 'claude-code' {
       debugLines: string[] | null
       updatedAt: number
       diff: { id: string; from: string; to: string; text: string } | null
+      modcat: ModCatalog | null
     }
   }
 }
