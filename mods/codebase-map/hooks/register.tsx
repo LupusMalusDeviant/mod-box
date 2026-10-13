@@ -1,4 +1,4 @@
-// Modified for mod-box (https://github.com/LupusMalusDeviant/mod-box): state keys under mod-box with prefix cm2, {} matchers, $.plugin.root paths into mods/codebase-map/.
+// Modified for mod-box (https://github.com/LupusMalusDeviant/mod-box): state keys under mod-box with prefix cm2, {} matchers, $.plugin.root paths into mods/codebase-map/; no redraw for unchanged state, the graph fits the pane (against flicker).
 // Original: https://github.com/LupusMalusDeviant/codebase-map (version 0.4.0).
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
@@ -97,18 +97,22 @@ const refresh = async ($: EngineInterface, isWiring: boolean, lang: Lang) => {
   const root = await $.session.root()
   const index = await readOrNull($, join(root, INDEX_PATH)).catch(() => null)
   if (index === null) {
-    await update($, status, () => null)
-    await update($, mapData, () => null)
+    if ((await read($, status)) !== null) await update($, status, () => null)
+    if ((await read($, mapData)) !== null) await update($, mapData, () => null)
     return
   }
   const [nextStatus, nextMap] = await Promise.all([
     checkStatus($, root, index).catch(() => null),
     loadMap($, root, index).catch(() => null),
   ])
-  await update($, status, () => nextStatus)
-  await update($, mapData, () => nextMap)
+  if (!same(await read($, status), nextStatus)) await update($, status, () => nextStatus)
+  if (!same(await read($, mapData), nextMap)) await update($, mapData, () => nextMap)
   if (isWiring) await wireClaudeMd($, root, lang).catch(() => undefined)
 }
+
+// Every write redraws the pane, and the desktop then loads the graph's frame anew (a flash):
+// write only what changed.
+const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b)
 
 const openMap = ($: EngineInterface, lang: Lang) => $.ui.open({ id: PANE, title: TEXT[lang].paneTitle })
 
@@ -195,11 +199,15 @@ export const register: Register = (on, options) => {
       const ran = await next(e)
       const isDone = ran.deny === undefined && ran.isError !== true
       if (isDone && ownBlueprint !== null) {
-        await update($, touched, all => Object.fromEntries(Object.entries(all).filter(([key]) => key !== ownBlueprint)))
+        if (ownBlueprint in (await read($, touched))) {
+          await update($, touched, all => Object.fromEntries(Object.entries(all).filter(([key]) => key !== ownBlueprint)))
+        }
       } else if (isDone && slug !== null) {
-        await update($, touched, all => ({ ...all, [slug]: [...new Set([...(all[slug] ?? []), rel])] }))
+        if (!(await read($, touched))[slug]?.includes(rel)) {
+          await update($, touched, all => ({ ...all, [slug]: [...new Set([...(all[slug] ?? []), rel])] }))
+        }
       } else if (isDone && ownBlueprint === null) {
-        await update($, unassigned, list => [...new Set([...list, rel])].slice(-50))
+        if (!(await read($, unassigned)).includes(rel)) await update($, unassigned, list => [...new Set([...list, rel])].slice(-50))
       }
       return ran
     } finally {
@@ -288,7 +296,9 @@ export const register: Register = (on, options) => {
           onPress={() => $.prompt.fill({ text: confluence.isOptedIn ? t.promptUpdateConfluence : t.promptPublishAll })}
         />
         {Svg !== undefined ? (
-          <Svg key="graph" source={graph.source} width={graph.width} height={graph.height} isInteractive alt={t.graphAlt(map.features.length)} />
+          // No fixed size: a graph wider than the pane (often 1000-1800 px) scales into it instead of
+          // overflowing, which made scrollbars come and go and the pane resize and redraw in a loop.
+          <Svg key="graph" source={graph.source} isInteractive alt={t.graphAlt(map.features.length)} />
         ) : (
           <Text>{`● ${t.legend.active} · ◆ ${t.legend.touched}\n${rows.join('\n')}`}</Text>
         )}
