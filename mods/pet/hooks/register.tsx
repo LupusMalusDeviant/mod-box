@@ -9,6 +9,8 @@
 // <status file>.answer, which this mod picks up: the question is answered (whichever comes first,
 // the pet or the dialog in Claude Code) or the suggestion is sent. A permission request is shown;
 // with option permissions "answer" the bubble also offers "allow once" and "deny" for a while.
+// The pet's right-click menu picks its figure (answer id "look"), as /pet <figure> [coat] does:
+// with one pet per session for that session alone, otherwise as the setting for every session.
 import { read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
@@ -148,6 +150,43 @@ export function pickLook(pet: string, fur: string, roll = Math.random): PetLook 
   return { pet: figure, fur: coat }
 }
 
+// One pet per session: each session's own figure, kept in $.store (the latest LOOKS_KEPT sessions).
+const LOOKS_STORE = 'pet:looks'
+const LOOKS_KEPT = 40
+let sessionId = ''
+
+/** "cat calico", "random", "fox": the figure and coat a menu click or /pet names. Pure, for the tests. */
+export function parseLook(text: string, current: PetLook): PetLook | null {
+  const [first = '', second = ''] = text.trim().toLowerCase().split(/\s+/)
+  if (first !== 'random' && !PETS.includes(first)) return null
+  return pickLook(first, FURS.includes(second) || second === 'random' ? second : current.fur)
+}
+
+// The figure changes: for this session alone (one pet per session) or as the setting for all.
+async function applyLook($: EngineInterface, next: PetLook, named: string, hasCoat: boolean) {
+  look = next
+  if (perSession && sessionId) {
+    const all = ((await $.store.get(LOOKS_STORE).catch(() => null)) ?? {}) as Record<string, PetLook>
+    delete all[sessionId]
+    const kept = Object.entries(all).slice(-(LOOKS_KEPT - 1))
+    await $.store.set(LOOKS_STORE, Object.fromEntries([...kept, [sessionId, next]])).catch(() => {})
+  } else {
+    await $.config.set({ key: 'mod-box.petKind', value: named }).catch(() => null)
+    if (hasCoat) await $.config.set({ key: 'mod-box.petFur', value: next.fur }).catch(() => null)
+  }
+  await say($, { kind: 'hello', title: titled(t('Da bin ich', 'Here I am')), text: t('Wie gefalle ich dir?', 'How do I look?') })
+}
+
+// The menu's pick waits for a click at any time.
+function listenForLook($: EngineInterface) {
+  pending.set('look', choice => {
+    listenForLook($)
+    const next = parseLook(choice, look)
+    const [named = '', coat = ''] = choice.trim().toLowerCase().split(/\s+/)
+    if (next) void applyLook($, next, named, coat !== '').catch(() => {})
+  })
+}
+
 const waitPick = (id: string) => new Promise<string>(resolve => pending.set(id, resolve))
 
 // Reads the pet's answer file while something waits for a click, and offers Next Steps'
@@ -279,6 +318,12 @@ export const register: Register = (on, options) => {
     // One pet for all sessions, or (option) one each: then every session has its own status file.
     const sid = perSession ? `-${String(await $.session.id().catch(() => '')).replace(/[^\w-]/g, '').slice(0, 8)}` : ''
     statusPath = temp ? `${temp}\\mod-box-pet${sid}.txt` : ''
+    sessionId = String(await $.session.id().catch(() => ''))
+    if (perSession && sessionId) {
+      const mine = (((await $.store.get(LOOKS_STORE).catch(() => null)) ?? {}) as Record<string, PetLook>)[sessionId]
+      if (mine && PETS.includes(mine.pet)) look = mine
+    }
+    listenForLook($)
     $.clock.every(POLL_MS, () => void poll($).catch(() => {}))
     project = base(await $.session.cwd().catch(() => ''))
     await $.command.register({ name: 'pet', description: t('Desktop-Pet: zeigen, verabschieden (stop) oder Figur wählen (z. B. /pet cat calico)', 'Desktop Pet: show it, send it off (stop) or pick a figure (e.g. /pet cat calico)'), argumentHint: '[stop | <figure> [coat]]' })
@@ -423,14 +468,12 @@ export const register: Register = (on, options) => {
   on('command.run', { command: 'pet' }, async ($, e) => {
     if (!isWindows) return { text: t('Das Desktop-Pet gibt es nur unter Windows.', 'The desktop pet is Windows only.') }
     const [first = '', second = ''] = String(e.args ?? '').trim().toLowerCase().split(/\s+/)
-    if (first === 'random' || PETS.includes(first)) {
-      const fur = FURS.includes(second) || second === 'random' ? second : look.fur
-      look = pickLook(first, fur)
-      await $.config.set({ key: 'mod-box.petKind', value: first }).catch(() => null)
-      if (second) await $.config.set({ key: 'mod-box.petFur', value: fur }).catch(() => null)
+    const next = parseLook(String(e.args ?? ''), look)
+    if (next) {
       await ensure($)
-      await say($, { kind: 'hello', title: titled(t('Da bin ich', 'Here I am')), text: t('Wie gefalle ich dir?', 'How do I look?') })
-      return { text: t(`Das Pet ist jetzt: ${look.pet}${look.fur !== 'auto' ? ` (${look.fur})` : ''}.`, `The pet is now: ${look.pet}${look.fur !== 'auto' ? ` (${look.fur})` : ''}.`) }
+      await applyLook($, next, first, second !== '')
+      const name = `${look.pet}${look.fur !== 'auto' ? ` (${look.fur})` : ''}`
+      return { text: perSession ? t(`Das Pet dieser Sitzung ist jetzt: ${name}.`, `This session's pet is now: ${name}.`) : t(`Das Pet ist jetzt: ${name}.`, `The pet is now: ${name}.`) }
     }
     if (first && first !== 'stop') return { text: t(`Figuren: ${PETS.join(', ')}, random. Fell: ${FURS.slice(1).join(', ')}.`, `Figures: ${PETS.join(', ')}, random. Coats: ${FURS.slice(1).join(', ')}.`) }
     if (first === 'stop') {

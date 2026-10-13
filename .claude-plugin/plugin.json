@@ -159,7 +159,7 @@
     "pet": {
       "type": "boolean",
       "title": "Desktop Pet",
-      "description": "A little companion on the Windows desktop, always on top: a cardboard box or one of twelve figures (cat, dog, fox, bunny, hamster, owl, penguin, frog, axolotl, dragon, robot, ghost; cat, dog and bunny in nine coats). It says in a speech bubble what Claude is doing, shows permission requests, and lets you click Claude's questions and Next Steps' suggestions right in the bubble. Drag it anywhere, right-click for quiet time; optionally one pet per session. Built once with the C# compiler that ships with Windows and signed with the Sign Guard script when one is set. /pet shows it, /pet cat calico picks a figure, /pet stop sends it off.",
+      "description": "A little companion on the Windows desktop, always on top: a cardboard box or one of twelve figures (cat, dog, fox, bunny, hamster, owl, penguin, frog, axolotl, dragon, robot, ghost; cat, dog and bunny in nine coats). It says in a speech bubble what Claude is doing, shows permission requests, and lets you click Claude's questions and Next Steps' suggestions right in the bubble. Drag it anywhere; right-click for quiet time or another figure; optionally one pet per session, each with its own figure. Built once with the C# compiler that ships with Windows and signed with the Sign Guard script when one is set. /pet shows it, /pet cat calico picks a figure, /pet stop sends it off.",
       "default": false
     },
     "ccSplitDiffView": {
@@ -670,7 +670,7 @@
         "on"
       ],
       "title": "Desktop Pet: one pet per session",
-      "description": "on: every Claude Code session gets its own pet; they stand side by side. off: one pet for all."
+      "description": "on: every Claude Code session gets its own pet; they stand side by side, and /pet or the right-click menu picks each one's figure on its own. off: one pet for all."
     },
     "petAsk": {
       "type": "string",
