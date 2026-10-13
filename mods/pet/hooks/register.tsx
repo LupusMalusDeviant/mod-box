@@ -351,7 +351,8 @@ async function say($: EngineInterface, note: PetNote) {
   const now = await $.clock.now()
   // Typing: a note that answers something names its id; everything else goes to this session's prompt.
   const typed = canType ? { ...note, free: note.free ?? promptId() } : { ...note, free: undefined }
-  const extra = canType ? { type: 'on', hotkey, typelabel: note.free ? t('Eigene Antwort …', 'Write your own answer …') : '' } : {}
+  // name: the project, shown under the pet all the time
+  const extra = { name: project, ...(canType ? { type: 'on', hotkey, typelabel: note.free ? t('Eigene Antwort …', 'Write your own answer …') : '' } : {}) }
   await $.fs.write(statusPath, statusText(typed, now, look, extra)).catch(() => {})
   // asleep (one pet per active session, cache cold): the note only reaches a pet that still runs
   if (now - started > RESTART_MS && !isAsleep) void ensure($).catch(() => {})

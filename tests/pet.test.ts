@@ -453,6 +453,7 @@ group('Desktop pet: typing', () => {
     await $.session.start({ surface: 'terminal', isInteractive: true, cwd: CWD })
     await wait()
     const status = writes.at(-1)!.text
+    expect(status).toMatch(/^name=shop$/m)
     expect(status).toContain('free=prompt-s')
     expect(status).toContain('type=on' + NL + 'hotkey=ctrl+alt+space')
     type(writes, 'run the boss fight tests')
