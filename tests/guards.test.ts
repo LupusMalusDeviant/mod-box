@@ -1,6 +1,6 @@
 import { describe, expect, mock, test } from 'claude-code/testing'
 
-import { mergeText, parseChecks, PR_CREATE, PR_URL, PUSH, summary } from '../mods/ci-watch/hooks/register'
+import { mergeText, parseChecks, PR_CREATE, PR_URL, PUSH, repoOf, summary } from '../mods/ci-watch/hooks/register'
 import { findSecrets, gitAddPaths, globMatch, isPlaceholder, isSecretFile, parseAllow, secretsInDiff, sha256 } from '../mods/secret-guard/hooks/register'
 import { BUILD } from '../mods/sign-guard/hooks/register'
 
@@ -265,6 +265,11 @@ describe('CI watch: pull requests', () => {
     expect(PR_CREATE.test('gh pr view 3')).toBe(false)
   })
 
+  test('the repository of a pull request URL, for gh -R', () => {
+    expect(repoOf('https://github.com/LupusMalusDeviant/mod-box/pull/28')).toBe('LupusMalusDeviant/mod-box')
+    expect(repoOf('https://gitlab.example/x/y/-/merge_requests/3')).toBe('')
+  })
+
   const BAND_PROPS = { component: 'AbovePrompt', props: { hasSurvey: false, isWorking: false, maxRows: 10, bodyColumns: 200 } }
   const PR = JSON.stringify({ number: 42, url: 'https://github.com/o/r/pull/42', title: 'Neue Funktion', headRefName: 'feature', headRefOid: 'abcdef1234', state: 'OPEN' })
 
@@ -274,7 +279,7 @@ describe('CI watch: pull requests', () => {
       if (cmd === 'git rev-parse HEAD') return ok('abcdef1234\n')
       if (cmd === 'git rev-parse --abbrev-ref HEAD') return ok('feature\n')
       if (cmd.startsWith('gh pr view feature')) return ok(PR)
-      if (cmd.startsWith('gh pr checks 42')) {
+      if (cmd.startsWith('gh pr checks https://github.com/o/r/pull/42')) {
         return { value: { exitCode: 1, stdout: JSON.stringify([
           { name: 'build', workflow: 'CI', bucket: 'pass', link: 'https://github.com/o/r/actions/runs/123/job/9' },
           { name: 'Vercel', workflow: '', bucket: 'fail', link: 'https://vercel.com/o/r/abc' },
@@ -297,9 +302,9 @@ describe('CI watch: pull requests', () => {
       on,
       argv => {
         const cmd = argv.join(' ')
+        if (cmd.startsWith('gh pr view https://github.com/o/r/pull/42 --json mergeStateStatus')) return ok(JSON.stringify({ state: 'OPEN', mergeStateStatus: 'CLEAN', reviewDecision: '', isDraft: false }))
         if (cmd.startsWith('gh pr view https://github.com/o/r/pull/42')) return ok(PR)
-        if (cmd.startsWith('gh pr checks 42')) return ok(JSON.stringify([{ name: 'build', workflow: 'CI', bucket: 'pass', link: 'https://github.com/o/r/actions/runs/1/job/1' }]))
-        if (cmd.startsWith('gh pr view 42')) return ok(JSON.stringify({ state: 'OPEN', mergeStateStatus: 'CLEAN', reviewDecision: '', isDraft: false }))
+        if (cmd.startsWith('gh pr checks https://github.com/o/r/pull/42')) return ok(JSON.stringify([{ name: 'build', workflow: 'CI', bucket: 'pass', link: 'https://github.com/o/r/actions/runs/1/job/1' }]))
         return undefined
       },
       'Creating pull request for feature into main\n\nhttps://github.com/o/r/pull/42\n',

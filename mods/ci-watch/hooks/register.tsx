@@ -29,6 +29,15 @@ let onDesktop = false
 
 export const PR_CREATE = /(?:^|[;&|(]\s*)gh\s+pr\s+create\b/
 export const PR_URL = /https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/pull\/(\d+)/
+
+/** owner/repo of a pull request's URL, for gh -R; '' for anything else. Pure. */
+export function repoOf(url: string): string {
+  return /^https:\/\/github\.com\/([\w.-]+\/[\w.-]+)\/pull\/\d+/.exec(url)?.[1] ?? ''
+}
+
+// gh finds a pull request by its URL from any folder; by its number only inside its repository
+// (a PR made from another folder or a worktree is watched from the session's folder).
+const prRef = (pr: { number: number; url: string }) => pr.url || String(pr.number)
 // Display language (options.language: de | en)
 let lang: 'de' | 'en' = 'en'
 const t = (de: string, en: string) => (lang === 'en' ? en : de)
@@ -85,7 +94,7 @@ async function poll($: EngineInterface) {
     void notify($, 'green', w.pr ? `PR #${w.pr.number}: ${t('alle Checks grün', 'all checks green')}` : `${w.branch} ${w.sha.slice(0, 7)}: ${t('alle Läufe grün', 'all runs green')}`)
     return
   }
-  const log = bad.id ? await $.process.run(['gh', 'run', 'view', String(bad.id), '--log-failed'], { cwd: w.cwd, timeoutMs: 60_000 }).catch(() => null) : null
+  const log = bad.id ? await $.process.run(['gh', 'run', 'view', String(bad.id), '--log-failed', ...(w.pr && repoOf(w.pr.url) ? ['-R', repoOf(w.pr.url)] : [])], { cwd: w.cwd, timeoutMs: 60_000 }).catch(() => null) : null
   const tail = (log?.stdout ?? '').split('\n').slice(-LOG_LINES).join('\n').trim()
   const noLog = bad.id
     ? t('(kein Log erhalten)', '(no log received)')
@@ -145,7 +154,7 @@ export function parseChecks(stdout: string): CiRun[] {
 // The checks of a pull request: Actions and every other check (other CI, bots).
 async function prChecks($: EngineInterface, w: CiWatch): Promise<CiRun[] | string> {
   const r = await $.process
-    .run(['gh', 'pr', 'checks', String(w.pr!.number), '--json', 'name,state,bucket,link,workflow'], { cwd: w.cwd, timeoutMs: 30_000 })
+    .run(['gh', 'pr', 'checks', prRef(w.pr!), '--json', 'name,state,bucket,link,workflow'], { cwd: w.cwd, timeoutMs: 30_000 })
     .catch((err: unknown) => ({ exitCode: -1, stdout: '', stderr: String(err) }))
   if (r.stdout.trim().startsWith('[')) return parseChecks(r.stdout)
   if (/no checks reported/i.test(r.stderr)) return []
@@ -155,7 +164,7 @@ async function prChecks($: EngineInterface, w: CiWatch): Promise<CiRun[] | strin
 // After green: can the PR be merged? (mergeStateStatus and reviewDecision of gh pr view)
 async function mergeState($: EngineInterface, w: CiWatch): Promise<string> {
   const r = await $.process
-    .run(['gh', 'pr', 'view', String(w.pr!.number), '--json', 'mergeStateStatus,reviewDecision,isDraft,state'], { cwd: w.cwd, timeoutMs: 30_000 })
+    .run(['gh', 'pr', 'view', prRef(w.pr!), '--json', 'mergeStateStatus,reviewDecision,isDraft,state'], { cwd: w.cwd, timeoutMs: 30_000 })
     .catch(() => null)
   if (!r || r.exitCode !== 0) return ''
   return mergeText(JSON.parse(r.stdout || '{}'))
