@@ -1,6 +1,6 @@
 {
   "name": "mod-box",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "21 Claude Code mods in one plugin, each switchable on its own; /mod-box opens the window to switch, configure and import mods.",
   "author": {
     "name": "Lupus Malus Deviant"
