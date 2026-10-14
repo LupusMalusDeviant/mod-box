@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.6.1
+
+- Fix: on Claude Code 2.1.287 the whole box did not load (no /mod-box, no mods), because the window's hooks module declared `home` twice. A tool test now checks every hooks file for this (#19).
+
 ## 0.6.0
 
 - **Desktop Pet**, grown from a status box into an overlay you can answer through:
