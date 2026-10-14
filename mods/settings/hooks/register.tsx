@@ -1964,7 +1964,7 @@ async function runEnvChecks($: EngineInterface) {
   const run = async (argv: string[]) => $.process.run(argv, { timeoutMs: 20_000 }).catch((err: unknown) => ({ exitCode: -1, stdout: '', stderr: String(err) }))
   const first = (s: string) => s.trim().split('\n')[0] ?? ''
   const isWin = (await $.env.get('OS')) === 'Windows_NT'
-  const home = ((await $.env.get('USERPROFILE')) ?? (await $.env.get('HOME')) ?? '').replace(/\\/g, '/')
+  const homeDir = ((await $.env.get('USERPROFILE')) ?? (await $.env.get('HOME')) ?? '').replace(/\\/g, '/')
 
   const v = await $.session.version().catch(() => null)
   checks.push({ id: 'claude', ok: v ? true : null, text: `Claude Code ${v?.version ?? '?'}` })
@@ -1982,7 +1982,7 @@ async function runEnvChecks($: EngineInterface) {
     text: gh.exitCode === 0 ? t('gh angemeldet (CI-Wächter bereit)', 'gh signed in (CI Watch ready)') : /not found|ENOENT|cannot/i.test(gh.stderr) ? t('gh fehlt: der CI-Wächter kann nichts prüfen.', 'gh missing: CI Watch cannot check anything.') : t('gh nicht angemeldet: gh auth login', 'gh not signed in: gh auth login'),
   })
   if (isWin) {
-    const script = String(opts.signScript ?? '').trim().replace(/\\/g, '/') || `${home}/.claude/skills/sign-binary/sign.ps1`
+    const script = String(opts.signScript ?? '').trim().replace(/\\/g, '/') || `${homeDir}/.claude/skills/sign-binary/sign.ps1`
     const hasScript = await $.fs.exists(script).catch(() => false)
     checks.push({ id: 'sign', ok: hasScript, text: hasScript ? t('Signierskript vorhanden', 'sign script present') : t(`Signierskript fehlt: ${script}`, `sign script missing: ${script}`) })
     const pf = ((await $.env.get('ProgramFiles')) ?? 'C:/Program Files').replace(/\\/g, '/')
@@ -1992,7 +1992,7 @@ async function runEnvChecks($: EngineInterface) {
   await update($, envChecks, () => checks)
 
   // The debug log, when Claude Code was started with --debug-file pointing here.
-  const debugPath = `${home}/${DEBUG_FILE}`
+  const debugPath = `${homeDir}/${DEBUG_FILE}`
   const st = await $.fs.stat(debugPath).catch(() => null)
   if (!st) {
     await update($, debugLines, () => null)
