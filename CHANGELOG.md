@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.6.4
+
+- **Desktop Pet**: stays in front of borderless games that put themselves on top after it (back in front every 5 seconds and with each message, without taking the focus; not over exclusive fullscreen).
+- **CI Watch**: a pull request made from a worktree or another folder is found by its URL; no more "failed to run git: not a git repository".
+
 ## 0.6.3
 
 - **Desktop Pet**: a bubble with a question or buttons that nobody answers shrinks to one line above the pet after the bubble time, or at once with the new – in its corner (its title, how many buttons wait, ▴). A click on it or the pet opens it again; while the pointer is on the bubble it stays big.
