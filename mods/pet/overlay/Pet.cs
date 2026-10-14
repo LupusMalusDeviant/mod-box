@@ -38,6 +38,7 @@ namespace ModBox
             if (args.Length < 1) return 2;
             if (args[0] == "--preview" && args.Length > 1) { Preview.Render(args[1]); return 0; }
             if (args[0] == "--preview-bubble" && args.Length > 1) { Preview.RenderBubble(args[1]); return 0; }
+            if (args[0] == "--preview-pill" && args.Length > 1) { Preview.RenderPill(args[1]); return 0; }
             if (args[0] == "--preview-input" && args.Length > 1) { Preview.RenderInput(args[1]); return 0; }
             bool isFirst;
             using (var mutex = new Mutex(true, "Local\\ModBoxPet-" + HashOf(args[0].ToLowerInvariant()), out isFirst))
@@ -154,6 +155,8 @@ namespace ModBox
         int tick;
         readonly Painter painter = new Painter();
         bool isBubble = true;
+        // A bubble nobody reacted to shrinks to one line above the pet (a click opens it again).
+        bool isCollapsed;
         Rectangle bubbleRect = Rectangle.Empty;
 
         public PetWindow(string statusPath, int bubbleSeconds, int slot)
@@ -170,6 +173,7 @@ namespace ModBox
             Size = new Size(W, H);
             Location = StartLocation();
             shownAt = DateTime.Now;
+            isCollapsed = false;
 
             var menu = new ContextMenuStrip();
             menu.Items.Add("Blase ausblenden", null, (s, e) => { isBubble = false; Draw(); });
@@ -252,6 +256,7 @@ namespace ModBox
                         {
                             isBubble = true;
                             shownAt = DateTime.Now;
+                            isCollapsed = false;
                         }
                         if (next.Kind == "bye") byeAt = DateTime.Now.AddSeconds(4);
                     }
@@ -266,17 +271,20 @@ namespace ModBox
             bool isSticky = status.Kind == "ask" || status.Kind == "error" || status.Choices.Count > 0;
             if (isBubble && !isSticky && status.Kind != "work" && (DateTime.Now - shownAt).TotalMilliseconds > bubbleMs) isBubble = false;
             if (isBubble && status.Kind == "work" && (DateTime.Now - shownAt).TotalMilliseconds > bubbleMs * 4) isBubble = false;
+            // ...but they do not stay big: after the same time without a reaction they shrink to one line.
+            if (isBubble && !isCollapsed && isSticky && (DateTime.Now - shownAt).TotalMilliseconds > bubbleMs) isCollapsed = true;
             // A question still open, its bubble hidden (and no snooze): it comes back after a while.
             if (isBubble) visibleAt = DateTime.Now;
             else if (status.Kind == "ask" && status.Remind > 0 && DateTime.Now >= snoozeUntil && (DateTime.Now - visibleAt).TotalSeconds > status.Remind)
             {
                 isBubble = true;
                 shownAt = DateTime.Now;
+                isCollapsed = false;
             }
             Draw();
         }
 
-        const string TYPE_BUTTON = "\u0001type";
+        const string TYPE_BUTTON = "\u0001type", MIN_BUTTON = "\u0001min";
         InputBox input;
         string hotkeyOn = "";
 
@@ -310,6 +318,7 @@ namespace ModBox
                 status = new Status { Kind = "work", Title = "\u2713", Text = text, Pet = status.Pet, Fur = status.Fur, CanType = status.CanType, Free = status.Free, Hotkey = status.Hotkey, Name = status.Name };
                 isBubble = true;
                 shownAt = DateTime.Now;
+                isCollapsed = false;
                 Draw();
             });
             input.Open(new Point(Left + 8, Top + H - BODY - 10 - TAG - InputBox.HEIGHT - 8));
@@ -319,9 +328,16 @@ namespace ModBox
         {
             base.OnMouseDown(e);
             if (e.Button != MouseButtons.Left) return;
+            if (isBubble && isCollapsed && bubbleRect.Contains(e.Location)) { Expand(); return; }
             if (isBubble)
                 foreach (var bt in buttons)
-                    if (bt.Key.Contains(e.Location)) { if (bt.Value == TYPE_BUTTON) OpenInput(); else Pick(bt.Value); return; }
+                    if (bt.Key.Contains(e.Location))
+                    {
+                        if (bt.Value == MIN_BUTTON) { isCollapsed = true; hovered = -1; Cursor = Cursors.Default; Draw(); }
+                        else if (bt.Value == TYPE_BUTTON) OpenInput();
+                        else Pick(bt.Value);
+                        return;
+                    }
             if (isBubble && bubbleRect.Contains(e.Location) && e.Clicks == 2) { isBubble = false; Draw(); return; }
             // Dragging moves the window; the call returns when the button is up. Windows sends no click
             // after it, so a press that did not move the pet is the click.
@@ -336,8 +352,18 @@ namespace ModBox
         // they still apply); an open question is already there.
         void ShowRecap()
         {
+            if (isBubble && isCollapsed) { Expand(); return; }
             if (!(status.Kind == "ask" && status.Choices.Count > 0)) WriteAnswer("recap", "show");
             isBubble = true;
+            shownAt = DateTime.Now;
+            isCollapsed = false;
+            Draw();
+        }
+
+        // The shrunk bubble opens again, with its buttons.
+        void Expand()
+        {
+            isCollapsed = false;
             shownAt = DateTime.Now;
             Draw();
         }
@@ -345,6 +371,8 @@ namespace ModBox
         protected override void OnMouseMove(MouseEventArgs e)
         {
             base.OnMouseMove(e);
+            // being read: the bubble stays big while the pointer is on it
+            if (isBubble && !isCollapsed && bubbleRect.Contains(e.Location)) shownAt = DateTime.Now;
             int over = -1;
             for (int i = 0; i < buttons.Count; i++) if (buttons[i].Key.Contains(e.Location)) over = i;
             if (over == hovered) return;
@@ -440,6 +468,7 @@ namespace ModBox
             hovered = -1;
             Cursor = Cursors.Default;
             shownAt = DateTime.Now;
+            isCollapsed = false;
             isBubble = true;
             Draw();
         }
@@ -453,6 +482,8 @@ namespace ModBox
         }
 
         /// For the preview: Claude's question with three choices, the second under the pointer.
+        public void Shrink() { isCollapsed = true; }
+
         public void ShowChoices()
         {
             status = new Status { Kind = "ask", Title = "shop · A question for you", Text = "The orders service is split out and its tests pass. Storage is still the JSON files, which will not hold up under load. Two options are ready to wire in.\nWhich database should the new service use?", Pet = "cat", Fur = "ginger", Ask = "q", Name = "shop" };
@@ -476,7 +507,8 @@ namespace ModBox
                     int bob = (int)Math.Round(Math.Sin(tick / 6.0) * (status.Kind == "work" ? 3 : 1.5));
                     var body = new Rectangle(W - BODY - 18, H - BODY - 10 - TAG + bob, BODY, BODY);
                     painter.Kind = status.Kind; painter.Pet = status.Pet; painter.Fur = status.Fur; painter.Tick = tick;
-                    if (isBubble) DrawBubble(g, body);
+                    if (isBubble && isCollapsed) DrawPill(g, body);
+                    else if (isBubble) DrawBubble(g, body);
                     else { bubbleRect = Rectangle.Empty; buttons.Clear(); }
                     painter.Paint(g, body);
                     DrawTag(g, body);
@@ -509,6 +541,41 @@ namespace ModBox
                     g.FillPath(fill, path);
                     g.DrawPath(pen, path);
                     g.DrawString(name, font, text, x + 6, rect.Top + (h - size.Height) / 2);
+                }
+            }
+        }
+
+        // The shrunk bubble: its title on one line, how many buttons wait, and ▴ to open it.
+        void DrawPill(Graphics g, Rectangle body)
+        {
+            buttons.Clear();
+            string text = status.Title.Length > 0 ? status.Title : status.Text.Replace("\n", " ");
+            string more = (status.Choices.Count > 0 ? "  ·  " + status.Choices.Count : "") + "  ▴";
+            using (var font = new Font("Segoe UI Semibold", 9f))
+            {
+                var size = g.MeasureString(text + more, font);
+                while (size.Width > W - 40 && text.Length > 4)
+                {
+                    text = text.Substring(0, text.Length - 2).TrimEnd() + "…";
+                    size = g.MeasureString(text + more, font);
+                }
+                int head = painter.Headroom();
+                int w = (int)Math.Ceiling(size.Width) + 22, h = 26;
+                var r = new Rectangle(W - w - 8, body.Top - h - 14 - head, w, h);
+                bubbleRect = r;
+                var tail = new[] { new Point(body.Left + 22, r.Bottom - 1), new Point(body.Left + 34, r.Bottom - 1), new Point(body.Left + 26, body.Top - head) };
+                using (var path = Rounded(r, 12))
+                using (var fill = new SolidBrush(Color.FromArgb(250, 252, 252, 250)))
+                using (var pen = new Pen(Accent(), 2f))
+                using (var ink = new SolidBrush(Accent()))
+                {
+                    g.FillPath(fill, path);
+                    g.FillPolygon(fill, tail);
+                    g.DrawPath(pen, path);
+                    g.DrawLine(pen, tail[0], tail[2]);
+                    g.DrawLine(pen, tail[1], tail[2]);
+                    g.FillRectangle(fill, tail[0].X + 2, r.Bottom - 2, tail[1].X - tail[0].X - 3, 3);
+                    g.DrawString(text + more, font, ink, r.Left + 11, r.Top + (h - size.Height) / 2);
                 }
             }
         }
@@ -556,7 +623,7 @@ namespace ModBox
                 float y = r.Top + 9;
                 if (title.Length > 0)
                 {
-                    using (var b = new SolidBrush(Accent())) g.DrawString(title, titleFont, b, new RectangleF(r.Left + 12, y, r.Width - 22, titleSize.Height));
+                    using (var b = new SolidBrush(Accent())) g.DrawString(title, titleFont, b, new RectangleF(r.Left + 12, y, r.Width - 40, titleSize.Height), new StringFormat { Trimming = StringTrimming.EllipsisCharacter, FormatFlags = StringFormatFlags.NoWrap });
                     y += titleSize.Height;
                 }
                 using (var b = new SolidBrush(Color.FromArgb(40, 40, 46)))
@@ -582,6 +649,12 @@ namespace ModBox
                         using (var ink = new SolidBrush(isOver ? Color.White : Color.FromArgb(40, 40, 46)))
                             g.DrawString(isWrite ? "\u270e  " + status.TypeLabel : (i + 1) + "  " + status.Choices[i], label, ink, new RectangleF(rect.Left + 8, rect.Top + 4, rect.Width - 14, rect.Height - 4), new StringFormat { Trimming = StringTrimming.EllipsisCharacter, FormatFlags = StringFormatFlags.NoWrap });
                     }
+                // "\u2013" in the corner: shrink the bubble to one line now
+                var min = new Rectangle(r.Right - 26, r.Top + 5, 20, 18);
+                buttons.Add(new KeyValuePair<Rectangle, string>(min, MIN_BUTTON));
+                bool isMinOver = hovered == buttons.Count - 1;
+                using (var pen = new Pen(isMinOver ? Accent() : Color.FromArgb(150, 150, 160), 2f))
+                    g.DrawLine(pen, min.Left + 5, min.Top + 10, min.Right - 5, min.Top + 10);
             }
         }
 
@@ -1279,10 +1352,16 @@ namespace ModBox
         }
 
         /// One pet window's drawing with a question and its choices, for a look at the buttons.
-        public static void RenderBubble(string path)
+        public static void RenderBubble(string path) { RenderBubble(path, false); }
+
+        /// The same question shrunk to one line, as after a while without a reaction.
+        public static void RenderPill(string path) { RenderBubble(path, true); }
+
+        static void RenderBubble(string path, bool isShrunk)
         {
             var w = new PetWindow(path + ".none", 9, 0);
             w.ShowChoices();
+            if (isShrunk) w.Shrink();
             using (var bmp = w.Snapshot())
             {
                 bmp.Save(path, ImageFormat.Png);
