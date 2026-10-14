@@ -133,6 +133,12 @@ function readmeOf(m, name, info) {
   }
   if (info.note) lines.push(info.note, '')
   lines.push('## Install', '', 'In a terminal Claude Code session (2.1.287 or newer):', '', '```', `/plugin install ${name} --marketplace ${info.repo}`, '```', '')
+  // Other mods it works with: none is needed, each adds something.
+  if (info.companions?.length) {
+    lines.push('## Works with', '', `${m.title} needs no other mod. These add to it when installed beside it:`, '', '| Mod | What it adds | Without it |', '|---|---|---|')
+    for (const c of info.companions) lines.push(`| ${c.mod} | ${c.adds} | ${c.without} |`)
+    lines.push('')
+  }
   if (m.commands?.length) {
     lines.push('## Commands', '', '| Command | What it does |', '|---|---|')
     for (const c of m.commands) lines.push(`| \`${c.name.replace(/\|/g, '\\|')}\` | ${c.en} |`)
@@ -229,7 +235,7 @@ export function exportMods(ctx, ids, out, origins = {}) {
     write(path.join(dir, '.claude-plugin', 'plugin.json'), JSON.stringify(manifest, null, 2) + '\n')
     write(path.join(dir, 'hooks', 'hooks.json'), JSON.stringify({ modules: [m.band ? './entry.tsx' : './entry.ts'] }) + '\n')
     write(path.join(dir, 'hooks', m.band ? 'entry.tsx' : 'entry.ts'), entryFile(m, 'inner'))
-    write(path.join(dir, 'README.md'), readmeOf(m, name, { origin, repo: ctx.repo, options, note: (ctx.notes ?? {})[m.id] }))
+    write(path.join(dir, 'README.md'), readmeOf(m, name, { origin, repo: ctx.repo, options, note: (ctx.notes ?? {})[m.id], companions: (ctx.companions ?? {})[m.id] }))
     if (origin) {
       fs.copyFileSync(path.join(ROOT, 'mods', m.id, 'LICENSE'), path.join(dir, 'LICENSE'))
     } else {
@@ -250,7 +256,7 @@ export function exportMods(ctx, ids, out, origins = {}) {
       {
         name: ctx.marketplace,
         owner: { name: 'Lupus Malus Deviant' },
-        description: 'Single Claude Code mods from the Mod Box, each installable on its own.',
+        description: ctx.description ?? 'Single Claude Code mods from the Mod Box, each installable on its own.',
         plugins: done.map(d => ({ name: d.name, source: `./plugins/${d.name}`, description: d.description })),
       },
       null,
