@@ -288,6 +288,19 @@ group('Desktop pet: figures and clicks', () => {
     expect(sent).toContain('Yes, publish it')
   })
 
+  test("the original Next Steps plugin beside the pet: its suggestions become buttons too", { options: { ...QUIET, pet: true } }, async ($: any, on: any) => {
+    const { writes, clock } = engine(on)
+    // the host's state: only the original plugin's suggestions are there
+    on('state.get', (_$: any, e: any) => ({ value: { value: e.plugin === 'next-steps' && e.key === 'steps' ? { turnId: 't9', items: ['Run the tests', 'Open a PR'] } : undefined, version: 1 } }))
+    on('state.set', () => ({ value: { isSet: true, version: 2 } }))
+    await $.session.start({ surface: 'terminal', isInteractive: true, cwd: ['C:', 'work', 'shop'].join(String.fromCharCode(92)) })
+    await $.turn.complete({ turnId: 't1', answer: 'Fixed the login check. The test passes now, all green.', durationMs: 5, isAborted: false, reason: 'answer' })
+    await wait()
+    await clock.advance(700)
+    await wait()
+    expect(writes.at(-1)!.text).toContain(['choice=Run the tests', 'choice=Open a PR'].join(String.fromCharCode(10)))
+  })
+
   test('the last answer in short: its gist and the question it ends with', () => {
     const NL = String.fromCharCode(10)
     expect(compact(['Built the tag.', '', 'Shall I push?'].join(NL), 'Shall I push?')).toBe(['Built the tag. Shall I push?'].join(NL))

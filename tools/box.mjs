@@ -724,7 +724,34 @@ const EXPORT_NOTES = {
   'cache-meter': '> **Contains a fork.** The cold-send guard and keep-warm are [Cache Tax](https://github.com/karanb192/cache-tax) by Karan Bansal (MIT), embedded and modified (guard and auto-warm options, a compact-first hint, token usage); see `mods/cache-tax/` and its LICENSE.',
 }
 
-/** export [<id> ...] --out <folder>: the standalone plugins as one marketplace repo. */
+// A picture for the front page of a repo of one mod alone.
+const EXPORT_PICTURES = { pet: 'docs/images/pets.png' }
+
+// Mods that add to an exported one when installed beside it (none of them is needed), for its README.
+const EXPORT_COMPANIONS = {
+  pet: [
+    {
+      mod: '[Cache Meter](https://github.com/LupusMalusDeviant/claude-mods/tree/main/plugins/cache-meter) or [Cache Tax](https://github.com/karanb192/cache-tax)',
+      adds: 'a **Keep warm (1 h)** button in the warning before the prompt cache goes cold (`/keepwarm`)',
+      without: 'the warning comes without the button',
+    },
+    {
+      mod: '[Next Steps](https://github.com/hamzafer/claude-code-mods/tree/main/mods/next-steps)',
+      adds: 'its suggestions for the next step as buttons in the bubble',
+      without: 'no next-step suggestions; a closing question still gets reply buttons (Haiku)',
+    },
+    {
+      mod: 'the `sign-binary` skill or [Sign Guard](https://github.com/LupusMalusDeviant/claude-mods/tree/main/plugins/sign-guard)',
+      adds: "signs the pet's program after it is built (option `signScript`)",
+      without: 'the pet runs unsigned',
+    },
+  ],
+}
+
+/**
+ * export [<id> ...] --out <folder>: the standalone plugins as one marketplace repo.
+ * With --repo <owner/name> and one mod, a repo of that mod alone: its README at the top as well.
+ */
 function exportCmd(a) {
   if (!a.out) throw new Error(t('--out <ordner> angeben', 'pass --out <folder>'))
   const out = path.resolve(String(a.out))
@@ -732,7 +759,26 @@ function exportCmd(a) {
   const ids = a._.slice(1).length ? a._.slice(1) : EXPORTS
   const lic = fs.readFileSync(path.join(ROOT, 'LICENSE'), 'utf8').replace(/\r\n/g, '\n')
   const mitText = lic.split('\n\nThe mods copied from other repositories')[0].trimEnd() + '\n'
-  const done = exportMods({ ROOT, box, version: readJson(MANIFEST).version, mitText, repo: EXPORT_REPO, marketplace: 'claude-mods', notes: EXPORT_NOTES }, ids, out, FORK_ORIGINS)
+  const repo = a.repo ? String(a.repo) : EXPORT_REPO
+  if (a.repo && ids.length === 1) {
+    const m = box.mods.find(x => x.id === ids[0] || x.toggle === ids[0])
+    if (!m) throw new Error(`no mod ${ids[0]}`)
+    const [done] = exportMods({ ROOT, box, version: readJson(MANIFEST).version, mitText, repo, marketplace: repo.split('/')[1], description: m.description, notes: EXPORT_NOTES, companions: EXPORT_COMPANIONS }, ids, out, FORK_ORIGINS)
+    // The repo's front page is the mod's own README; its links point into the plugin's folder.
+    let inner = fs.readFileSync(path.join(out, 'plugins', done.name, 'README.md'), 'utf8')
+    // A picture of it under the first paragraph, when the box has one.
+    const picture = EXPORT_PICTURES[m.id]
+    if (picture && fs.existsSync(path.join(ROOT, picture))) {
+      fs.mkdirSync(path.join(out, 'docs'), { recursive: true })
+      fs.copyFileSync(path.join(ROOT, picture), path.join(out, 'docs', path.basename(picture)))
+      const cut = inner.indexOf('\n\n', inner.indexOf('\n\n') + 2)
+      inner = `${inner.slice(0, cut)}\n\n![${m.title}](docs/${path.basename(picture)})${inner.slice(cut)}`
+    }
+    write(path.join(out, 'README.md'), inner.replace('](LICENSE)', `](plugins/${done.name}/LICENSE)`) +`\nThe plugin lives in [plugins/${done.name}](plugins/${done.name}); everything here is generated from the [Mod Box](https://github.com/LupusMalusDeviant/mod-box) (\`node tools/box.mjs export ${m.id} --repo ${repo} --out <this repo>\`), please send changes there.\n`)
+    fs.copyFileSync(path.join(out, 'plugins', done.name, 'LICENSE'), path.join(out, 'LICENSE'))
+    return { ok: true, out, plugins: [done.name] }
+  }
+  const done = exportMods({ ROOT, box, version: readJson(MANIFEST).version, mitText, repo, marketplace: 'claude-mods', notes: EXPORT_NOTES, companions: EXPORT_COMPANIONS }, ids, out, FORK_ORIGINS)
   const rows = done.map(d => `| [${d.title}](plugins/${d.name}) | ${d.description} | ${d.origin ? `fork of [${d.origin.label}](${d.origin.url})` : d.embedsFork ? 'own, embeds a fork (see its README)' : 'own'} | \`/plugin install ${d.name} --marketplace ${EXPORT_REPO}\` |`)
   write(
     path.join(out, 'README.md'),

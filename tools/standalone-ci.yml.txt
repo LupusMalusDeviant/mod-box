@@ -12,6 +12,7 @@ jobs:
   check:
     name: Validate and smoke-test (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
@@ -23,8 +24,16 @@ jobs:
         with:
           node-version: 26
 
+      # A download on the runner can hang: each try gets 4 minutes, a hung one is tried once more.
       - name: Install Claude Code
-        run: npm install -g @anthropic-ai/claude-code
+        shell: bash
+        timeout-minutes: 10
+        run: |
+          for try in 1 2; do
+            timeout 240 npm install -g @anthropic-ai/claude-code && exit 0
+            echo "::warning::npm install failed or hung (try $try)"
+          done
+          exit 1
 
       - name: Validate the marketplace
         run: claude plugin validate .

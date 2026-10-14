@@ -63,7 +63,10 @@ let stepsShownFor = ''
 let lastDone: PetNote | null = null
 // The last answer, compact, for a click on the pet: with its buttons while they still apply.
 let recap: PetNote | null = null
+// Next Steps' suggestions: inside the Mod Box, or the original plugin installed beside the pet.
+// (Two references with literal names: the engine's scan reads each one.)
 const NEXT_STEPS = { plugin: 'mod-box', key: 'ns_steps' } as const
+const NEXT_STEPS_OWN = { plugin: 'next-steps', key: 'steps' } as const
 const POLL_MS = 600
 // The prompt cache: how long it stays warm (the Cache Meter's setting), when the pet warns.
 let cacheTtlMs = 60 * 60_000
@@ -357,7 +360,9 @@ async function poll($: EngineInterface) {
       watchStepsUntil = 0
       return
     }
-    const s = (await read($, NEXT_STEPS as any).catch(() => null)) as { turnId: string; items: string[] } | null
+    type Steps = { turnId: string; items: string[] } | null
+    const inBox = (await read($, NEXT_STEPS as any).catch(() => null)) as Steps
+    const s = inBox?.items?.length ? inBox : ((await read($, NEXT_STEPS_OWN as any).catch(() => null)) as Steps)
     if (!s || !s.items?.length || s.turnId === stepsShownFor) return
     stepsShownFor = s.turnId
     watchStepsUntil = 0
