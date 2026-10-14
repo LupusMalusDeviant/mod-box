@@ -1,6 +1,6 @@
 import { describe as group, expect, mock, test } from 'claude-code/testing'
 
-import { cacheState, describe, gist, lastQuestion, parseAnswer, parseLook, pickLook, statusText } from '../mods/pet/hooks/register'
+import { cacheState, describe, gist, lastQuestion, parseAnswer, parseReplies, parseLook, pickLook, statusText } from '../mods/pet/hooks/register'
 
 const QUIET = { language: 'en', filetree: false, savvyProgress: false, replayTheater: false, cacheMeter: false, readGuard: false, packageGuard: false }
 const ok = (stdout = '') => ({ value: { exitCode: 0, stdout, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } })
@@ -258,6 +258,34 @@ group('Desktop pet: figures and clicks', () => {
     await clock.advance(700)
     await wait()
     expect(sent).toContain('Open a draft PR')
+  })
+
+  test('reply options: without bullets and quotes, at most three', () => {
+    const nl = String.fromCharCode(10)
+    expect(parseReplies(['1. Ja, veröffentlichen', '- "Nein, noch warten"', '', '• Erst die Notizen zeigen', 'Und Screen Mask mit rein'].join(nl))).toEqual(['Ja, veröffentlichen', 'Nein, noch warten', 'Erst die Notizen zeigen'])
+  })
+
+  test('an answer that ends with a question gets reply buttons; a click sends one', { options: { ...QUIET, pet: true } }, async ($: any, on: any) => {
+    const { writes, clock } = engine(on)
+    const sent: string[] = []
+    on('prompt.submit', (_$: any, e: any) => {
+      sent.push(e.text)
+      return { text: e.text }
+    })
+    const NL = String.fromCharCode(10)
+    on('model.complete', () => ({ value: { isAnswered: true, text: ['Yes, publish it', 'Not yet'].join(NL), usage: { input_tokens: 1, output_tokens: 1, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 } } }))
+    await $.session.start({ surface: 'terminal', isInteractive: true, cwd: ['C:', 'work', 'shop'].join(String.fromCharCode(92)) })
+    await $.turn.complete({ turnId: 't1', answer: ['The release is prepared, CI is green.', '', 'Shall I publish it?'].join(NL), durationMs: 5, isAborted: false, reason: 'answer' })
+    await wait()
+    await clock.advance(700)
+    await wait()
+    const shown = writes.at(-1)!.text
+    expect(shown).toContain('text=Shall I publish it?')
+    expect(shown).toContain(['choice=Yes, publish it', 'choice=Not yet'].join(NL))
+    click(writes, 'Yes, publish it')
+    await clock.advance(700)
+    await wait()
+    expect(sent).toContain('Yes, publish it')
   })
 
   test('/pet fox picks the figure and keeps it in the settings', { options: { ...QUIET, pet: true } }, async ($: any, on: any) => {
