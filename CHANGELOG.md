@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.6.2
+
+- **Desktop Pet**: a click on the pet shows Claude's last answer in short (its gist and closing question, or the Haiku summary), with its suggestion or reply buttons while they still apply, ready to answer with ✎ or the hotkey. The click never reached the pet before (the window drag swallowed it).
+- **Desktop Pet**: the Haiku summary takes up to three short sentences (what was done, what is open); the window is taller so a summary fits above three buttons, and saved positions keep the pets where they are.
+
 ## 0.6.1
 
 - Fix: on Claude Code 2.1.287 the whole box did not load (no /mod-box, no mods), because the window's hooks module declared `home` twice. A tool test now checks every hooks file for this (#19).
