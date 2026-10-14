@@ -237,6 +237,8 @@ namespace ModBox
             try { File.WriteAllText(posPath, Location.X + "," + Location.Y + "," + H); } catch { }
         }
 
+        DateTime frontAt = DateTime.MinValue;
+
         void OnTick()
         {
             tick++;
@@ -259,10 +261,19 @@ namespace ModBox
                             isCollapsed = false;
                         }
                         if (next.Kind == "bye") byeAt = DateTime.Now.AddSeconds(4);
+                        frontAt = DateTime.MinValue;
                     }
                 }
             }
             catch { /* the mod is writing right now: next tick */ }
+
+            // Every few seconds and with each message: back in front of a game that put itself on top
+            // (not while the input box or the menu is open, they would end up behind the pet's window).
+            if (DateTime.Now >= frontAt && (input == null || input.IsDisposed) && !ContextMenuStrip.Visible)
+            {
+                Native.StayInFront(Handle);
+                frontAt = DateTime.Now.AddSeconds(5);
+            }
 
             if (DateTime.Now >= byeAt) { Close(); return; }
             // Two quiet hours: nobody needs the pet any more.
@@ -1446,6 +1457,20 @@ namespace ModBox
         [DllImport("user32.dll")] public static extern bool UnregisterHotKey(IntPtr h, int id);
         [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
         [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr h);
+        [DllImport("user32.dll")] static extern bool SetWindowPos(IntPtr h, IntPtr after, int x, int y, int cx, int cy, uint flags);
+        [DllImport("shell32.dll")] static extern int SHQueryUserNotificationState(out int state);
+        const uint SWP_NOSIZE = 0x1, SWP_NOMOVE = 0x2, SWP_NOACTIVATE = 0x10, SWP_NOOWNERZORDER = 0x200;
+        const int QUNS_RUNNING_D3D_FULL_SCREEN = 3;
+
+        /// Back in front of windows that made themselves "always on top" after the pet (borderless
+        /// games), without activating it: the focus stays where it is. Not over exclusive fullscreen,
+        /// where nothing shows anyway and the game is left alone.
+        public static void StayInFront(IntPtr h)
+        {
+            int state;
+            if (SHQueryUserNotificationState(out state) == 0 && state == QUNS_RUNNING_D3D_FULL_SCREEN) return;
+            SetWindowPos(h, new IntPtr(-1), 0, 0, 0, 0, SWP_NOSIZE | SWP_NOMOVE | SWP_NOACTIVATE | SWP_NOOWNERZORDER);
+        }
 
         /// "ctrl+alt+space", "ctrl+shift+f9", "alt+q": modifier flags and the virtual key.
         public static bool ParseHotkey(string text, out int mods, out int key)
