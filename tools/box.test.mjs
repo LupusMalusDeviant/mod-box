@@ -185,3 +185,27 @@ test('inspect: a dual license as LICENSE-MIT and LICENSE-APACHE counts, the MIT 
     fs.rmSync(dir, { recursive: true, force: true })
   }
 })
+
+// Claude Code 2.1.287 refuses a whole hooks module when a function handed $ is declared a second
+// time in the same file (a local const of the same name included): the box would not load (#19).
+test('no function handed $ is declared twice in a hooks file', async () => {
+  const fs = await import('node:fs')
+  const path = await import('node:path')
+  const { fileURLToPath } = await import('node:url')
+  const root = path.join(path.dirname(fileURLToPath(import.meta.url)), '..')
+  const files = [path.join(root, 'hooks', 'register.ts')]
+  for (const mod of fs.readdirSync(path.join(root, 'mods'))) {
+    const dir = path.join(root, 'mods', mod, 'hooks')
+    if (fs.existsSync(dir)) for (const f of fs.readdirSync(dir)) if (/\.tsx?$/.test(f)) files.push(path.join(dir, f))
+  }
+  const twice = []
+  for (const file of files) {
+    const src = fs.readFileSync(file, 'utf8')
+    const handed = new Set([...src.matchAll(/\bfunction\s+(\w+)\s*(?:<[^>]*>)?\s*\(\s*\$\s*[:,)]/g)].map(m => m[1]))
+    for (const name of handed) {
+      const lines = [...src.matchAll(new RegExp(String.raw`\b(?:const|let|var|function)\s+${name}\b`, 'g'))].map(m => src.slice(0, m.index).split('\n').length)
+      if (lines.length > 1) twice.push(`${path.relative(root, file)}: ${name} (lines ${lines.join(', ')})`)
+    }
+  }
+  assert.deepEqual(twice, [])
+})
