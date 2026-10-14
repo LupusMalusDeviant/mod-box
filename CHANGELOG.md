@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.6.3
+
+- **Desktop Pet**: a bubble with a question or buttons that nobody answers shrinks to one line above the pet after the bubble time, or at once with the new – in its corner (its title, how many buttons wait, ▴). A click on it or the pet opens it again; while the pointer is on the bubble it stays big.
+
 ## 0.6.2
 
 - **Desktop Pet**: a click on the pet shows Claude's last answer in short (its gist and closing question, or the Haiku summary), with its suggestion or reply buttons while they still apply, ready to answer with ✎ or the hotkey. The click never reached the pet before (the window drag swallowed it).
