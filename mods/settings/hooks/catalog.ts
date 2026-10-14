@@ -2209,8 +2209,8 @@ export const CATALOG: CatalogMod[] = [
           "de": "Desktop-Pet: Zusammenfassung am Ende"
         },
         "description": {
-          "en": "off: the first sentences of the answer (no tokens). haiku: Haiku puts a longer answer in one sentence.",
-          "de": "aus: die ersten Sätze der Antwort (keine Tokens). haiku: Haiku fasst eine längere Antwort in einem Satz."
+          "en": "off: the first sentences of the answer (no tokens). haiku: Haiku sums up a longer answer in up to three short sentences (what was done, what is open). A click on the pet shows the last answer in short either way.",
+          "de": "aus: die ersten Sätze der Antwort (keine Tokens). haiku: Haiku fasst eine längere Antwort in bis zu drei kurzen Sätzen zusammen (was erledigt ist, was offen ist). Ein Klick aufs Pet zeigt die letzte Antwort in jedem Fall in Kurzform."
         },
         "labels": {
           "de": {

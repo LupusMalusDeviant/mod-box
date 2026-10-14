@@ -131,7 +131,11 @@ namespace ModBox
 
     sealed class PetWindow : Form
     {
-        const int W = 340, H = 340, BODY = 64, BUTTON = 26, TAG = 18;
+        // H: room for a short summary with three suggestions and the write button above the pet
+        // (the empty part of the window is transparent and lets clicks through).
+        const int W = 340, H = 460, BODY = 64, BUTTON = 26, TAG = 18;
+        // Positions saved before the height was stored were saved with this one.
+        const int OLD_H = 340;
         readonly string statusPath;
         readonly int bubbleMs;
         readonly System.Windows.Forms.Timer timer = new System.Windows.Forms.Timer();
@@ -213,8 +217,10 @@ namespace ModBox
         {
             try
             {
+                // "x,y,height": the pet keeps its place on screen (its bottom edge) when the window grows
                 var parts = File.ReadAllText(posPath).Split(',');
-                var p = new Point(int.Parse(parts[0]), int.Parse(parts[1]));
+                int savedH = parts.Length > 2 ? int.Parse(parts[2]) : OLD_H;
+                var p = new Point(int.Parse(parts[0]), int.Parse(parts[1]) + savedH - H);
                 foreach (var screen in Screen.AllScreens)
                     if (screen.WorkingArea.IntersectsWith(new Rectangle(p, new Size(W, H)))) return p;
             }
@@ -224,7 +230,7 @@ namespace ModBox
 
         void SavePosition()
         {
-            try { File.WriteAllText(posPath, Location.X + "," + Location.Y); } catch { }
+            try { File.WriteAllText(posPath, Location.X + "," + Location.Y + "," + H); } catch { }
         }
 
         void OnTick()
@@ -317,9 +323,23 @@ namespace ModBox
                 foreach (var bt in buttons)
                     if (bt.Key.Contains(e.Location)) { if (bt.Value == TYPE_BUTTON) OpenInput(); else Pick(bt.Value); return; }
             if (isBubble && bubbleRect.Contains(e.Location) && e.Clicks == 2) { isBubble = false; Draw(); return; }
+            // Dragging moves the window; the call returns when the button is up. Windows sends no click
+            // after it, so a press that did not move the pet is the click.
+            var before = Location;
             Native.ReleaseCapture();
             Native.SendMessage(Handle, Native.WM_NCLBUTTONDOWN, (IntPtr)Native.HTCAPTION, IntPtr.Zero);
+            if (Location == before) { if (e.Y > H - BODY - 30 - TAG) ShowRecap(); return; }
             SavePosition();
+        }
+
+        // A click on the pet: the mod answers with Claude's last answer in short (and its buttons, if
+        // they still apply); an open question is already there.
+        void ShowRecap()
+        {
+            if (!(status.Kind == "ask" && status.Choices.Count > 0)) WriteAnswer("recap", "show");
+            isBubble = true;
+            shownAt = DateTime.Now;
+            Draw();
         }
 
         protected override void OnMouseMove(MouseEventArgs e)
@@ -424,13 +444,6 @@ namespace ModBox
             Draw();
         }
 
-        protected override void OnMouseClick(MouseEventArgs e)
-        {
-            base.OnMouseClick(e);
-            // a click on the pet itself brings the last message back
-            if (e.Button == MouseButtons.Left && !isBubble && e.Y > H - BODY - 30 - TAG) { isBubble = true; shownAt = DateTime.Now; Draw(); }
-        }
-
         Color Accent() { return painter.Accent(); }
 
         void Draw()
@@ -442,7 +455,7 @@ namespace ModBox
         /// For the preview: Claude's question with three choices, the second under the pointer.
         public void ShowChoices()
         {
-            status = new Status { Kind = "ask", Title = "shop · A question for you", Text = "Which database should the new service use?", Pet = "cat", Fur = "ginger", Ask = "q", Name = "shop" };
+            status = new Status { Kind = "ask", Title = "shop · A question for you", Text = "The orders service is split out and its tests pass. Storage is still the JSON files, which will not hold up under load. Two options are ready to wire in.\nWhich database should the new service use?", Pet = "cat", Fur = "ginger", Ask = "q", Name = "shop" };
             status.Choices.AddRange(new[] { "PostgreSQL (Recommended)", "SQLite", "Keep the JSON files" });
             status.CanType = true;
             status.Free = "q";
