@@ -61,6 +61,8 @@ let answerAt = 0
 let watchStepsUntil = 0
 let stepsShownFor = ''
 let lastDone: PetNote | null = null
+// The last answer, compact, for a click on the pet: with its buttons while they still apply.
+let recap: PetNote | null = null
 const NEXT_STEPS = { plugin: 'mod-box', key: 'ns_steps' } as const
 const POLL_MS = 600
 // The prompt cache: how long it stays warm (the Cache Meter's setting), when the pet warns.
@@ -149,6 +151,12 @@ export function gist(answer: string, max = 170): string {
     out += sentence
   }
   return cut(out || plain, max)
+}
+
+/** An answer in short for a click on the pet: its gist, and the question it ends with. Pure. */
+export function compact(answer: string, question: string | null, max = 320): string {
+  const head = gist(answer, question ? 200 : max)
+  return question && !head.includes(question) ? `${head}\n${question}` : head
 }
 
 /** The question an answer ends with (in its last paragraph), without markdown; null when none. Pure. */
@@ -241,6 +249,14 @@ async function applyLook($: EngineInterface, next: PetLook, named: string, hasCo
 }
 
 // The menu's pick waits for a click at any time.
+// A click on the pet asks for the last answer again (id "recap").
+function listenForRecap($: EngineInterface) {
+  pending.set('recap', () => {
+    listenForRecap($)
+    void say($, recap ?? { kind: 'hello', title: titled(t('Zuletzt', 'Last')), text: t('In dieser Sitzung gab es noch keine Antwort.', 'No answer in this session yet.') }).catch(() => {})
+  })
+}
+
 function listenForLook($: EngineInterface) {
   pending.set('look', choice => {
     listenForLook($)
@@ -348,6 +364,7 @@ async function poll($: EngineInterface) {
     const id = `ns-${s.turnId}`
     for (const key of [...pending.keys()]) if (key.startsWith('ns-')) pending.delete(key)
     pending.set(id, text => void sendSuggestion($, text))
+    recap = { ...(recap ?? lastDone), ask: id, choices: s.items, free: id }
     await say($, { ...lastDone, ask: id, choices: s.items, free: id })
   }
 }
@@ -439,13 +456,14 @@ async function haiku($: EngineInterface, system: string, prompt: string, maxToke
 async function sum($: EngineInterface, answer: string): Promise<string | null> {
   const text = await haiku(
     $,
-    'You are a friendly desktop pet watching a coding assistant. Say in ONE short sentence (max 20 words) what the assistant ' +
-      `just did or found, for the person at the desk. ${lang === 'de' ? 'Answer in German, informal (du).' : 'Answer in English.'} ` +
-      'No markdown, no quotes, no greeting.',
-    `<reply>\n${answer.slice(0, 3000)}\n</reply>`,
-    80,
+    'You are a friendly desktop pet watching a coding assistant. In at most THREE short sentences (max 45 words) say what ' +
+      'the assistant just did or found and what is still open, for the person at the desk, so they can answer without ' +
+      `reading the whole reply. ${lang === 'de' ? 'Answer in German, informal (du).' : 'Answer in English.'} ` +
+      'No markdown, no quotes, no greeting, no question at the end.',
+    `<reply>\n${answer.slice(0, 4000)}\n</reply>`,
+    140,
   )
-  return text ? cut(text, 200) : null
+  return text ? cut(text.replace(/\s*\n+\s*/g, ' '), 320) : null
 }
 
 /** Haiku's reply options, one per line: without bullets, numbers or quotes, at most three. Pure. */
@@ -501,6 +519,7 @@ export const register: Register = (on, options) => {
       if (mine && PETS.includes(mine.pet)) look = mine
     }
     listenForLook($)
+    listenForRecap($)
     listenForPrompt($)
     const now = (await $.clock.now()) || 1
     lastRequestAt = now
@@ -533,6 +552,8 @@ export const register: Register = (on, options) => {
     changed.clear()
     watchStepsUntil = 0
     lastDone = null
+    // the last answer stays on a click, its buttons do not (the turn they answered is over)
+    if (recap) recap = { kind: recap.kind === 'ask' ? 'done' : recap.kind, title: recap.title, text: recap.text }
     for (const key of [...pending.keys()]) if (key.startsWith('ns-')) pending.delete(key)
     if (e.text.trim()) void say($, { kind: 'work', title: titled(t('Los geht’s', 'On it')), text: cut(e.text, 120) })
     return r
@@ -583,6 +604,7 @@ export const register: Register = (on, options) => {
     const title = titled([isQuestion ? t('Frage an dich', 'A question for you') : t('Fertig', 'Done'), ...facts].join(' · '))
     const first = question ?? (gist(e.answer) || t('Fertig.', 'Done.'))
     lastDone = { kind, title, text: first }
+    recap = { kind, title, text: compact(e.answer, question) || first }
     if (suggestViaPet && !isQuestion) watchStepsUntil = (await $.clock.now()) + 45_000
     void (async () => {
       await say($, { kind, title, text: first })
@@ -595,10 +617,12 @@ export const register: Register = (on, options) => {
       if (isTurnRunning || (!said && offers.length < 2)) return
       const text = said ? (question ? `${said}\n${question}` : said) : first
       lastDone = { kind, title, text }
+      if (said) recap = { kind, title, text }
       if (offers.length < 2) return void (await say($, lastDone))
       const id = `ns-q${await $.clock.now()}`
       for (const key of [...pending.keys()]) if (key.startsWith('ns-')) pending.delete(key)
       pending.set(id, choice => void sendSuggestion($, choice))
+      recap = { ...(recap ?? lastDone), ask: id, choices: offers, free: id }
       await say($, { ...lastDone, ask: id, choices: offers, free: id })
     })().catch(() => {})
     return r

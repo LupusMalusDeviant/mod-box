@@ -1,6 +1,6 @@
 import { describe as group, expect, mock, test } from 'claude-code/testing'
 
-import { cacheState, describe, gist, lastQuestion, parseAnswer, parseReplies, parseLook, pickLook, statusText } from '../mods/pet/hooks/register'
+import { cacheState, compact, describe, gist, lastQuestion, parseAnswer, parseReplies, parseLook, pickLook, statusText } from '../mods/pet/hooks/register'
 
 const QUIET = { language: 'en', filetree: false, savvyProgress: false, replayTheater: false, cacheMeter: false, readGuard: false, packageGuard: false }
 const ok = (stdout = '') => ({ value: { exitCode: 0, stdout, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } })
@@ -286,6 +286,47 @@ group('Desktop pet: figures and clicks', () => {
     await clock.advance(700)
     await wait()
     expect(sent).toContain('Yes, publish it')
+  })
+
+  test('the last answer in short: its gist and the question it ends with', () => {
+    const NL = String.fromCharCode(10)
+    expect(compact(['Built the tag.', '', 'Shall I push?'].join(NL), 'Shall I push?')).toBe(['Built the tag. Shall I push?'].join(NL))
+    expect(compact('A'.repeat(50) + '. ' + 'B'.repeat(300) + '.', 'Go on?')).toBe('A'.repeat(50) + '.' + NL + 'Go on?')
+    expect(compact('Done. All green.', null)).toBe('Done. All green.')
+  })
+
+  test('a click on the pet brings the last answer back, with its buttons; after the next message without', { options: { ...QUIET, pet: true } }, async ($: any, on: any) => {
+    const { writes, clock } = engine(on)
+    const NL = String.fromCharCode(10)
+    const showLast = () => {
+      answer.text = ['id=recap', 'choice=show', ''].join(NL)
+      answer.at += 1
+    }
+    on('prompt.submit', (_$: any, e: any) => ({ text: e.text }))
+    on('model.complete', () => ({ value: { isAnswered: true, text: ['Yes, publish it', 'Not yet'].join(NL), usage: { input_tokens: 1, output_tokens: 1, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 } } }))
+    await $.session.start({ surface: 'terminal', isInteractive: true, cwd: ['C:', 'work', 'shop'].join(String.fromCharCode(92)) })
+    showLast()
+    await clock.advance(700)
+    await wait()
+    expect(writes.at(-1)!.text).toContain('text=No answer in this session yet.')
+    await $.turn.complete({ turnId: 't1', answer: ['The release is prepared, CI is green.', '', 'Shall I publish it?'].join(NL), durationMs: 5, isAborted: false, reason: 'answer' })
+    await wait()
+    await $.tool.call({ tool: 'Read', file_path: 'x' })
+    await wait()
+    expect(writes.at(-1)!.text).toContain('kind=work')
+    showLast()
+    await clock.advance(700)
+    await wait()
+    const back = writes.at(-1)!.text
+    expect(back).toContain('The release is prepared, CI is green.')
+    expect(back).toContain('choice=Yes, publish it')
+    await $.turn.start({ text: 'what else?', turnId: 't2' })
+    await wait()
+    showLast()
+    await clock.advance(700)
+    await wait()
+    expect(writes.at(-1)!.text).toContain('The release is prepared, CI is green.')
+    expect(writes.at(-1)!.text).not.toContain('choice=')
   })
 
   test('/pet fox picks the figure and keeps it in the settings', { options: { ...QUIET, pet: true } }, async ($: any, on: any) => {
