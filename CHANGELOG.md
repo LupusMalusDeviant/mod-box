@@ -6,7 +6,7 @@
   - 13 figures (box, cat, dog, fox, bunny, hamster, owl, penguin, frog, axolotl, dragon, robot, ghost); cat, dog and bunny in nine coats. Right-click › *Figur* or `/pet <figure> [coat]`.
   - One pet per active session (option), side by side, each with its own figure (kept per session). A pet sleeps when its session's prompt cache goes cold and is back with the next message; a reload or a reopened app no longer wakes the pets of idle sessions.
   - A name tag with the project under every pet.
-  - Claude's questions, Next Steps' suggestions and (option) permission requests as buttons in the bubble. An answer that ends with a question shows that question. A hidden open question comes back after a while (option).
+  - Claude's questions, Next Steps' suggestions and (option) permission requests as buttons in the bubble. An answer that ends with a question shows that question, with two or three short replies from Haiku as buttons. A hidden open question comes back after a while (option).
   - Warns before the prompt cache goes cold, with a button that keeps it warm.
   - Typing (option, off by default): a hotkey, the menu or ✎ opens a small input box; the text goes to the session as the next prompt or as the answer to its open question, and the focus goes back to the game.
   - Rebuilds are signed with the sign-binary skill by default.
