@@ -713,8 +713,8 @@
         "on",
         "off"
       ],
-      "title": "Desktop Pet: next-step suggestions",
-      "description": "With Next Steps on, its suggestions appear as buttons in the bubble; a click sends one as your next prompt."
+      "title": "Desktop Pet: suggestions and reply buttons",
+      "description": "With Next Steps on, its suggestions appear as buttons in the bubble. When an answer ends with a question to you, Haiku offers two or three short replies as buttons (a few tokens). A click sends one as your next prompt."
     },
     "petPermissions": {
       "type": "string",

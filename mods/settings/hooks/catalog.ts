@@ -2445,12 +2445,12 @@ export const CATALOG: CatalogMod[] = [
         "type": "string",
         "multiple": false,
         "title": {
-          "en": "Desktop Pet: next-step suggestions",
-          "de": "Desktop-Pet: Vorschläge für den nächsten Schritt"
+          "en": "Desktop Pet: suggestions and reply buttons",
+          "de": "Desktop-Pet: Vorschläge und Antwortknöpfe"
         },
         "description": {
-          "en": "With Next Steps on, its suggestions appear as buttons in the bubble; a click sends one as your next prompt.",
-          "de": "Ist Next Steps an, erscheinen seine Vorschläge als Knöpfe in der Blase; ein Klick schickt einen als nächsten Prompt."
+          "en": "With Next Steps on, its suggestions appear as buttons in the bubble. When an answer ends with a question to you, Haiku offers two or three short replies as buttons (a few tokens). A click sends one as your next prompt.",
+          "de": "Ist Next Steps an, erscheinen seine Vorschläge als Knöpfe in der Blase. Endet eine Antwort mit einer Frage an dich, schlägt Haiku zwei oder drei kurze Antworten als Knöpfe vor (ein paar Tokens). Ein Klick schickt eine als nächsten Prompt."
         },
         "labels": {
           "de": {
