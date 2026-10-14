@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.6.0
+
+- **Desktop Pet**, grown from a status box into an overlay you can answer through:
+  - 13 figures (box, cat, dog, fox, bunny, hamster, owl, penguin, frog, axolotl, dragon, robot, ghost); cat, dog and bunny in nine coats. Right-click › *Figur* or `/pet <figure> [coat]`.
+  - One pet per active session (option), side by side, each with its own figure (kept per session). A pet sleeps when its session's prompt cache goes cold and is back with the next message; a reload or a reopened app no longer wakes the pets of idle sessions.
+  - A name tag with the project under every pet.
+  - Claude's questions, Next Steps' suggestions and (option) permission requests as buttons in the bubble. An answer that ends with a question shows that question, with two or three short replies from Haiku as buttons. A hidden open question comes back after a while (option).
+  - Warns before the prompt cache goes cold, with a button that keeps it warm.
+  - Typing (option, off by default): a hotkey, the menu or ✎ opens a small input box; the text goes to the session as the next prompt or as the answer to its open question, and the focus goes back to the game.
+  - Rebuilds are signed with the sign-binary skill by default.
+- **Screen Mask** (new): for screen sharing and recordings, hides API keys, tokens, e-mail and IP addresses, your login name and names you list in the display; Claude still reads the original.
+- **Split Diff**, **Human in the Loop**, **Prompt Rail** (new, from the community): side-by-side diffs, tasks only a person can do, a rail of the session's prompts.
+- **Community catalogue**: search awesome-claude-code-mods from the window, see what a mod may read, write, run or send, and import it through the usual checks.
+- **Mod reach**: every mod shows what it reads, writes, runs and sends.
+- **Cache Meter**: a context trend line. **Codebase Map**: `@feature` in the prompt, no more flicker, follows its repository (0.4.1).
+- **Filetree**: stays under the desktop's size limit in large projects.
+- CI: a time limit and a second try for installing Claude Code.
+
 ## 0.5.0
 
 - **Package Guard** (new): before an install or `npx`/`uvx` run, asks the public registry and holds made-up, brand-new, removed or typosquatted packages; allow in the band or with `/pkg-allow`.
