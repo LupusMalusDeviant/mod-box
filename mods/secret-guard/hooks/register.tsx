@@ -17,6 +17,7 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
 import type { BlockedFind } from '../types'
+import { PATTERNS, isPlaceholder } from './patterns'
 
 type Hit = { what: string; where: string; path: string | null; value: string | null; hard?: boolean }
 
@@ -35,29 +36,8 @@ const t = (de: string, en: string) => (lang === 'en' ? en : de)
 let placeholders = true
 let isWindows = false
 
-// Patterns of known secrets. Kept narrow, so examples and placeholders pass.
-export const PATTERNS: Array<[string, RegExp]> = [
-  ['Anthropic-API-Key', /sk-ant-[A-Za-z0-9_-]{20,}/g],
-  ['OpenAI-API-Key', /\bsk-(?!ant-)(?:proj-)?[A-Za-z0-9_-]{32,}/g],
-  ['GitHub-Token', /\b(?:gh[pousr]_[A-Za-z0-9]{36,}|github_pat_[A-Za-z0-9_]{60,})/g],
-  ['GitLab-Token', /\bglpat-[A-Za-z0-9_-]{20,}/g],
-  ['AWS-Zugangsschlüssel', /\b(?:AKIA|ASIA)[0-9A-Z]{16}\b/g],
-  ['Google-API-Key', /\bAIza[0-9A-Za-z_-]{35}\b/g],
-  ['Slack-Token', /\bxox[abprs]-[A-Za-z0-9-]{10,}/g],
-  ['Stripe-Live-Key', /\b(?:sk|rk)_live_[A-Za-z0-9]{20,}/g],
-  ['Hugging-Face-Token', /\bhf_[A-Za-z0-9]{30,}/g],
-  ['privater Schlüssel', /-----BEGIN (?:RSA |EC |OPENSSH |DSA |PGP )?PRIVATE KEY(?: BLOCK)?-----/g],
-  ['JWT', /\beyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}/g],
-  [
-    'credentials in an assignment',
-    /\b(?:api[_-]?key|secret|token|passw(?:or)?d|client[_-]?secret|access[_-]?key)\b["']?\s*[:=]\s*["'](?![^"']*(?:example|beispiel|changeme|placeholder|your[_-]|xxx|<|\$\{|\{\{))[A-Za-z0-9+/_\-.=]{20,}["']/gi,
-  ],
-]
-
-/** Placeholders and documentation examples: they look like keys but are none. */
-export function isPlaceholder(value: string): boolean {
-  return /example|dummy|fake|placeholder|redacted|sample|x{6,}|0{10,}|\*{4,}|your[_-]?(?:api|key|token|secret)/i.test(value)
-}
+// still exported here for the tests and older imports
+export { PATTERNS, isPlaceholder }
 
 // Files that hold secrets; templates (.example, .sample, .template, .dist) are fine.
 export const SECRET_FILE = /(^|[\\/])(\.env(\.[\w-]+)?|[^\\/]*\.(pem|key|p12|pfx|keystore|jks)|id_(rsa|dsa|ecdsa|ed25519)|credentials(\.json)?|\.npmrc|\.pypirc|\.netrc)$/i

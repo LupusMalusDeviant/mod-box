@@ -1,5 +1,5 @@
 // Screen Mask: what to hide while the screen is shared, and how. No $ here.
-import { PATTERNS, isPlaceholder } from '../../secret-guard/hooks/register'
+import { PATTERNS, isPlaceholder } from '../../secret-guard/hooks/patterns'
 
 export type MaskRules = {
   /** Words or names to hide wherever they appear (case-insensitive). */

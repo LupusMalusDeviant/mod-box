@@ -48,7 +48,7 @@ Then open the window with `/mod-box`. A mod installed at user scope also runs in
 
 ## Just one mod?
 
-The own mods and the forks with real changes are also available one by one, without the box: [**claude-mods**](https://github.com/LupusMalusDeviant/claude-mods) (Cache Meter, Subagent Saver, Read Guard, Secret Guard, Package Guard, CI Watch, Sign Guard, Handoff Note, Desktop Pet, and Blast Radius as a marked fork). For the other mods, use their originals; they are linked under [Credits](#credits).
+The own mods and the forks with real changes are also available one by one, without the box: [**claude-mods**](https://github.com/LupusMalusDeviant/claude-mods) (Cache Meter, Subagent Saver, Read Guard, Secret Guard, Screen Mask, Package Guard, CI Watch, Sign Guard, Handoff Note, Desktop Pet, and Blast Radius as a marked fork). For the other mods, use their originals; they are linked under [Credits](#credits).
 
 ## Safety
 
