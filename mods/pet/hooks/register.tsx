@@ -425,23 +425,49 @@ async function ensure($: EngineInterface): Promise<string | null> {
   return run.exitCode === 0 ? null : cut(run.stderr || 'start failed', 200)
 }
 
-async function sum($: EngineInterface, answer: string): Promise<string | null> {
-  const r = await $.model.complete({
-    model: MODEL,
-    maxTokens: 80,
-    timeoutMs: 15_000,
-    system:
-      'You are a friendly desktop pet watching a coding assistant. Say in ONE short sentence (max 20 words) what the assistant ' +
-      `just did or found, for the person at the desk. ${lang === 'de' ? 'Answer in German, informal (du).' : 'Answer in English.'} ` +
-      'No markdown, no quotes, no greeting.',
-    prompt: `<reply>\n${answer.slice(0, 3000)}\n</reply>`,
-  })
+// One short Haiku call, its tokens booked for the pet.
+async function haiku($: EngineInterface, system: string, prompt: string, maxTokens: number): Promise<string | null> {
+  const r = await $.model.complete({ model: MODEL, maxTokens, timeoutMs: 15_000, system, prompt })
   if (r.usage) {
     await update($, USAGE, b => addUsage(b, 'pet', MODEL, r.usage!)).catch(() => {})
     const total = await $.store.get(USAGE_STORE).catch(() => null)
     await $.store.set(USAGE_STORE, addUsage(total as UsageBook | null, 'pet', MODEL, r.usage)).catch(() => {})
   }
-  return r.isAnswered && r.text.trim() ? cut(r.text, 200) : null
+  return r.isAnswered && r.text.trim() ? r.text : null
+}
+
+async function sum($: EngineInterface, answer: string): Promise<string | null> {
+  const text = await haiku(
+    $,
+    'You are a friendly desktop pet watching a coding assistant. Say in ONE short sentence (max 20 words) what the assistant ' +
+      `just did or found, for the person at the desk. ${lang === 'de' ? 'Answer in German, informal (du).' : 'Answer in English.'} ` +
+      'No markdown, no quotes, no greeting.',
+    `<reply>\n${answer.slice(0, 3000)}\n</reply>`,
+    80,
+  )
+  return text ? cut(text, 200) : null
+}
+
+/** Haiku's reply options, one per line: without bullets, numbers or quotes, at most three. Pure. */
+export function parseReplies(text: string): string[] {
+  const lines = text
+    .split(/\r?\n/)
+    .map(l => l.replace(/^\s*(?:[-*•]|\d+[.)])\s*/, '').replace(/^["'„“]+|["'“”]+$/g, '').trim())
+    .filter(l => l.length > 0 && l.length <= 80)
+  return [...new Set(lines)].slice(0, 3)
+}
+
+// An answer that ends with a question: two or three short replies the person might give, as buttons.
+async function replies($: EngineInterface, answer: string, question: string): Promise<string[]> {
+  const text = await haiku(
+    $,
+    'A coding assistant ended its reply with a question to the person at the desk. Write the 2 or 3 most likely short ' +
+      'answers that person would send back, one per line, each at most 8 words, the most likely first, different from ' +
+      `each other. ${lang === 'de' ? 'In German, informal (du).' : 'In English.'} Only the answers: no numbering, no quotes.`,
+    `<reply>\n${answer.slice(-2500)}\n</reply>\n<question>${question}</question>`,
+    80,
+  )
+  return text ? parseReplies(text) : []
 }
 
 export const register: Register = (on, options) => {
@@ -560,14 +586,20 @@ export const register: Register = (on, options) => {
     if (suggestViaPet && !isQuestion) watchStepsUntil = (await $.clock.now()) + 45_000
     void (async () => {
       await say($, { kind, title, text: first })
-      if (summary === 'haiku' && e.answer.trim().length > 200) {
-        const said = await sum($, e.answer).catch(() => null)
-        if (said) {
-          const text = question ? `${said}\n${question}` : said
-          lastDone = { kind, title, text }
-          await say($, { kind, title, text })
-        }
-      }
+      // the summary and (for a closing question) reply buttons, both from Haiku, side by side
+      const [said, offers] = await Promise.all([
+        summary === 'haiku' && e.answer.trim().length > 200 ? sum($, e.answer).catch(() => null) : Promise.resolve(null),
+        question && suggestViaPet ? replies($, e.answer, question).catch(() => [] as string[]) : Promise.resolve([] as string[]),
+      ])
+      // a new message came meanwhile: this answer is old news
+      if (isTurnRunning || (!said && offers.length < 2)) return
+      const text = said ? (question ? `${said}\n${question}` : said) : first
+      lastDone = { kind, title, text }
+      if (offers.length < 2) return void (await say($, lastDone))
+      const id = `ns-q${await $.clock.now()}`
+      for (const key of [...pending.keys()]) if (key.startsWith('ns-')) pending.delete(key)
+      pending.set(id, choice => void sendSuggestion($, choice))
+      await say($, { ...lastDone, ask: id, choices: offers, free: id })
     })().catch(() => {})
     return r
   })
