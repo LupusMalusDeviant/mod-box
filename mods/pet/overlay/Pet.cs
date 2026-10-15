@@ -40,6 +40,7 @@ namespace ModBox
             if (args[0] == "--preview-bubble" && args.Length > 1) { Preview.RenderBubble(args[1]); return 0; }
             if (args[0] == "--preview-pill" && args.Length > 1) { Preview.RenderPill(args[1]); return 0; }
             if (args[0] == "--preview-input" && args.Length > 1) { Preview.RenderInput(args[1]); return 0; }
+            if (args[0] == "--preview-mods" && args.Length > 1) { Preview.RenderMods(args[1]); return 0; }
             bool isFirst;
             using (var mutex = new Mutex(true, "Local\\ModBoxPet-" + HashOf(args[0].ToLowerInvariant()), out isFirst))
             {
@@ -102,6 +103,10 @@ namespace ModBox
         public string Name = "";
         /// An open question whose bubble was hidden comes back after this many seconds (0: never).
         public int Remind;
+        /// What other Mod Box mods have to say, short, beside the name: "1 Aufgabe · CI rot".
+        public string Badge = "";
+        /// Keep-warm: how it stands ("aus", "noch 40 Min.", "immer"); empty when the Cache Tax is off.
+        public string Warm = "";
 
         public static Status Read(string path)
         {
@@ -125,6 +130,8 @@ namespace ModBox
                 else if (key == "typelabel") s.TypeLabel = value;
                 else if (key == "name") s.Name = value;
                 else if (key == "remind") int.TryParse(value, out s.Remind);
+                else if (key == "badge") s.Badge = value;
+                else if (key == "warm") s.Warm = value;
             }
             return s;
         }
@@ -181,9 +188,16 @@ namespace ModBox
             menu.Items.Add("Zurück in die Ecke", null, (s, e) => { Location = CornerLocation(); SavePosition(); });
             menu.Items.Add(new ToolStripSeparator());
             menu.Items.Add(FigureMenu());
+            var warm = WarmMenu();
+            menu.Items.Add(warm);
             var write = new ToolStripMenuItem("Antworten / Nachricht an Claude …", null, (s, e) => OpenInput());
             menu.Items.Insert(0, write);
-            menu.Opening += (s, e) => { write.Visible = status.CanType && status.Free.Length > 0; };
+            menu.Opening += (s, e) =>
+            {
+                write.Visible = status.CanType && status.Free.Length > 0;
+                warm.Visible = status.Warm.Length > 0;
+                warm.DropDownItems[0].Text = "Jetzt: " + status.Warm;
+            };
             menu.Items.Add(new ToolStripSeparator());
             menu.Items.Add("Beenden", null, (s, e) => Close());
             ContextMenuStrip = menu;
@@ -249,7 +263,12 @@ namespace ModBox
                 {
                     lastWrite = info.LastWriteTimeUtc;
                     var next = Status.Read(statusPath);
-                    if (next.Text.Length > 0)
+                    // The same note again with new extras (the badge, keep-warm): no new bubble.
+                    if (next.Text.Length > 0 && next.At == status.At && next.Text == status.Text && next.Kind == status.Kind)
+                    {
+                        status = next;
+                    }
+                    else if (next.Text.Length > 0)
                     {
                         status = next;
                         ApplyHotkey();
@@ -450,6 +469,19 @@ namespace ModBox
         }
 
         // A figure from the menu: shown at once, written for the mod, which keeps it.
+        // Keep the prompt cache warm (the Cache Tax's /keepwarm): its state first, then the choices.
+        ToolStripMenuItem WarmMenu()
+        {
+            var root = new ToolStripMenuItem("Cache warm halten");
+            root.DropDownItems.Add(new ToolStripMenuItem("Jetzt: …") { Enabled = false });
+            root.DropDownItems.Add(new ToolStripSeparator());
+            root.DropDownItems.Add(new ToolStripMenuItem("1 Stunde", null, (s, e) => WriteAnswer("warm", "1h")));
+            root.DropDownItems.Add(new ToolStripMenuItem("3 Stunden", null, (s, e) => WriteAnswer("warm", "3h")));
+            root.DropDownItems.Add(new ToolStripMenuItem("Immer (jede Sitzung)", null, (s, e) => WriteAnswer("warm", "always")));
+            root.DropDownItems.Add(new ToolStripMenuItem("Aus", null, (s, e) => WriteAnswer("warm", "off")));
+            return root;
+        }
+
         void ChooseLook(string pet, string fur)
         {
             WriteAnswer("look", fur.Length > 0 ? pet + " " + fur : pet);
@@ -506,6 +538,14 @@ namespace ModBox
             isBubble = true;
         }
 
+        /// For the preview: a command Blast Radius holds, the mods' badge beside the name.
+        public void ShowHeld()
+        {
+            status = new Status { Kind = "ask", Title = "shop · Blast Radius · git push --force", Text = "force-push to origin/main: drops 1 commit\ngit push --force-with-lease origin main", Pet = "fox", Fur = "auto", Ask = "b", Name = "shop", Badge = "angehalten · 1 Aufgabe · CI rot" };
+            status.Choices.AddRange(new[] { "Ausführen", "Abbrechen" });
+            isBubble = true;
+        }
+
         public Bitmap Snapshot()
         {
             var bmp = new Bitmap(W, H, PixelFormat.Format32bppArgb);
@@ -534,7 +574,7 @@ namespace ModBox
             if (status.Name.Length == 0) return;
             using (var font = new Font("Segoe UI Semibold", 8.5f))
             {
-                string name = status.Name;
+                string name = status.Name + (status.Badge.Length > 0 ? "  ·  " + status.Badge : "");
                 var size = g.MeasureString(name, font);
                 while (size.Width > W - 24 && name.Length > 2)
                 {
@@ -1367,6 +1407,17 @@ namespace ModBox
 
         /// The same question shrunk to one line, as after a while without a reaction.
         public static void RenderPill(string path) { RenderBubble(path, true); }
+
+        /// What the other Mod Box mods bring: a held command with its buttons, the badge under the pet.
+        public static void RenderMods(string path)
+        {
+            var w = new PetWindow(path + ".none", 9, 0);
+            w.ShowHeld();
+            using (var bmp = w.Snapshot())
+            {
+                bmp.Save(path, ImageFormat.Png);
+            }
+        }
 
         static void RenderBubble(string path, bool isShrunk)
         {

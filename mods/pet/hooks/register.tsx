@@ -256,7 +256,16 @@ async function applyLook($: EngineInterface, next: PetLook, named: string, hasCo
 function listenForRecap($: EngineInterface) {
   pending.set('recap', () => {
     listenForRecap($)
-    void say($, recap ?? { kind: 'hello', title: titled(t('Zuletzt', 'Last')), text: t('In dieser Sitzung gab es noch keine Antwort.', 'No answer in this session yet.') }).catch(() => {})
+    const last: PetNote = recap ?? { kind: 'hello', title: titled(t('Zuletzt', 'Last')), text: t('In dieser Sitzung gab es noch keine Antwort.', 'No answer in this session yet.') }
+    void (async () => {
+      const lines = modLines(held, openTasks, ci, await $.clock.now(), lang === 'de')
+      const note = lines.length ? { ...last, text: `${last.text}\n${lines.join('\n')}` } : last
+      // no buttons of its own: the first open task's, so it can be done from here
+      const task = !note.choices?.length && !held ? openTasks[0] : undefined
+      if (!task) return void (await say($, note))
+      const own = taskFor($, task)
+      await say($, { ...note, ask: own.ask, choices: own.choices, free: own.free ?? note.free })
+    })().catch(() => {})
   })
 }
 
@@ -340,9 +349,229 @@ async function checkCache($: EngineInterface) {
   }
 }
 
+// ---- Other Mod Box mods at the pet --------------------------------------------------------------
+// Blast Radius puts a held command in $.store (blast:held:<session>) and takes the pet's answer
+// beside it (blast:pet:<session>); Human in the loop takes a click on a task the same way
+// (hitl:pet:<session>); CI Watch's state is read. What they have to say stands beside the name
+// (badge); a new held command, task or CI result comes up in the bubble with its buttons.
+type HeldCall = { id: string; label: string; summary: string; command: string }
+export type PetTask = { id: number; title: string; why?: string; kind: 'do' | 'answer' | 'choose'; options?: readonly string[]; state: string }
+export type PetCi = {
+  sha: string
+  phase: string
+  message: string
+  endedAt: number
+  isDismissed: boolean
+  failed: { name: string; url: string } | null
+  pr: { number: number; url: string } | null
+  runs: Array<{ url: string }>
+} | null
+
+const HITL_TASKS = { plugin: 'mod-box', key: 'hitl_tasks' } as const
+const HITL_TASKS_OWN = { plugin: 'human-in-the-loop', key: 'tasks' } as const
+const CI_WATCH = { plugin: 'mod-box', key: 'ci_watch' } as const
+const CI_WATCH_OWN = { plugin: 'ci-watch', key: 'watch' } as const
+const MOD_CHECK_MS = 1500
+// A green CI result stays in the badge this long; a red one until the next run or it is dismissed.
+const CI_GREEN_MS = 10 * 60_000
+const WARM_ARGS = ['1h', '3h', 'always', 'off']
+const isUrl = (url: string) => /^https:\/\/[\w.-]+\//.test(url)
+
+// The note on screen, so a changed badge rewrites it without a new bubble.
+let shown: { note: PetNote; at: number; extra: Record<string, string> } | null = null
+let badge = ''
+let warmText = ''
+let modsCheckedAt = 0
+let canKeepWarm: boolean | null = null
+let held: HeldCall | null = null
+let heldShown = ''
+let openTasks: PetTask[] = []
+const tasksShown = new Set<number>()
+let ci: PetCi = null
+let ciShown = ''
+
+/** What stands beside the pet's name: a held command, open tasks, CI. Pure, for the tests. */
+export function modBadge(isHeld: boolean, tasks: number, watch: PetCi, now: number, de: boolean): string {
+  const tr = (a: string, b: string) => (de ? a : b)
+  const parts: string[] = []
+  if (isHeld) parts.push(tr('angehalten', 'held'))
+  if (tasks) parts.push(tr(`${tasks} Aufgabe${tasks === 1 ? '' : 'n'}`, `${tasks} task${tasks === 1 ? '' : 's'}`))
+  if (watch && !watch.isDismissed) {
+    if (watch.phase === 'laeuft' || watch.phase === 'warte') parts.push(tr('CI läuft', 'CI running'))
+    else if (watch.phase === 'rot') parts.push(tr('CI rot', 'CI red'))
+    else if (watch.phase === 'gruen' && now - watch.endedAt < CI_GREEN_MS) parts.push(tr('CI grün', 'CI green'))
+  }
+  return parts.join(' · ')
+}
+
+/** How keep-warm stands, for the pet's menu. Pure, for the tests. */
+export function warmLabel(always: boolean, deadline: number, now: number, de: boolean): string {
+  if (always) return de ? 'immer an' : 'always on'
+  if (deadline > now) {
+    const min = Math.ceil((deadline - now) / 60_000)
+    const left = min >= 60 ? `${Math.floor(min / 60)} h${min % 60 ? ` ${min % 60} min` : ''}` : `${min} min`
+    return de ? `an, noch ${left}` : `on, ${left} left`
+  }
+  return de ? 'aus' : 'off'
+}
+
+/** A task Claude gave the person, as a note: buttons for "done" or the options. Pure, for the tests. */
+export function taskNote(task: PetTask, de: boolean, canAnswer: boolean, canWrite: boolean): PetNote {
+  const tr = (a: string, b: string) => (de ? a : b)
+  const id = `hitl-${task.id}`
+  const text = cut(`#${task.id} ${task.title}`, 160) + (task.why ? `\n${cut(task.why, 160)}` : '')
+  const note: PetNote = { kind: 'ask', title: tr('Aufgabe für dich', 'A task for you'), text }
+  const elsewhere = { ...note, text: `${text}\n${tr('In Claude Code unter My tasks.', 'In Claude Code under My tasks.')}` }
+  if (!canAnswer) return elsewhere
+  if (task.kind === 'do') return { ...note, ask: id, choices: [tr('Erledigt', 'Done')] }
+  if (task.kind === 'choose' && task.options?.length) return { ...note, ask: id, choices: [...task.options] }
+  return task.kind === 'answer' && canWrite ? { ...note, free: id } : elsewhere
+}
+
+/** A finished CI run as a note, and the page its button opens (empty: no button). Pure, for the tests. */
+export function ciNote(watch: NonNullable<PetCi>, de: boolean): { note: PetNote; button: string; url: string } {
+  const tr = (a: string, b: string) => (de ? a : b)
+  const isRed = watch.phase === 'rot'
+  const url = (isRed ? watch.failed?.url : '') || watch.pr?.url || watch.runs[0]?.url || ''
+  const button = isRed ? tr('Fehler ansehen', 'Show the failure') : watch.pr ? tr(`PR #${watch.pr.number} öffnen`, `Open PR #${watch.pr.number}`) : tr('Lauf öffnen', 'Open the run')
+  const fallback = isRed ? watch.failed?.name || tr('Ein Lauf ist fehlgeschlagen.', 'A run failed.') : tr('Alle Läufe sind durch.', 'All runs passed.')
+  const note: PetNote = { kind: isRed ? 'error' : 'done', title: isRed ? tr('CI ist rot', 'CI is red') : tr('CI ist grün', 'CI is green'), text: cut(watch.message || fallback, 200) }
+  return { note, button, url: isUrl(url) ? url : '' }
+}
+
+/** The lines a click on the pet adds under the last answer: held command, tasks, CI. Pure. */
+export function modLines(call: HeldCall | null, tasks: readonly PetTask[], watch: PetCi, now: number, de: boolean): string[] {
+  const tr = (a: string, b: string) => (de ? a : b)
+  const lines: string[] = []
+  if (call) lines.push(`⚠ ${tr('Angehalten', 'Held')}: ${cut(call.summary, 70)}`)
+  for (const task of tasks.slice(0, 2)) lines.push(`☐ #${task.id} ${cut(task.title, 60)}`)
+  if (tasks.length > 2) lines.push(tr(`… und ${tasks.length - 2} weitere Aufgaben`, `… and ${tasks.length - 2} more tasks`))
+  const isRecent = watch && (watch.phase !== 'gruen' || now - watch.endedAt < CI_GREEN_MS)
+  if (watch && !watch.isDismissed && isRecent && ['rot', 'laeuft', 'warte', 'gruen'].includes(watch.phase)) lines.push(`CI: ${cut(watch.message || watch.phase, 70)}`)
+  return lines
+}
+
+async function openUrl($: EngineInterface, url: string) {
+  if (!isUrl(url)) return
+  await $.process.run(['powershell', '-NoProfile', '-NonInteractive', '-Command', 'Start-Process $env:PET_URL'], { env: { PET_URL: url }, timeoutMs: 15_000 }).catch(() => null)
+}
+
+// The note on screen again, with the new badge and keep-warm state: the pet takes it without a new bubble.
+async function rewrite($: EngineInterface) {
+  if (!statusPath || !shown) return
+  await $.fs.write(statusPath, statusText(shown.note, shown.at, look, { ...shown.extra, badge, warm: warmText })).catch(() => {})
+}
+
+// A task's note, its click handed to Human in the loop.
+function taskFor($: EngineInterface, task: PetTask): PetNote {
+  const note = taskNote(task, lang === 'de', askViaPet, canType)
+  const done = t('Erledigt', 'Done')
+  if (note.ask || note.free) {
+    pending.set(`hitl-${task.id}`, choice => {
+      const given = task.kind === 'do' && choice === done ? 'done' : choice
+      void $.store.set(`hitl:pet:${sessionId}`, { id: task.id, choice: given }).catch(() => {})
+      void say($, { kind: 'work', title: titled(t('Aufgabe', 'Task')), text: t(`#${task.id} ist an Claude weitergegeben.`, `#${task.id} passed on to Claude.`) })
+    })
+  }
+  return { ...note, title: titled(note.title) }
+}
+
+async function checkMods($: EngineInterface) {
+  const now = await $.clock.now()
+  if (now - modsCheckedAt < MOD_CHECK_MS) return
+  modsCheckedAt = now
+  const de = lang === 'de'
+
+  // Blast Radius: a held command; the pet may answer it only with option permissions "answer".
+  const h = (await $.store.get(`blast:held:${sessionId}`).catch(() => null)) as HeldCall | null
+  held = h && typeof h === 'object' && h.id ? h : null
+  if (held && held.id !== heldShown) {
+    heldShown = held.id
+    const call = held
+    const id = `blast-${call.id}`
+    const go = t('Ausführen', 'Proceed')
+    const text = cut(call.summary, 120) + `\n${cut(call.command, 120)}`
+    const title = titled(`Blast Radius · ${call.label}`)
+    if (permissions === 'answer') {
+      pending.set(id, choice => void $.store.set(`blast:pet:${sessionId}`, { id: call.id, choice: choice === go ? 'proceed' : 'cancel' }).catch(() => {}))
+      await say($, { kind: 'ask', title, text, ask: id, choices: [go, t('Abbrechen', 'Cancel')] })
+    } else {
+      await say($, { kind: 'ask', title, text: `${text}\n${t('Bitte in Claude Code entscheiden.', 'Please decide in Claude Code.')}` })
+    }
+  } else if (!held && heldShown) {
+    pending.delete(`blast-${heldShown}`)
+    heldShown = ''
+  }
+
+  // Human in the loop: this session's open tasks; a new one comes up (not over a held command).
+  type Tasks = readonly PetTask[] | null
+  const inBox = (await read($, HITL_TASKS as any).catch(() => null)) as Tasks
+  const list = inBox ?? ((await read($, HITL_TASKS_OWN as any).catch(() => null)) as Tasks) ?? []
+  openTasks = list.filter(x => x.state === 'open')
+  for (const id of [...tasksShown]) {
+    if (openTasks.some(x => x.id === id)) continue
+    tasksShown.delete(id)
+    pending.delete(`hitl-${id}`)
+  }
+  const fresh = openTasks.find(x => !tasksShown.has(x.id))
+  if (fresh && !held) {
+    tasksShown.add(fresh.id)
+    await say($, taskFor($, fresh))
+  }
+
+  // CI Watch: a finished run once, with a button that opens it.
+  const asWatch = (v: unknown): PetCi => (v && typeof v === 'object' && 'phase' in v ? (v as PetCi) : null)
+  ci = asWatch(await read($, CI_WATCH as any).catch(() => null)) ?? asWatch(await read($, CI_WATCH_OWN as any).catch(() => null))
+  const ciKey = ci ? `${ci.sha}:${ci.phase}` : ''
+  const isOver = ci !== null && (ci.phase === 'gruen' || ci.phase === 'rot')
+  if (ci && ciKey !== ciShown && (!isOver || (!ci.isDismissed && !held))) {
+    const isFirst = ciShown === ''
+    ciShown = ciKey
+    // a result that was there before the pet started is old news
+    if (isOver && (!isFirst || now - ci.endedAt < 60_000)) {
+      const { note, button, url } = ciNote(ci, de)
+      const id = `ci-${ciKey}`
+      if (url) pending.set(id, () => void openUrl($, url))
+      await say($, { ...note, title: titled(note.title), ...(url ? { ask: id, choices: [button] } : {}) })
+    }
+  }
+
+  // Keep-warm: offered in the menu when the Cache Tax is there.
+  if (canKeepWarm === null) canKeepWarm = (await $.command.list().catch(() => [] as Array<{ name: string }>)).some(c => c.name === 'keepwarm')
+  const always = (await $.store.get('always').catch(() => null)) === true
+  const deadline = Number(await $.store.get(`deadline:${sessionId}`).catch(() => 0)) || 0
+  const nextWarm = canKeepWarm ? warmLabel(always, deadline, now, de) : ''
+  const nextBadge = modBadge(held !== null, openTasks.length, ci, now, de)
+  if (nextBadge !== badge || nextWarm !== warmText) {
+    badge = nextBadge
+    warmText = nextWarm
+    await rewrite($)
+  }
+}
+
+// The pet's menu: keep the cache warm (the Cache Tax's /keepwarm).
+function listenForWarm($: EngineInterface) {
+  pending.set('warm', choice => {
+    listenForWarm($)
+    if (!WARM_ARGS.includes(choice)) return
+    modsCheckedAt = 0
+    const text =
+      choice === 'off'
+        ? t('Ich lasse ihn abkühlen.', 'I let it cool down.')
+        : choice === 'always'
+          ? t('Ich halte ihn in jeder Sitzung warm.', 'Keeping it warm in every session.')
+          : t(`Ich halte ihn ${choice.replace('h', ' Std.')} warm.`, `Keeping it warm for ${choice}.`)
+    void $.command
+      .run({ command: 'keepwarm', args: choice })
+      .then(() => say($, { kind: 'work', title: titled(t('Cache', 'Cache')), text }))
+      .catch(() => $.ui.toast(t(`Bitte /keepwarm ${choice} eingeben.`, `Please type /keepwarm ${choice}.`)))
+  })
+}
+
 async function poll($: EngineInterface) {
   if (!statusPath) return
   await checkCache($).catch(() => {})
+  await checkMods($).catch(() => {})
   if (pending.size > 0) {
     const at = await $.fs.stat(`${statusPath}.answer`).then(x => x.mtimeMs).catch(() => 0)
     if (at && at !== answerAt) {
@@ -386,7 +615,8 @@ async function say($: EngineInterface, note: PetNote) {
   const typed = canType ? { ...note, free: note.free ?? promptId() } : { ...note, free: undefined }
   // name: the project, shown under the pet all the time
   const extra = { name: project, remind: note.kind === 'ask' && remindSec ? String(remindSec) : '', ...(canType ? { type: 'on', hotkey, typelabel: note.free ? t('Eigene Antwort …', 'Write your own answer …') : '' } : {}) }
-  await $.fs.write(statusPath, statusText(typed, now, look, extra)).catch(() => {})
+  shown = { note: typed, at: now, extra }
+  await $.fs.write(statusPath, statusText(typed, now, look, { ...extra, badge, warm: warmText })).catch(() => {})
   // asleep (one pet per active session, cache cold): the note only reaches a pet that still runs
   if (now - started > RESTART_MS && !isAsleep) void ensure($).catch(() => {})
 }
@@ -526,6 +756,7 @@ export const register: Register = (on, options) => {
     listenForLook($)
     listenForRecap($)
     listenForPrompt($)
+    listenForWarm($)
     const now = (await $.clock.now()) || 1
     lastRequestAt = now
     isAsleep = await startsAsleep($, now)

@@ -1,6 +1,6 @@
 // Copyright 2026 Anthropic PBC
 // SPDX-License-Identifier: Apache-2.0
-// Modified for mod-box (https://github.com/LupusMalusDeviant/mod-box): Windows support (PowerShell wait loop, Git Bash, Windows cd targets), state/matchers/paths rewritten for the single plugin.
+// Modified for mod-box (https://github.com/LupusMalusDeviant/mod-box): Windows support (PowerShell wait loop, Git Bash, Windows cd targets), state/matchers/paths rewritten for the single plugin, the held call offered to the Desktop Pet (blast:held / blast:pet in $.store).
 // Original: https://github.com/anthropics/claude-code-playground/tree/main/claude-code/mods/blast-radius (commit 569c528).
 //
 // Blast Radius: holds a risky Bash command and shows what it would change.
@@ -61,9 +61,17 @@ export function register(on) {
         mine.where = "band";
       }
       $.ui.invalidate("ui.render");
+      // Mod Box: the Desktop Pet shows the held call (and, when it may answer, its buttons).
+      petKey = `blast:held:${await $.session.id().catch(() => "")}`;
+      mine.id = String(await $.clock.now());
+      await $.store.set(petKey, { id: mine.id, label: risk.label, summary, command: mine.command }).catch(() => {});
 
       const startedAt = await $.clock.now();
       while (mine.decision === null) {
+        await fromPet($, mine);
+        if (mine.decision !== null) {
+          break;
+        }
         if (next.signal.aborted) {
           mine.decision = "interrupted";
           break;
@@ -90,6 +98,7 @@ export function register(on) {
       if (held === mine) {
         held = null;
       }
+      await $.store.delete(petKey).catch(() => {});
       $.ui.invalidate("ui.render");
     }
 
@@ -491,6 +500,20 @@ function size(bytes) {
 
 function paneRows(report) {
   return Math.min(24, 9 + report.lines.length + (report.more ? 1 : 0));
+}
+
+// Mod Box: where the held call waits for the Desktop Pet; the pet's answer lands beside it.
+let petKey = "blast:held:";
+async function fromPet($, mine) {
+  const key = petKey.replace("blast:held:", "blast:pet:");
+  const a = await $.store.get(key).catch(() => null);
+  if (!a || typeof a !== "object") {
+    return;
+  }
+  await $.store.delete(key).catch(() => {});
+  if (a.id === mine.id && (a.choice === "proceed" || a.choice === "cancel") && mine.decision === null) {
+    mine.decision = a.choice;
+  }
 }
 
 function draw(t, state) {

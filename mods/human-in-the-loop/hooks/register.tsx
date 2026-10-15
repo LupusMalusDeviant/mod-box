@@ -159,6 +159,8 @@ const live = {
   batch: null as Timer | null,
   /** Says in the project's store that this session is alive. */
   heartbeat: null as Timer | null,
+  /** Picks up an answer given in the Desktop Pet. */
+  petPoll: null as Timer | null,
   /** Tasks waiting in the project's other live sessions. */
   elsewhere: 0,
   /**
@@ -194,6 +196,8 @@ export const register: Register = on => {
   on('session.end', {}, async ($, e, next) => {
     live.heartbeat?.cancel()
     live.heartbeat = null
+    live.petPoll?.cancel()
+    live.petPoll = null
 
     try {
       await writeStore($, endSlot(await readStore($), e.sessionId, await $.clock.now()))
@@ -722,6 +726,8 @@ async function join($: EngineInterface) {
 
   live.heartbeat?.cancel()
   live.heartbeat = $.clock.every(HEARTBEAT_MS, () => void beat($))
+  live.petPoll?.cancel()
+  live.petPoll = $.clock.every(PET_POLL_MS, () => void fromPet($).catch(() => {}))
 
   // Tasks from an earlier session: the status line says so, and the pane
   // opens where the terminal is wide enough to seat it unasked.
@@ -799,6 +805,24 @@ async function letGo($: EngineInterface, stored: Stored): Promise<Stored> {
   }
 
   return rest
+}
+
+// The Desktop Pet shows open tasks; a click there lands under this key: { id, choice }, where
+// choice is "done", one of a choose task's options, or (answer) the typed text.
+const PET_POLL_MS = 1000
+const petKey = () => `hitl:pet:${live.sessionId}`
+
+async function fromPet($: EngineInterface) {
+  if (!live.sessionId) return
+  const given = (await $.store.get(petKey()).catch(() => null)) as { id?: unknown; choice?: unknown } | null
+  if (!given || typeof given !== 'object') return
+  await $.store.delete(petKey()).catch(() => {})
+  const choice = typeof given.choice === 'string' ? given.choice.trim() : ''
+  const task = (await read($, tasks)).find(x => x.id === given.id && x.state === 'open')
+  if (!task || !choice) return
+  if (task.kind === 'do' && choice === 'done') return void (await resolve($, task.id, { state: 'done' }, 'auto'))
+  if (task.kind === 'choose' && task.options?.includes(choice)) return void (await resolve($, task.id, { state: 'done', answer: choice }, 'auto'))
+  if (task.kind === 'answer' && choice !== 'done') await answer($, task.id, choice, 'auto')
 }
 
 function storeKey(): string {
