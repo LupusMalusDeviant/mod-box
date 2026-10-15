@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- **Desktop Pet**: works with other Mod Box mods. A command **Blast Radius** holds comes up in the bubble (with "Proceed" and "Cancel" when the pet may answer permission requests); a task from **Human in the Loop** comes up with "Done" or its options, and a click there answers it; a finished **CI Watch** run comes up with a button that opens the failure or the PR. Beside the pet's name stands what is open in short ("held · 1 task · CI red"), and a click on the pet lists it under the last answer.
+- **Desktop Pet**: its right-click menu keeps the prompt cache warm through the Cache Tax's /keepwarm (1 h, 3 h, always, off) and shows how it stands.
+
 ## 0.6.4
 
 - **Desktop Pet**: stays in front of borderless games that put themselves on top after it (back in front every 5 seconds and with each message, without taking the focus; not over exclusive fullscreen).

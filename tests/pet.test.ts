@@ -1,6 +1,6 @@
 import { describe as group, expect, mock, test } from 'claude-code/testing'
 
-import { cacheState, compact, describe, gist, lastQuestion, parseAnswer, parseReplies, parseLook, pickLook, statusText } from '../mods/pet/hooks/register'
+import { cacheState, ciNote, compact, describe, gist, lastQuestion, modBadge, modLines, parseAnswer, parseReplies, parseLook, pickLook, statusText, taskNote, warmLabel } from '../mods/pet/hooks/register'
 
 const QUIET = { language: 'en', filetree: false, savvyProgress: false, replayTheater: false, cacheMeter: false, readGuard: false, packageGuard: false }
 const ok = (stdout = '') => ({ value: { exitCode: 0, stdout, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } })
@@ -12,13 +12,19 @@ const clicked = { permission: '' }
 // Whether the sign-binary skill's script is there.
 const skill = { there: false }
 
-function engine(on: any, os = 'Windows_NT', tool: (e: any) => unknown = () => ({ result: 'ok', text: 'ok' }), stored: Record<string, unknown> = {}) {
+// A Map as the store keeps what the plugin wrote readable for the test; a record is only a start.
+function engine(on: any, os = 'Windows_NT', tool: (e: any) => unknown = () => ({ result: 'ok', text: 'ok' }), stored: Record<string, unknown> | Map<string, unknown> = {}) {
   answer.text = ''
   clicked.permission = ''
   skill.there = false
   answer.at = 0
   const clock = mock.clock(on)
-  mock.store(on, stored)
+  if (stored instanceof Map) {
+    on('store.get', (_$: any, e: any) => ({ value: stored.get(e.key) }))
+    on('store.set', (_$: any, e: any) => (stored.set(e.key, e.value), { value: undefined }))
+    on('store.delete', (_$: any, e: any) => (stored.delete(e.key), { value: undefined }))
+    on('store.keys', () => ({ value: [...stored.keys()] }))
+  } else mock.store(on, stored)
   const writes: Array<{ path: string; text: string }> = []
   const runs: string[][] = []
   on('command.register', () => ({ value: {} }))
@@ -591,5 +597,109 @@ group('Desktop pet: typing', () => {
     await clock.advance(700)
     await wait()
     expect(sent).toEqual([])
+  })
+})
+
+group('Desktop pet: other Mod Box mods', () => {
+  const CWD = ['C:', 'work', 'shop'].join(String.fromCharCode(92))
+  const NL = String.fromCharCode(10)
+  const MIN = 60_000
+  const PET = { ...QUIET, pet: true }
+  const HELD = { 'blast:held:s': { id: '42', label: 'git push --force', summary: 'force-push to origin/main: drops 1 commit', command: 'git push --force-with-lease origin main' } }
+  const watch = (phase: string, extra: Record<string, unknown> = {}) => ({ sha: 'abc1234', phase, message: '', endedAt: 0, isDismissed: false, failed: null, pr: null, runs: [], ...extra })
+
+  test('the badge beside the name: held, tasks, CI', () => {
+    expect(modBadge(false, 0, null, 0, false)).toBe('')
+    expect(modBadge(true, 2, watch('rot'), 0, false)).toBe('held · 2 tasks · CI red')
+    expect(modBadge(false, 1, watch('laeuft'), 0, true)).toBe('1 Aufgabe · CI läuft')
+    expect(modBadge(false, 0, watch('gruen', { endedAt: 0 }), 5 * MIN, false)).toBe('CI green')
+    expect(modBadge(false, 0, watch('gruen', { endedAt: 0 }), 11 * MIN, false)).toBe('')
+    expect(modBadge(false, 0, watch('rot', { isDismissed: true }), 0, false)).toBe('')
+  })
+
+  test('keep-warm as the menu shows it', () => {
+    expect(warmLabel(true, 0, 0, true)).toBe('immer an')
+    expect(warmLabel(false, 0, 10, true)).toBe('aus')
+    expect(warmLabel(false, 40 * MIN, 0, false)).toBe('on, 40 min left')
+    expect(warmLabel(false, 90 * MIN, 0, true)).toBe('an, noch 1 h 30 min')
+  })
+
+  test('a task as a note: done, its options, or typed', () => {
+    const task = { id: 3, title: 'Delete the repo', why: 'The token may not.', kind: 'do' as const, state: 'open' }
+    expect(taskNote(task, false, true, false)).toMatchObject({ kind: 'ask', ask: 'hitl-3', choices: ['Done'] })
+    expect(taskNote(task, false, true, false).text).toBe(`#3 Delete the repo${NL}The token may not.`)
+    expect(taskNote({ ...task, kind: 'choose', options: ['A', 'B'] }, false, true, false).choices).toEqual(['A', 'B'])
+    expect(taskNote({ ...task, kind: 'answer' }, false, true, true)).toMatchObject({ free: 'hitl-3' })
+    expect(taskNote({ ...task, kind: 'answer' }, false, true, false).text).toContain('My tasks')
+    // the pet may not answer: no buttons, a pointer to Claude Code
+    const off = taskNote(task, false, false, true)
+    expect(off.ask).toBe(undefined)
+    expect(off.text).toContain('My tasks')
+  })
+
+  test('a CI result as a note with a button that opens it', () => {
+    const red = ciNote(watch('rot', { message: 'Tests failed', failed: { name: 'CI', url: 'https://github.com/o/r/actions/runs/1' } }), false)
+    expect(red).toMatchObject({ note: { kind: 'error', text: 'Tests failed' }, button: 'Show the failure', url: 'https://github.com/o/r/actions/runs/1' })
+    const green = ciNote(watch('gruen', { pr: { number: 34, url: 'https://github.com/o/r/pull/34' } }), true)
+    expect(green).toMatchObject({ note: { kind: 'done' }, button: 'PR #34 öffnen', url: 'https://github.com/o/r/pull/34' })
+    // nothing but a web page is opened
+    expect(ciNote(watch('rot', { failed: { name: 'x', url: 'file:///C:/evil.exe' } }), false).url).toBe('')
+  })
+
+  test('a click on the pet lists what the mods have open', () => {
+    const tasks = [1, 2, 3].map(id => ({ id, title: `Task ${id}`, kind: 'do' as const, state: 'open' }))
+    const lines = modLines(HELD['blast:held:s'], tasks, watch('rot', { message: 'CI red: tests' }), 0, false)
+    expect(lines).toEqual(['⚠ Held: force-push to origin/main: drops 1 commit', '☐ #1 Task 1', '☐ #2 Task 2', '… and 1 more tasks', 'CI: CI red: tests'])
+  })
+
+  test('a command Blast Radius holds comes up; answered in the pet with permissions "answer"', { options: { ...PET, petPermissions: 'answer' } }, async ($: any, on: any) => {
+    const stored = new Map<string, unknown>(Object.entries(HELD))
+    const { writes, clock } = engine(on, 'Windows_NT', undefined, stored)
+    on('command.list', () => ({ value: [] }))
+    await $.session.start({ surface: 'terminal', isInteractive: true, cwd: CWD })
+    await clock.advance(2_000)
+    await wait()
+    const shown = writes.find(w => w.text.includes('Blast Radius'))
+    expect(shown?.text).toContain('choice=Proceed')
+    expect(writes.at(-1)!.text).toContain('badge=held')
+    click([shown!], 'Proceed')
+    await clock.advance(700)
+    await wait()
+    expect(stored.get('blast:pet:s')).toEqual({ id: '42', choice: 'proceed' })
+  })
+
+  test('without permissions "answer" the held command is only shown', { options: PET }, async ($: any, on: any) => {
+    const { writes, clock } = engine(on, 'Windows_NT', undefined, { ...HELD })
+    on('command.list', () => ({ value: [] }))
+    await $.session.start({ surface: 'terminal', isInteractive: true, cwd: CWD })
+    await clock.advance(2_000)
+    await wait()
+    const shown = writes.find(w => w.text.includes('Blast Radius'))
+    expect(shown?.text).toContain('Please decide in Claude Code.')
+    expect(shown?.text).not.toMatch(/^choice=/m)
+  })
+
+  test('the menu keeps the cache warm through /keepwarm, and shows how it stands', { options: PET }, async ($: any, on: any) => {
+    const { writes, clock } = engine(on, 'Windows_NT', undefined, { 'deadline:s': 3 * 60 * MIN })
+    const ran: string[] = []
+    on('command.list', () => ({ value: [{ name: 'keepwarm' }] }))
+    on('command.run', (_$: any, e: any) => {
+      ran.push(`${e.command} ${e.args ?? ''}`)
+      return { text: 'ok' }
+    })
+    await $.session.start({ surface: 'terminal', isInteractive: true, cwd: CWD })
+    await clock.advance(2_000)
+    await wait()
+    expect(writes.at(-1)!.text).toMatch(/^warm=on, 3 h left$/m)
+    answer.text = `id=warm${NL}choice=always${NL}`
+    answer.at += 1
+    await clock.advance(700)
+    await wait()
+    // something else than the four choices is not passed on
+    answer.text = `id=warm${NL}choice=off; rm -rf${NL}`
+    answer.at += 1
+    await clock.advance(700)
+    await wait()
+    expect(ran).toEqual(['keepwarm always'])
   })
 })
