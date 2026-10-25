@@ -75,6 +75,33 @@ export function standaloneState(code, { plugin, prefix, name }) {
   return { code: out, usesLedger }
 }
 
+// The Claude Code events behind the box's hook events. A hooks module subscribes in code, which
+// static scanners of plugin listings cannot read; hooks.json names these events with no command
+// hooks under them (nothing extra runs), so a listing can say what the plugin hooks into.
+const STANDARD_EVENTS = {
+  'tool.call': ['PreToolUse', 'PostToolUse'],
+  'prompt.submit': ['UserPromptSubmit'],
+  'turn.start': ['UserPromptSubmit'],
+  'turn.complete': ['Stop'],
+  'session.start': ['SessionStart'],
+  'session.end': ['SessionEnd'],
+  'session.compact': ['PreCompact'],
+}
+const STANDARD_ORDER = ['PreToolUse', 'PostToolUse', 'PermissionRequest', 'Notification', 'UserPromptSubmit', 'Stop', 'SubagentStop', 'SessionStart', 'SessionEnd', 'PreCompact']
+
+/** The standard event names for the box events the code in `dir` subscribes to. */
+export function standardEvents(dir) {
+  const names = new Set()
+  for (const f of walk(dir).filter(p => CODE.test(p) && !p.endsWith('.d.ts'))) {
+    for (const m of fs.readFileSync(f, 'utf8').matchAll(/(?<![\w.$])on\(\s*(['"])([\w.*!:-]+)\1/g)) {
+      const ev = m[2]
+      if (ev.startsWith('classic.')) names.add(ev.slice('classic.'.length))
+      for (const n of STANDARD_EVENTS[ev] ?? []) names.add(n)
+    }
+  }
+  return [...names].sort((a, b) => (STANDARD_ORDER.indexOf(a) + 1 || 99) - (STANDARD_ORDER.indexOf(b) + 1 || 99) || a.localeCompare(b))
+}
+
 const MOD_USAGE_TYPE = `/** Model calls the mod made itself: counted per session, priced at list price. */
 export type ModUsage = {
   calls: number
@@ -133,6 +160,8 @@ function readmeOf(m, name, info) {
   }
   if (info.note) lines.push(info.note, '')
   lines.push('## Install', '', 'In a terminal Claude Code session (2.1.287 or newer):', '', '```', `/plugin install ${name} --marketplace ${info.repo}`, '```', '')
+  lines.push('Or from a shell:', '', '```bash', `claude plugin marketplace add ${info.repo}`, `claude plugin install ${name}@${info.marketplace}`, '```', '')
+  if (info.events?.length) lines.push('## Hooks into', '', info.events.map(e => `\`${e}\``).join(', '), '')
   // Other mods it works with: none is needed, each adds something.
   if (info.companions?.length) {
     lines.push('## Works with', '', `${m.title} needs no other mod. These add to it when installed beside it:`, '', '| Mod | What it adds | Without it |', '|---|---|---|')
@@ -222,20 +251,27 @@ export function exportMods(ctx, ids, out, origins = {}) {
       options.push([field, o])
     }
     const origin = origins[m.id] ?? null
+    const meta = (ctx.meta ?? {})[m.id] ?? {}
+    const license = origin ? origin.license : 'MIT'
+    const homepage = `https://github.com/${ctx.repo}/tree/main/plugins/${name}`
     const manifest = {
       name,
       version: ctx.version,
       description: m.description,
       author: { name: 'Lupus Malus Deviant' },
-      license: origin ? origin.license : 'MIT',
-      homepage: `https://github.com/${ctx.repo}/tree/main/plugins/${name}`,
+      license,
+      homepage,
+      repository: `https://github.com/${ctx.repo}`,
+      ...(meta.keywords?.length ? { keywords: meta.keywords } : {}),
       ...(types ? { types } : {}),
       ...(options.length ? { userConfig: Object.fromEntries(options) } : {}),
     }
     write(path.join(dir, '.claude-plugin', 'plugin.json'), JSON.stringify(manifest, null, 2) + '\n')
-    write(path.join(dir, 'hooks', 'hooks.json'), JSON.stringify({ modules: [m.band ? './entry.tsx' : './entry.ts'] }) + '\n')
+    const events = standardEvents(dir)
+    const hooks = { modules: [m.band ? './entry.tsx' : './entry.ts'], ...(events.length ? { hooks: Object.fromEntries(events.map(e => [e, []])) } : {}) }
+    write(path.join(dir, 'hooks', 'hooks.json'), JSON.stringify(hooks, null, 2) + '\n')
     write(path.join(dir, 'hooks', m.band ? 'entry.tsx' : 'entry.ts'), entryFile(m, 'inner'))
-    write(path.join(dir, 'README.md'), readmeOf(m, name, { origin, repo: ctx.repo, options, note: (ctx.notes ?? {})[m.id], companions: (ctx.companions ?? {})[m.id] }))
+    write(path.join(dir, 'README.md'), readmeOf(m, name, { origin, repo: ctx.repo, marketplace: ctx.marketplace, events, options, note: (ctx.notes ?? {})[m.id], companions: (ctx.companions ?? {})[m.id] }))
     if (origin) {
       fs.copyFileSync(path.join(ROOT, 'mods', m.id, 'LICENSE'), path.join(dir, 'LICENSE'))
     } else {
@@ -243,11 +279,33 @@ export function exportMods(ctx, ids, out, origins = {}) {
     }
     const smoke = fs.readFileSync(path.join(ROOT, 'tools', 'standalone-smoke.test.txt'), 'utf8').replace('PLUGIN', JSON.stringify(name).replace(/"/g, "'"))
     write(path.join(dir, 'tests', 'smoke.test.ts'), smoke)
-    done.push({ name, title: m.title, description: m.description, origin, embedsFork: !!(ctx.notes ?? {})[m.id], commands: (m.commands ?? []).map(c => c.name) })
+    done.push({
+      name,
+      title: m.title,
+      description: m.description,
+      origin,
+      embedsFork: !!(ctx.notes ?? {})[m.id],
+      commands: (m.commands ?? []).map(c => c.name),
+      entry: {
+        name,
+        source: `./plugins/${name}`,
+        description: m.description,
+        version: ctx.version,
+        author: { name: 'Lupus Malus Deviant' },
+        license,
+        homepage,
+        ...(meta.category ? { category: meta.category } : {}),
+        ...(meta.keywords?.length ? { keywords: meta.keywords, tags: meta.keywords } : {}),
+      },
+    })
   }
+
+  // Into the box's own repo: the box writes its marketplace and README itself and keeps its CI.
+  if (ctx.inBox) return done
 
   write(path.join(out, '.github', 'workflows', 'ci.yml'), fs.readFileSync(path.join(ROOT, 'tools', 'standalone-ci.yml.txt'), 'utf8'))
   write(path.join(out, '.gitattributes'), '* text=auto eol=lf\n*.wav binary\n')
+  write(path.join(out, 'LICENSE'), ctx.mitText)
 
   // The marketplace around them.
   write(
@@ -257,7 +315,7 @@ export function exportMods(ctx, ids, out, origins = {}) {
         name: ctx.marketplace,
         owner: { name: 'Lupus Malus Deviant' },
         description: ctx.description ?? 'Single Claude Code mods from the Mod Box, each installable on its own.',
-        plugins: done.map(d => ({ name: d.name, source: `./plugins/${d.name}`, description: d.description })),
+        plugins: done.map(d => d.entry),
       },
       null,
       2,

@@ -1,0 +1,57 @@
+{
+  "name": "screen-mask",
+  "version": "0.6.4",
+  "description": "For screen sharing and recordings: hides API keys, tokens, private keys, e-mail addresses, IP addresses, your login name in paths and any names you list. Only the display changes; Claude still reads the original. Nothing leaves the machine. /mask switches it.",
+  "author": {
+    "name": "Lupus Malus Deviant"
+  },
+  "license": "MIT",
+  "homepage": "https://github.com/LupusMalusDeviant/mod-box/tree/main/plugins/screen-mask",
+  "repository": "https://github.com/LupusMalusDeviant/mod-box",
+  "keywords": [
+    "privacy",
+    "screen-sharing",
+    "streaming",
+    "secrets",
+    "mask"
+  ],
+  "types": "./mods/screen-mask/types/contract.d.ts",
+  "userConfig": {
+    "terms": {
+      "type": "string",
+      "default": "",
+      "title": "Screen Mask: names and words to hide",
+      "description": "Comma separated, e.g. customer names, project code names, a server name. Case does not matter."
+    },
+    "emails": {
+      "type": "string",
+      "default": "on",
+      "options": [
+        "on",
+        "off"
+      ],
+      "title": "Screen Mask: hide e-mail addresses",
+      "description": "Every address becomes [e-mail]."
+    },
+    "ips": {
+      "type": "string",
+      "default": "on",
+      "options": [
+        "on",
+        "off"
+      ],
+      "title": "Screen Mask: hide IP addresses",
+      "description": "IPv4 addresses except loopback and documentation ranges become [ip]."
+    },
+    "language": {
+      "type": "string",
+      "title": "Language",
+      "description": "Language of the texts this mod shows and writes.",
+      "default": "en",
+      "options": [
+        "de",
+        "en"
+      ]
+    }
+  }
+}

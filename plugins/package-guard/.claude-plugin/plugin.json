@@ -1,0 +1,43 @@
+{
+  "name": "package-guard",
+  "version": "0.6.4",
+  "description": "Before Claude installs or runs a package (npm, pnpm, yarn, bun, npx, pip, uv, poetry, pipx, cargo), asks the public registry about it. Holds the command when the package does not exist (a made-up name), is under 14 days old, or looks like a well-known package and is young or thin (typosquatting). Allow in the band or with /pkg-allow.",
+  "author": {
+    "name": "Lupus Malus Deviant"
+  },
+  "license": "MIT",
+  "homepage": "https://github.com/LupusMalusDeviant/mod-box/tree/main/plugins/package-guard",
+  "repository": "https://github.com/LupusMalusDeviant/mod-box",
+  "keywords": [
+    "supply-chain",
+    "typosquatting",
+    "npm",
+    "pip",
+    "cargo",
+    "packages",
+    "guardrails"
+  ],
+  "types": "./mods/package-guard/types/contract.d.ts",
+  "userConfig": {
+    "mode": {
+      "type": "string",
+      "default": "block",
+      "options": [
+        "block",
+        "warn"
+      ],
+      "title": "Package Guard: mode",
+      "description": "block: hold the command until the package is allowed. warn: only warn and let it through."
+    },
+    "language": {
+      "type": "string",
+      "title": "Language",
+      "description": "Language of the texts this mod shows and writes.",
+      "default": "en",
+      "options": [
+        "de",
+        "en"
+      ]
+    }
+  }
+}

@@ -1,0 +1,62 @@
+{
+  "name": "read-guard",
+  "version": "0.6.4",
+  "description": "Holds a whole-file Read (no offset/limit) of a file above the limit, a lockfile, minified code or a source map, and the same via cat, type or Get-Content in the shell; tells Claude the size, a token estimate and a better way (Grep, offset/limit). A second try at the same file goes through, and so does a Read with allow_large. Claude Code itself stops only at about 25,000 tokens.",
+  "author": {
+    "name": "Lupus Malus Deviant"
+  },
+  "license": "MIT",
+  "homepage": "https://github.com/LupusMalusDeviant/mod-box/tree/main/plugins/read-guard",
+  "repository": "https://github.com/LupusMalusDeviant/mod-box",
+  "keywords": [
+    "tokens",
+    "context",
+    "read",
+    "large-files",
+    "cost"
+  ],
+  "userConfig": {
+    "limitKb": {
+      "type": "string",
+      "default": "50",
+      "options": [
+        "20",
+        "50",
+        "100",
+        "off"
+      ],
+      "title": "Read Guard: limit (KB)",
+      "description": "Files above this size are held when read whole. off: only lockfiles, minified files and source maps."
+    },
+    "mode": {
+      "type": "string",
+      "default": "block",
+      "options": [
+        "block",
+        "warn"
+      ],
+      "title": "Read Guard: mode",
+      "description": "block: hold the first try and tell Claude a better way. warn: only a notice."
+    },
+    "shell": {
+      "type": "string",
+      "default": "on",
+      "options": [
+        "on",
+        "off"
+      ],
+      "title": "Read Guard: shell too",
+      "description": "on: also cat, type and Get-Content of a whole file."
+    },
+    "language": {
+      "type": "string",
+      "title": "Language",
+      "description": "Language of the texts this mod shows and writes.",
+      "default": "en",
+      "options": [
+        "de",
+        "en"
+      ]
+    }
+  }
+}

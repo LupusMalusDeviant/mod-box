@@ -1,0 +1,14 @@
+{
+  "modules": [
+    "./entry.ts"
+  ],
+  "hooks": {
+    "PreToolUse": [],
+    "PostToolUse": [],
+    "PermissionRequest": [],
+    "UserPromptSubmit": [],
+    "Stop": [],
+    "SessionStart": [],
+    "SessionEnd": []
+  }
+}

@@ -1,0 +1,48 @@
+{
+  "name": "subagent-saver",
+  "version": "0.6.4",
+  "description": "Search subagents (Explore) that were given no model of their own run on a cheaper one instead of the main model. An explicit model, forks, teammates and plugin agents stay untouched. With Claude Code's own CLAUDE_CODE_SUBAGENT_MODEL set (for all subagents), the mod stays out.",
+  "author": {
+    "name": "Lupus Malus Deviant"
+  },
+  "license": "MIT",
+  "homepage": "https://github.com/LupusMalusDeviant/mod-box/tree/main/plugins/subagent-saver",
+  "repository": "https://github.com/LupusMalusDeviant/mod-box",
+  "keywords": [
+    "subagents",
+    "model",
+    "cost",
+    "tokens",
+    "explore"
+  ],
+  "types": "./mods/subagent-saver/types/contract.d.ts",
+  "userConfig": {
+    "model": {
+      "type": "string",
+      "default": "sonnet",
+      "options": [
+        "sonnet",
+        "haiku",
+        "off"
+      ],
+      "title": "Subagent Saver: model",
+      "description": "Model for the listed subagent types. Sonnet searches nearly as well as Opus; Haiku is cheaper but may miss things, which then costs a second search on the main model."
+    },
+    "types": {
+      "type": "string",
+      "default": "Explore",
+      "title": "Subagent Saver: agent types",
+      "description": "Built-in subagent types to route, comma separated."
+    },
+    "language": {
+      "type": "string",
+      "title": "Language",
+      "description": "Language of the texts this mod shows and writes.",
+      "default": "en",
+      "options": [
+        "de",
+        "en"
+      ]
+    }
+  }
+}
