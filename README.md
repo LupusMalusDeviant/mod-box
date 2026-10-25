@@ -4,7 +4,7 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 ![Claude Code 2.1.287+](https://img.shields.io/badge/Claude%20Code-2.1.287%2B-d97757)
 
-**One mod to manage your Claude Code mods: switch, configure and profile them in one window. It ships with my best-of selection of fifteen mods, and takes any others you add.**
+**One mod to manage your Claude Code mods: switch, configure and profile them in one window. It ships with my best-of selection of mods, and takes any others you add.**
 
 Claude Code mods are small hook modules that change how Claude Code behaves and looks: a guard that stops `rm -rf` before it runs, a meter that shows when the prompt cache goes cold, a watcher that follows your CI after every push. There are a lot of good ones scattered over GitHub. The Mod Box collects them, makes them work together, and gives you one place to switch them, configure them and add more.
 
