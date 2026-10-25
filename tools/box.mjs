@@ -740,6 +740,10 @@ const EXPORT_NOTES = {
   'cache-meter': '> **Contains a fork.** The cold-send guard and keep-warm are [Cache Tax](https://github.com/karanb192/cache-tax) by Karan Bansal (MIT), embedded and modified (guard and auto-warm options, a compact-first hint, token usage); see `mods/cache-tax/` and its LICENSE.',
 }
 
+// The listing icon of an exported mod (the box's own is .claude-plugin/icon.png, drawn from
+// docs/images/icon.svg: the pet's cardboard box).
+const EXPORT_ICONS = { pet: '.claude-plugin/icon.png' }
+
 // A picture for the front page of a repo of one mod alone.
 const EXPORT_PICTURES = { pet: 'docs/images/pets.png' }
 
@@ -777,7 +781,7 @@ function exportToBox() {
   const mitText = fs.readFileSync(path.join(ROOT, 'LICENSE'), 'utf8').replace(/\r\n/g, '\n').trimEnd() + '\n'
   const plugins = path.join(ROOT, 'plugins')
   fs.rmSync(plugins, { recursive: true, force: true })
-  const done = exportMods({ ROOT, box, version: manifest.version, mitText, repo: EXPORT_REPO, marketplace: EXPORT_MARKETPLACE, notes: EXPORT_NOTES, companions: EXPORT_COMPANIONS, meta: EXPORT_META, inBox: true }, EXPORTS, ROOT, FORK_ORIGINS)
+  const done = exportMods({ ROOT, box, version: manifest.version, mitText, repo: EXPORT_REPO, marketplace: EXPORT_MARKETPLACE, notes: EXPORT_NOTES, companions: EXPORT_COMPANIONS, meta: EXPORT_META, icons: EXPORT_ICONS, inBox: true }, EXPORTS, ROOT, FORK_ORIGINS)
   const mp = path.join(ROOT, '.claude-plugin', 'marketplace.json')
   const old = readJson(mp)
   const boxEntry = {
@@ -834,7 +838,7 @@ function exportCmd(a) {
   if (a.repo && ids.length === 1) {
     const m = box.mods.find(x => x.id === ids[0] || x.toggle === ids[0])
     if (!m) throw new Error(`no mod ${ids[0]}`)
-    const [done] = exportMods({ ROOT, box, version: readJson(MANIFEST).version, mitText, repo, marketplace: repo.split('/')[1], description: m.description, notes: EXPORT_NOTES, companions: EXPORT_COMPANIONS, meta: EXPORT_META }, ids, out, FORK_ORIGINS)
+    const [done] = exportMods({ ROOT, box, version: readJson(MANIFEST).version, mitText, repo, marketplace: repo.split('/')[1], description: m.description, notes: EXPORT_NOTES, companions: EXPORT_COMPANIONS, meta: EXPORT_META, icons: EXPORT_ICONS }, ids, out, FORK_ORIGINS)
     // The repo's front page is the mod's own README; its links point into the plugin's folder.
     let inner = fs.readFileSync(path.join(out, 'plugins', done.name, 'README.md'), 'utf8')
     // A picture of it under the first paragraph, when the box has one.
@@ -849,7 +853,7 @@ function exportCmd(a) {
     fs.copyFileSync(path.join(out, 'plugins', done.name, 'LICENSE'), path.join(out, 'LICENSE'))
     return { ok: true, out, plugins: [done.name] }
   }
-  const done = exportMods({ ROOT, box, version: readJson(MANIFEST).version, mitText, repo, marketplace: repo.split('/')[1], notes: EXPORT_NOTES, companions: EXPORT_COMPANIONS, meta: EXPORT_META }, ids, out, FORK_ORIGINS)
+  const done = exportMods({ ROOT, box, version: readJson(MANIFEST).version, mitText, repo, marketplace: repo.split('/')[1], notes: EXPORT_NOTES, companions: EXPORT_COMPANIONS, meta: EXPORT_META, icons: EXPORT_ICONS }, ids, out, FORK_ORIGINS)
   const rows = done.map(d => `| [${d.title}](plugins/${d.name}) | ${d.description} | ${d.origin ? `fork of [${d.origin.label}](${d.origin.url})` : d.embedsFork ? 'own, embeds a fork (see its README)' : 'own'} | \`/plugin install ${d.name} --marketplace ${repo}\` |`)
   write(
     path.join(out, 'README.md'),
