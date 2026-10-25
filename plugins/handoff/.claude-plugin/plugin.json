@@ -1,0 +1,50 @@
+{
+  "name": "handoff",
+  "version": "0.6.4",
+  "description": "/handoff writes a handoff note to .claude/handoff.local.md; a new session offers to continue from it.",
+  "author": {
+    "name": "Lupus Malus Deviant"
+  },
+  "license": "MIT",
+  "homepage": "https://github.com/LupusMalusDeviant/mod-box/tree/main/plugins/handoff",
+  "repository": "https://github.com/LupusMalusDeviant/mod-box",
+  "keywords": [
+    "handoff",
+    "session",
+    "notes",
+    "continue"
+  ],
+  "types": "./mods/handoff/types/contract.d.ts",
+  "userConfig": {
+    "auto": {
+      "type": "string",
+      "default": "off",
+      "options": [
+        "off",
+        "on"
+      ],
+      "title": "Handoff Note: automatic",
+      "description": "on: written by itself shortly before the cache goes cold (when the context is large)."
+    },
+    "language": {
+      "type": "string",
+      "title": "Language",
+      "description": "Language of the texts this mod shows and writes.",
+      "default": "en",
+      "options": [
+        "de",
+        "en"
+      ]
+    },
+    "ttlMinutes": {
+      "type": "string",
+      "default": "60",
+      "options": [
+        "60",
+        "5"
+      ],
+      "title": "cache lifetime (minutes)",
+      "description": "60 on a subscription (Pro/Max), 5 for the API's default cache."
+    }
+  }
+}

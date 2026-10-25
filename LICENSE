@@ -1,6 +1,6 @@
 MIT License
 
-Copyright (c) 2026 Lupus Malus Deviant
+Copyright (c) 2026 Eric Lenk (Lupus Malus Deviant)
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -19,8 +19,3 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
-
-The mods copied from other repositories (mods/blast-radius, mods/replay-theater,
-mods/cache-tax, mods/catch-me-up, mods/filetree, mods/next-steps,
-mods/savvy-progress, mods/visible-compact) keep their own licenses, found in
-each folder's LICENSE file.

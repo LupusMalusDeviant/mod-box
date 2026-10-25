@@ -1,0 +1,19 @@
+{
+  "name": "blast-radius",
+  "version": "0.6.4",
+  "description": "Holds risky shell commands (rm -rf, git reset --hard, git clean, force push, migrations) and shows what they would hit.",
+  "author": {
+    "name": "Lupus Malus Deviant"
+  },
+  "license": "Apache-2.0",
+  "homepage": "https://github.com/LupusMalusDeviant/mod-box/tree/main/plugins/blast-radius",
+  "repository": "https://github.com/LupusMalusDeviant/mod-box",
+  "keywords": [
+    "guardrails",
+    "shell",
+    "rm-rf",
+    "git",
+    "destructive-commands",
+    "security"
+  ]
+}

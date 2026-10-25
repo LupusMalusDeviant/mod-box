@@ -1,0 +1,10 @@
+{
+  "modules": [
+    "./entry.ts"
+  ],
+  "hooks": {
+    "PreToolUse": [],
+    "PostToolUse": [],
+    "SessionStart": []
+  }
+}

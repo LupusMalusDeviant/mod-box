@@ -1,0 +1,11 @@
+{
+  "modules": [
+    "./entry.tsx"
+  ],
+  "hooks": {
+    "UserPromptSubmit": [],
+    "Stop": [],
+    "SessionStart": [],
+    "PreCompact": []
+  }
+}

@@ -1,0 +1,52 @@
+{
+  "name": "secret-guard",
+  "version": "0.6.4",
+  "description": "Stops before Claude writes API keys, tokens, private keys or a non-ignored .env into files, git add or commits. Exceptions for test keys and example files: /secret-allow.",
+  "author": {
+    "name": "Lupus Malus Deviant"
+  },
+  "license": "MIT",
+  "homepage": "https://github.com/LupusMalusDeviant/mod-box/tree/main/plugins/secret-guard",
+  "repository": "https://github.com/LupusMalusDeviant/mod-box",
+  "keywords": [
+    "secrets",
+    "api-keys",
+    "env",
+    "git",
+    "guardrails",
+    "security"
+  ],
+  "types": "./mods/secret-guard/types/contract.d.ts",
+  "userConfig": {
+    "mode": {
+      "type": "string",
+      "default": "block",
+      "options": [
+        "block",
+        "warn"
+      ],
+      "title": "Secret Guard: mode",
+      "description": "block: refuse the action. warn: only warn and let it through."
+    },
+    "placeholders": {
+      "type": "string",
+      "default": "on",
+      "options": [
+        "on",
+        "off"
+      ],
+      "title": "Secret Guard: let placeholders pass",
+      "description": "on: values with EXAMPLE, DUMMY, FAKE, PLACEHOLDER, REDACTED, SAMPLE, xxxxxx … are no secret (this covers the AWS documentation keys)."
+    },
+    "language": {
+      "type": "string",
+      "title": "Language",
+      "description": "Language of the texts this mod shows and writes.",
+      "default": "en",
+      "options": [
+        "de",
+        "en"
+      ]
+    }
+  }
+}

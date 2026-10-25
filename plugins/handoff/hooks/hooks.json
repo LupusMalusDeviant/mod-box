@@ -1,0 +1,8 @@
+{
+  "modules": [
+    "./entry.tsx"
+  ],
+  "hooks": {
+    "SessionStart": []
+  }
+}

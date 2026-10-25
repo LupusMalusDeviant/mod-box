@@ -21,7 +21,7 @@ Ask Claude: *"add the mod from owner/repo to the Mod Box"*. The bundled skill `s
 
 ## Standalone plugins
 
-[claude-mods](https://github.com/LupusMalusDeviant/claude-mods) is generated from this repo: `node tools/box.mjs export --out <claude-mods clone>`, then commit and push it there. Change mods here, not there.
+`plugins/` holds each own mod as a plugin of its own (`<name>@mod-box`), listed in `.claude-plugin/marketplace.json` beside the box. `node tools/box.mjs build` writes both, and CI checks they are up to date: change mods in `mods/` and `box.json`, never in `plugins/`. The repo of the Desktop Pet alone is generated with `node tools/box.mjs export pet --repo LupusMalusDeviant/desktop-pet --out <desktop-pet clone>`.
 
 ## Before a pull request
 

@@ -1,0 +1,53 @@
+{
+  "name": "sign-guard",
+  "version": "0.6.4",
+  "description": "Spots Windows builds (cargo --release, dotnet publish, go build, pyinstaller, tauri, electron-builder, msbuild) and signs the new .exe/.msi/.msix with your own signing script.",
+  "author": {
+    "name": "Lupus Malus Deviant"
+  },
+  "license": "MIT",
+  "homepage": "https://github.com/LupusMalusDeviant/mod-box/tree/main/plugins/sign-guard",
+  "repository": "https://github.com/LupusMalusDeviant/mod-box",
+  "keywords": [
+    "code-signing",
+    "windows",
+    "build",
+    "exe",
+    "msi"
+  ],
+  "types": "./mods/sign-guard/types/contract.d.ts",
+  "userConfig": {
+    "mode": {
+      "type": "string",
+      "default": "ask",
+      "options": [
+        "ask",
+        "auto"
+      ],
+      "title": "Sign Guard: mode",
+      "description": "ask: offer a sign button. auto: sign right away."
+    },
+    "script": {
+      "type": "string",
+      "default": "",
+      "title": "Sign Guard: script",
+      "description": "PowerShell script called as <script> -Exe <file>. Empty: ~/.claude/skills/sign-binary/sign.ps1"
+    },
+    "subject": {
+      "type": "string",
+      "default": "",
+      "title": "Sign Guard: certificate",
+      "description": "Files already signed by a certificate whose subject contains this are skipped. Empty: any validly signed file is skipped."
+    },
+    "language": {
+      "type": "string",
+      "title": "Language",
+      "description": "Language of the texts this mod shows and writes.",
+      "default": "en",
+      "options": [
+        "de",
+        "en"
+      ]
+    }
+  }
+}

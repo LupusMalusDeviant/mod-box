@@ -1,0 +1,25 @@
+import { describe, expect, mock, test } from 'claude-code/testing'
+
+describe('standalone', () => {
+  test('starts and draws above the prompt', async ($: any, on: any) => {
+    mock.clock(on)
+    mock.store(on)
+    on('config.list', () => ({ value: [] }))
+    on('env.get', () => ({ value: undefined }))
+    on('ui.status', () => ({ value: undefined }))
+    on('ui.toast', () => ({ value: undefined }))
+    on('ui.open', () => ({ value: { isPlaced: false } }))
+    on('command.register', (_$: any, e: any) => ({ value: { command: e.name } }))
+    on('session.cwd', () => ({ value: '/w' }))
+    on('session.usage', () => ({ value: { startedAt: 0, context: { tokens: 1000, window: 200000, percent: 1 }, rateLimits: [] } }))
+    on('fs.read', () => ({ deny: 'none' }))
+    on('fs.exists', () => ({ value: false }))
+    on('fs.list', () => ({ value: [] }))
+    on('process.run', () => ({ value: { exitCode: 1, stdout: '', stderr: '' } }))
+    on('session.start', (_$: any, e: any) => ({ sessionId: 's', cwd: e.cwd }))
+    on('ui.render', ($: any, e: any) => $.ui.resolve(e).Text({ children: '' }))
+    await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/w' })
+    const ui = await $.ui.mount({ plugin: 'screen-mask', surface: 'terminal', component: 'AbovePrompt', props: { hasSurvey: false, isWorking: false, maxRows: 10, bodyColumns: 120 } })
+    expect(await ui.drawn()).toBeDefined()
+  })
+})
