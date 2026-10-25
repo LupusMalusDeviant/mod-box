@@ -1,6 +1,6 @@
 {
   "name": "cache-meter",
-  "version": "0.6.4",
+  "version": "0.7.0",
   "description": "Band: time left on the warm cache, hit rate, context as weather with its trend over 12 turns, plan limits, compact and keep-warm buttons; stops one send to a cold cache and names its cost (Cache Tax runs inside).",
   "author": {
     "name": "Lupus Malus Deviant"

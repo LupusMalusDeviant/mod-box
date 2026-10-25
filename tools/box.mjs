@@ -740,6 +740,10 @@ const EXPORT_NOTES = {
   'cache-meter': '> **Contains a fork.** The cold-send guard and keep-warm are [Cache Tax](https://github.com/karanb192/cache-tax) by Karan Bansal (MIT), embedded and modified (guard and auto-warm options, a compact-first hint, token usage); see `mods/cache-tax/` and its LICENSE.',
 }
 
+// The listing icon of an exported mod (the box's own is .claude-plugin/icon.png, drawn from
+// docs/images/icon.svg: the pet's cardboard box).
+const EXPORT_ICONS = { pet: '.claude-plugin/icon.png' }
+
 // A picture for the front page of a repo of one mod alone.
 const EXPORT_PICTURES = { pet: 'docs/images/pets.png' }
 
@@ -777,7 +781,7 @@ function exportToBox() {
   const mitText = fs.readFileSync(path.join(ROOT, 'LICENSE'), 'utf8').replace(/\r\n/g, '\n').trimEnd() + '\n'
   const plugins = path.join(ROOT, 'plugins')
   fs.rmSync(plugins, { recursive: true, force: true })
-  const done = exportMods({ ROOT, box, version: manifest.version, mitText, repo: EXPORT_REPO, marketplace: EXPORT_MARKETPLACE, notes: EXPORT_NOTES, companions: EXPORT_COMPANIONS, meta: EXPORT_META, inBox: true }, EXPORTS, ROOT, FORK_ORIGINS)
+  const done = exportMods({ ROOT, box, version: manifest.version, mitText, repo: EXPORT_REPO, marketplace: EXPORT_MARKETPLACE, notes: EXPORT_NOTES, companions: EXPORT_COMPANIONS, meta: EXPORT_META, icons: EXPORT_ICONS, inBox: true }, EXPORTS, ROOT, FORK_ORIGINS)
   const mp = path.join(ROOT, '.claude-plugin', 'marketplace.json')
   const old = readJson(mp)
   const boxEntry = {
@@ -834,7 +838,7 @@ function exportCmd(a) {
   if (a.repo && ids.length === 1) {
     const m = box.mods.find(x => x.id === ids[0] || x.toggle === ids[0])
     if (!m) throw new Error(`no mod ${ids[0]}`)
-    const [done] = exportMods({ ROOT, box, version: readJson(MANIFEST).version, mitText, repo, marketplace: repo.split('/')[1], description: m.description, notes: EXPORT_NOTES, companions: EXPORT_COMPANIONS, meta: EXPORT_META }, ids, out, FORK_ORIGINS)
+    const [done] = exportMods({ ROOT, box, version: readJson(MANIFEST).version, mitText, repo, marketplace: repo.split('/')[1], description: m.description, notes: EXPORT_NOTES, companions: EXPORT_COMPANIONS, meta: EXPORT_META, icons: EXPORT_ICONS }, ids, out, FORK_ORIGINS)
     // The repo's front page is the mod's own README; its links point into the plugin's folder.
     let inner = fs.readFileSync(path.join(out, 'plugins', done.name, 'README.md'), 'utf8')
     // A picture of it under the first paragraph, when the box has one.
@@ -849,7 +853,7 @@ function exportCmd(a) {
     fs.copyFileSync(path.join(out, 'plugins', done.name, 'LICENSE'), path.join(out, 'LICENSE'))
     return { ok: true, out, plugins: [done.name] }
   }
-  const done = exportMods({ ROOT, box, version: readJson(MANIFEST).version, mitText, repo, marketplace: repo.split('/')[1], notes: EXPORT_NOTES, companions: EXPORT_COMPANIONS, meta: EXPORT_META }, ids, out, FORK_ORIGINS)
+  const done = exportMods({ ROOT, box, version: readJson(MANIFEST).version, mitText, repo, marketplace: repo.split('/')[1], notes: EXPORT_NOTES, companions: EXPORT_COMPANIONS, meta: EXPORT_META, icons: EXPORT_ICONS }, ids, out, FORK_ORIGINS)
   const rows = done.map(d => `| [${d.title}](plugins/${d.name}) | ${d.description} | ${d.origin ? `fork of [${d.origin.label}](${d.origin.url})` : d.embedsFork ? 'own, embeds a fork (see its README)' : 'own'} | \`/plugin install ${d.name} --marketplace ${repo}\` |`)
   write(
     path.join(out, 'README.md'),
@@ -1583,18 +1587,27 @@ function updateCmd(a) {
 // Claude Code (especially the desktop app) loads the box from a copy under
 // ~/.claude/plugins/cache/<marketplace>/<plugin>/<version>, created at install time.
 // For changes to arrive: bump the version, build, check, `claude plugin update`.
-function releaseCmd() {
+function releaseCmd(a) {
   // The box is loaded straight from this folder (CLAUDE_CODE_PLUGIN_DIRS); a running session reloads
   // it by itself. A marketplace install would run a copy instead and lose the /config rows.
-  build()
-  const v = validate()
-  if (!v.ok) throw new Error(t('Prüfung fehlgeschlagen:\n', 'validation failed:\n') + errorsOf(v.text))
+  // The version is raised first (the patch, or to `release <x.y.z>`), so build writes it into the
+  // standalone plugins and the marketplace too.
   const manifest = readJson(MANIFEST)
-  const parts = String(manifest.version ?? '0.1.0').split('.').map(n => Number(n) || 0)
+  const before = manifest.version
+  const wanted = a?._?.[1] ? String(a._[1]).replace(/^v/, '') : null
+  if (wanted && !/^\d+\.\d+\.\d+$/.test(wanted)) throw new Error(t(`keine Version: ${wanted}`, `not a version: ${wanted}`))
+  const parts = String(before ?? '0.1.0').split('.').map(n => Number(n) || 0)
   while (parts.length < 3) parts.push(0)
   parts[2] += 1
-  manifest.version = parts.join('.')
+  manifest.version = wanted ?? parts.join('.')
   writeJson(MANIFEST, manifest)
+  build()
+  const v = validate()
+  if (!v.ok) {
+    writeJson(MANIFEST, { ...readJson(MANIFEST), version: before })
+    build()
+    throw new Error(t('Prüfung fehlgeschlagen:\n', 'validation failed:\n') + errorsOf(v.text))
+  }
   return { ok: true, version: manifest.version, note: t('Geladen wird direkt aus diesem Ordner; laufende Sitzungen laden von selbst neu (sonst Claude neu starten).', 'Loaded straight from this folder; running sessions reload by themselves (otherwise restart Claude).') }
 }
 
@@ -1637,7 +1650,7 @@ if (isMain) {
     else if (cmd === 'remove') result = remove(a._[1])
     else if (cmd === 'validate') result = validate()
     else if (cmd === 'snapshot') result = snapshotCmd(a)
-    else if (cmd === 'release') result = releaseCmd()
+    else if (cmd === 'release') result = releaseCmd(a)
     else if (cmd === 'updates') result = updatesCmd(a)
     else if (cmd === 'diff') result = diffCmd(a)
     else if (cmd === 'update') result = updateCmd(a)

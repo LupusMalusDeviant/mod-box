@@ -267,6 +267,8 @@ export function exportMods(ctx, ids, out, origins = {}) {
       ...(options.length ? { userConfig: Object.fromEntries(options) } : {}),
     }
     write(path.join(dir, '.claude-plugin', 'plugin.json'), JSON.stringify(manifest, null, 2) + '\n')
+    const icon = (ctx.icons ?? {})[m.id]
+    if (icon) fs.copyFileSync(path.join(ROOT, icon), path.join(dir, '.claude-plugin', 'icon.png'))
     const events = standardEvents(dir)
     const hooks = { modules: [m.band ? './entry.tsx' : './entry.ts'], ...(events.length ? { hooks: Object.fromEntries(events.map(e => [e, []])) } : {}) }
     write(path.join(dir, 'hooks', 'hooks.json'), JSON.stringify(hooks, null, 2) + '\n')
