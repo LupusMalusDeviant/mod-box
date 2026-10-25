@@ -10,7 +10,7 @@
       "name": "mod-box",
       "source": "./",
       "description": "21 Claude Code mods in one plugin, each switchable on its own; /mod-box opens the window to switch, configure and import mods.",
-      "version": "0.6.4",
+      "version": "0.7.0",
       "author": {
         "name": "Lupus Malus Deviant"
       },
@@ -40,7 +40,7 @@
       "name": "cache-meter",
       "source": "./plugins/cache-meter",
       "description": "Band: time left on the warm cache, hit rate, context as weather with its trend over 12 turns, plan limits, compact and keep-warm buttons; stops one send to a cold cache and names its cost (Cache Tax runs inside).",
-      "version": "0.6.4",
+      "version": "0.7.0",
       "author": {
         "name": "Lupus Malus Deviant"
       },
@@ -70,7 +70,7 @@
       "name": "subagent-saver",
       "source": "./plugins/subagent-saver",
       "description": "Search subagents (Explore) that were given no model of their own run on a cheaper one instead of the main model. An explicit model, forks, teammates and plugin agents stay untouched. With Claude Code's own CLAUDE_CODE_SUBAGENT_MODEL set (for all subagents), the mod stays out.",
-      "version": "0.6.4",
+      "version": "0.7.0",
       "author": {
         "name": "Lupus Malus Deviant"
       },
@@ -96,7 +96,7 @@
       "name": "read-guard",
       "source": "./plugins/read-guard",
       "description": "Holds a whole-file Read (no offset/limit) of a file above the limit, a lockfile, minified code or a source map, and the same via cat, type or Get-Content in the shell; tells Claude the size, a token estimate and a better way (Grep, offset/limit). A second try at the same file goes through, and so does a Read with allow_large. Claude Code itself stops only at about 25,000 tokens.",
-      "version": "0.6.4",
+      "version": "0.7.0",
       "author": {
         "name": "Lupus Malus Deviant"
       },
@@ -122,7 +122,7 @@
       "name": "secret-guard",
       "source": "./plugins/secret-guard",
       "description": "Stops before Claude writes API keys, tokens, private keys or a non-ignored .env into files, git add or commits. Exceptions for test keys and example files: /secret-allow.",
-      "version": "0.6.4",
+      "version": "0.7.0",
       "author": {
         "name": "Lupus Malus Deviant"
       },
@@ -150,7 +150,7 @@
       "name": "screen-mask",
       "source": "./plugins/screen-mask",
       "description": "For screen sharing and recordings: hides API keys, tokens, private keys, e-mail addresses, IP addresses, your login name in paths and any names you list. Only the display changes; Claude still reads the original. Nothing leaves the machine. /mask switches it.",
-      "version": "0.6.4",
+      "version": "0.7.0",
       "author": {
         "name": "Lupus Malus Deviant"
       },
@@ -176,7 +176,7 @@
       "name": "package-guard",
       "source": "./plugins/package-guard",
       "description": "Before Claude installs or runs a package (npm, pnpm, yarn, bun, npx, pip, uv, poetry, pipx, cargo), asks the public registry about it. Holds the command when the package does not exist (a made-up name), is under 14 days old, or looks like a well-known package and is young or thin (typosquatting). Allow in the band or with /pkg-allow.",
-      "version": "0.6.4",
+      "version": "0.7.0",
       "author": {
         "name": "Lupus Malus Deviant"
       },
@@ -206,7 +206,7 @@
       "name": "ci-watch",
       "source": "./plugins/ci-watch",
       "description": "After every git push, follows the GitHub Actions runs (via gh) until they finish; with an open pull request (also after gh pr create, or /ci pr <nr>) all its checks, other CI included, and whether it is ready to merge. On red it shows the failed step log.",
-      "version": "0.6.4",
+      "version": "0.7.0",
       "author": {
         "name": "Lupus Malus Deviant"
       },
@@ -232,7 +232,7 @@
       "name": "sign-guard",
       "source": "./plugins/sign-guard",
       "description": "Spots Windows builds (cargo --release, dotnet publish, go build, pyinstaller, tauri, electron-builder, msbuild) and signs the new .exe/.msi/.msix with your own signing script.",
-      "version": "0.6.4",
+      "version": "0.7.0",
       "author": {
         "name": "Lupus Malus Deviant"
       },
@@ -258,7 +258,7 @@
       "name": "handoff",
       "source": "./plugins/handoff",
       "description": "/handoff writes a handoff note to .claude/handoff.local.md; a new session offers to continue from it.",
-      "version": "0.6.4",
+      "version": "0.7.0",
       "author": {
         "name": "Lupus Malus Deviant"
       },
@@ -282,7 +282,7 @@
       "name": "pet",
       "source": "./plugins/pet",
       "description": "A desktop pet and little companion on the Windows desktop, always on top and in front of borderless games: a cardboard box or one of twelve figures (cat, dog, fox, bunny, hamster, owl, penguin, frog, axolotl, dragon, robot, ghost; cat, dog and bunny in nine coats). It says in a speech bubble what Claude is doing and sums up each answer; Claude's questions, Next Steps' suggestions and reply options are buttons in the bubble, and with typing on a hotkey opens a box to answer without leaving the game. A click on the pet shows the last answer in short; an unanswered bubble shrinks to one line. Optionally one pet per active session, each with its own figure and a name tag, asleep while its prompt cache is cold; it warns before the cache goes cold, and its menu keeps the cache warm (1 h, 3 h, always, off). Other mods at the pet: a command Blast Radius holds, a task from Human in the Loop (done or an option with one click) and the CI Watch result come up in the bubble, and stand in short beside its name. Built once with the C# compiler that ships with Windows and signed when a signing script is there. /pet shows it, /pet cat calico picks a figure, /pet stop sends it off.",
-      "version": "0.6.4",
+      "version": "0.7.0",
       "author": {
         "name": "Lupus Malus Deviant"
       },
@@ -316,7 +316,7 @@
       "name": "blast-radius",
       "source": "./plugins/blast-radius",
       "description": "Holds risky shell commands (rm -rf, git reset --hard, git clean, force push, migrations) and shows what they would hit.",
-      "version": "0.6.4",
+      "version": "0.7.0",
       "author": {
         "name": "Lupus Malus Deviant"
       },

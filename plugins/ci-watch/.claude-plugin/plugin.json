@@ -1,6 +1,6 @@
 {
   "name": "ci-watch",
-  "version": "0.6.4",
+  "version": "0.7.0",
   "description": "After every git push, follows the GitHub Actions runs (via gh) until they finish; with an open pull request (also after gh pr create, or /ci pr <nr>) all its checks, other CI included, and whether it is ready to merge. On red it shows the failed step log.",
   "author": {
     "name": "Lupus Malus Deviant"

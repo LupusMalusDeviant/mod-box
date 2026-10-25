@@ -1,6 +1,6 @@
 {
   "name": "blast-radius",
-  "version": "0.6.4",
+  "version": "0.7.0",
   "description": "Holds risky shell commands (rm -rf, git reset --hard, git clean, force push, migrations) and shows what they would hit.",
   "author": {
     "name": "Lupus Malus Deviant"

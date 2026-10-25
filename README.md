@@ -224,7 +224,7 @@ The full matrix of what is handled how, before and after, the platform limits an
 
 - **`box.json`** is the single source: mods, switches, options (English, with `_de` translations), groups, state prefixes and profiles.
 - **`node tools/box.mjs build`** generates `hooks/register.ts`, the type contracts, the `userConfig` in `.claude-plugin/plugin.json` and the window's catalog. Don't edit those by hand.
-- **`tools/box.mjs`** also has `export <id>... --out <folder>` (standalone plugins as a marketplace repo of their own; `build` writes them into `plugins/` here), `catalog`, `inspect`, `import`, `reimport`, `analyze <id|dir>`, `remove`, `validate`, `updates [<id>]`, `diff <id>`, `update <id>`, `native <action>` (list, details, options, set, install, adopt, trust, untrust, enable, disable, update, uninstall, profile) and `release` (build, validate, raise the version). The window calls exactly these.
+- **`tools/box.mjs`** also has `export <id>... --out <folder>` (standalone plugins as a marketplace repo of their own; `build` writes them into `plugins/` here), `catalog`, `inspect`, `import`, `reimport`, `analyze <id|dir>`, `remove`, `validate`, `updates [<id>]`, `diff <id>`, `update <id>`, `native <action>` (list, details, options, set, install, adopt, trust, untrust, enable, disable, update, uninstall, profile) and `release [<x.y.z>]` (raise the version, build, validate). The window calls exactly these.
 
 An imported mod is rewritten so the box can drive it like the others:
 

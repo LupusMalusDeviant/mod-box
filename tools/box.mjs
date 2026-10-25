@@ -1583,18 +1583,27 @@ function updateCmd(a) {
 // Claude Code (especially the desktop app) loads the box from a copy under
 // ~/.claude/plugins/cache/<marketplace>/<plugin>/<version>, created at install time.
 // For changes to arrive: bump the version, build, check, `claude plugin update`.
-function releaseCmd() {
+function releaseCmd(a) {
   // The box is loaded straight from this folder (CLAUDE_CODE_PLUGIN_DIRS); a running session reloads
   // it by itself. A marketplace install would run a copy instead and lose the /config rows.
-  build()
-  const v = validate()
-  if (!v.ok) throw new Error(t('Prüfung fehlgeschlagen:\n', 'validation failed:\n') + errorsOf(v.text))
+  // The version is raised first (the patch, or to `release <x.y.z>`), so build writes it into the
+  // standalone plugins and the marketplace too.
   const manifest = readJson(MANIFEST)
-  const parts = String(manifest.version ?? '0.1.0').split('.').map(n => Number(n) || 0)
+  const before = manifest.version
+  const wanted = a?._?.[1] ? String(a._[1]).replace(/^v/, '') : null
+  if (wanted && !/^\d+\.\d+\.\d+$/.test(wanted)) throw new Error(t(`keine Version: ${wanted}`, `not a version: ${wanted}`))
+  const parts = String(before ?? '0.1.0').split('.').map(n => Number(n) || 0)
   while (parts.length < 3) parts.push(0)
   parts[2] += 1
-  manifest.version = parts.join('.')
+  manifest.version = wanted ?? parts.join('.')
   writeJson(MANIFEST, manifest)
+  build()
+  const v = validate()
+  if (!v.ok) {
+    writeJson(MANIFEST, { ...readJson(MANIFEST), version: before })
+    build()
+    throw new Error(t('Prüfung fehlgeschlagen:\n', 'validation failed:\n') + errorsOf(v.text))
+  }
   return { ok: true, version: manifest.version, note: t('Geladen wird direkt aus diesem Ordner; laufende Sitzungen laden von selbst neu (sonst Claude neu starten).', 'Loaded straight from this folder; running sessions reload by themselves (otherwise restart Claude).') }
 }
 
@@ -1637,7 +1646,7 @@ if (isMain) {
     else if (cmd === 'remove') result = remove(a._[1])
     else if (cmd === 'validate') result = validate()
     else if (cmd === 'snapshot') result = snapshotCmd(a)
-    else if (cmd === 'release') result = releaseCmd()
+    else if (cmd === 'release') result = releaseCmd(a)
     else if (cmd === 'updates') result = updatesCmd(a)
     else if (cmd === 'diff') result = diffCmd(a)
     else if (cmd === 'update') result = updateCmd(a)

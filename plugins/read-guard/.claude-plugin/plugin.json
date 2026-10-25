@@ -1,6 +1,6 @@
 {
   "name": "read-guard",
-  "version": "0.6.4",
+  "version": "0.7.0",
   "description": "Holds a whole-file Read (no offset/limit) of a file above the limit, a lockfile, minified code or a source map, and the same via cat, type or Get-Content in the shell; tells Claude the size, a token estimate and a better way (Grep, offset/limit). A second try at the same file goes through, and so does a Read with allow_large. Claude Code itself stops only at about 25,000 tokens.",
   "author": {
     "name": "Lupus Malus Deviant"

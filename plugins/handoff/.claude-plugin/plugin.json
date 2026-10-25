@@ -1,6 +1,6 @@
 {
   "name": "handoff",
-  "version": "0.6.4",
+  "version": "0.7.0",
   "description": "/handoff writes a handoff note to .claude/handoff.local.md; a new session offers to continue from it.",
   "author": {
     "name": "Lupus Malus Deviant"

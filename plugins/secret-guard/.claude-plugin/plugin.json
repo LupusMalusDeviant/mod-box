@@ -1,6 +1,6 @@
 {
   "name": "secret-guard",
-  "version": "0.6.4",
+  "version": "0.7.0",
   "description": "Stops before Claude writes API keys, tokens, private keys or a non-ignored .env into files, git add or commits. Exceptions for test keys and example files: /secret-allow.",
   "author": {
     "name": "Lupus Malus Deviant"

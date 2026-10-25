@@ -1,7 +1,7 @@
 {
   "name": "mod-box",
   "private": true,
-  "description": "Fifteen Claude Code mods in one plugin, each switchable, with a window to manage and import mods.",
+  "description": "21 Claude Code mods in one plugin, each switchable, with a window to manage and import mods; each own mod is also installable on its own.",
   "license": "MIT",
   "engines": {
     "node": ">=26"

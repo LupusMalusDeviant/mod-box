@@ -1,6 +1,6 @@
 {
   "name": "subagent-saver",
-  "version": "0.6.4",
+  "version": "0.7.0",
   "description": "Search subagents (Explore) that were given no model of their own run on a cheaper one instead of the main model. An explicit model, forks, teammates and plugin agents stay untouched. With Claude Code's own CLAUDE_CODE_SUBAGENT_MODEL set (for all subagents), the mod stays out.",
   "author": {
     "name": "Lupus Malus Deviant"
