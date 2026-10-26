@@ -132,6 +132,14 @@ The same window runs in terminal Claude Code, as a side pane next to the convers
 | `catchMeUp` | Catch Me Up | off | Live summary of the session (`/catch-me-up`), kept up after turns with tools. Claude Code's built-in recap (`/recap`) is one short note when you come back; this pane stays open. | Haiku calls after turns |
 | `codebaseMap` | Codebase Map | off | Feature map from `docs/blueprints` with live highlighting of the features Claude edits, a freshness band and a `CLAUDE.md` pointer; mapper instructions with machine-checked edges load only when you ask for blueprint work (`/codebase-map`). In the prompt, `@` and part of a feature name offers its blueprint to attach, and an `@file` gets one line on the feature it belongs to. | only blueprint runs you ask for; about 500 tokens per session for the `CLAUDE.md` pointer |
 
+### Managed natively
+
+These stay plugins of their own (see [Any plugin](#any-plugin-integrated-managed-natively-or-not-supported)); the box installs, switches and configures them in the **Sources** tab. They are installed switched off and untrusted.
+
+| Plugin | Group | What it does | Costs tokens? |
+|---|---|---|---|
+| `relay@mod-box-local` | context | The main agent hands tasks to persistent worker sessions (`claude -p`, one session per role, each with its own context and the paths it owns) and gets compact relay packets back: status, decisions, changed files, open questions, exact values; the full answers stay on disk (`.relay/runs/`). Tools `worker_send`, `worker_status`, `worker_expand`; skill `relay-orchestrator`; roles in `.relay/roles.json`; 18 options (model, effort, budget per run, parallel workers, timeout, allowed tools, ownership guard, packet delivery). Needs the `claude` CLI on PATH. Installed with `node tools/box.mjs native install relay --dir <relay folder>`. | yes: each worker run is a full Claude Code session (budget per run, default 2 USD); a Haiku call when a worker forgets its packet; the skill about 220 tokens per session, about 2.2k when used |
+
 <p align="center"><img src="docs/images/cache-meter.png" alt="Cache Meter opened: commands, token cost and options" width="500"></p>
 
 ## Commands
@@ -285,7 +293,7 @@ These mods come from other repositories and **were modified for the Mod Box**. E
 | Human in the Loop | [tzafrir/human-in-the-loop](https://github.com/tzafrir/human-in-the-loop) | Tzafrir Rehan | MIT | state, store key and tool names rewritten; its own prompts known by the box's plugin name |
 | Prompt Rail | [oikon48/prompt-rail](https://github.com/oikon48/prompt-rail) | oikon48 | MIT | state and store keys rewritten; presses and focus told apart from other mods by element key; mode setting under the box |
 
-Heads-up was retired in favour of "You Should Know", which ships with Claude Code; the window switches it under **Built into Claude Code**. **Cache Meter, Subagent Saver, Read Guard, Secret Guard, Screen Mask, Package Guard, Desktop Pet, CI Watch, Sign Guard, Handoff Note**, the window and the tools were written for this box. The context trend in the Cache Meter takes its idea from token-weather in [anthropics/claude-code-playground](https://github.com/anthropics/claude-code-playground); the code is the box's own.
+Heads-up was retired in favour of "You Should Know", which ships with Claude Code; the window switches it under **Built into Claude Code**. **Cache Meter, Subagent Saver, Read Guard, Secret Guard, Screen Mask, Package Guard, Desktop Pet, CI Watch, Sign Guard, Handoff Note**, the window and the tools were written for this box. **Relay** (managed natively) is also my own plugin, MIT. The context trend in the Cache Meter takes its idea from token-weather in [anthropics/claude-code-playground](https://github.com/anthropics/claude-code-playground); the code is the box's own.
 
 ## License
 
