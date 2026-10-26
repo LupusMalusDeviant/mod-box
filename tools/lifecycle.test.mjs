@@ -10,10 +10,11 @@ import os from 'node:os'
 import path from 'node:path'
 import { after, before, describe, test } from 'node:test'
 import { fileURLToPath } from 'node:url'
+import { fixturePlugins } from './fixture-plugins.mjs'
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
-const FIX = path.join(REPO, 'tools', 'fixtures', 'plugins')
 let box // the sandbox copy
+let FIX // the fixture plugins, with their real .claude-plugin layout
 
 function copyRepo(to) {
   fs.cpSync(REPO, to, { recursive: true, filter: src => !/[\\/](\.git|node_modules)([\\/]|$)/.test(src.slice(REPO.length)) })
@@ -50,6 +51,7 @@ function stateHash() {
 before(() => {
   box = fs.mkdtempSync(path.join(os.tmpdir(), 'mbx-'))
   copyRepo(box)
+  FIX = fixturePlugins(path.join(box, 'fx'))
 })
 after(() => fs.rmSync(box, { recursive: true, force: true }))
 

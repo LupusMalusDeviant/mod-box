@@ -264,7 +264,7 @@ node --test tools/box.test.mjs
 node --test tools/lifecycle.test.mjs tools/native.test.mjs
 ```
 
-The last two run the whole lifecycle of foreign plugins against fixtures in `tools/fixtures/plugins`: a throwaway copy of the box, and a throwaway Claude Code profile (`CLAUDE_CONFIG_DIR`), so your own setup is never touched.
+The last two run the whole lifecycle of foreign plugins against fixtures in `tools/fixtures/plugins` (manifests in `claude-plugin/` without the dot, so mod indexes do not list them; `tools/fixture-plugins.mjs` restores the layout in a temp copy): a throwaway copy of the box, and a throwaway Claude Code profile (`CLAUDE_CONFIG_DIR`), so your own setup is never touched.
 
 ## Credits
 
