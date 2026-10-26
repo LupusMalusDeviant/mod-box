@@ -1,6 +1,9 @@
 // node --test tools/
 import assert from 'node:assert/strict'
+import fs from 'node:fs'
+import path from 'node:path'
 import { test } from 'node:test'
+import { fileURLToPath } from 'node:url'
 
 import { analyze, errorsOf, parseLink, prefixMembers, rewrite, ruleSays } from './box.mjs'
 
@@ -188,6 +191,19 @@ test('inspect: a dual license as LICENSE-MIT and LICENSE-APACHE counts, the MIT 
 
 // Claude Code 2.1.287 refuses a whole hooks module when a function handed $ is declared a second
 // time in the same file (a local const of the same name included): the box would not load (#19).
+test('marketplace: every plugin in plugins/ is there with its own name and version', () => {
+  const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
+  const mp = JSON.parse(fs.readFileSync(path.join(root, '.claude-plugin', 'marketplace.json'), 'utf8'))
+  const listed = mp.plugins.filter(p => p.source.startsWith('./plugins/'))
+  assert.deepEqual(listed.map(p => p.source.slice('./plugins/'.length)).sort(), fs.readdirSync(path.join(root, 'plugins')).sort())
+  for (const p of listed) {
+    const pj = JSON.parse(fs.readFileSync(path.join(root, p.source, '.claude-plugin', 'plugin.json'), 'utf8'))
+    assert.equal(pj.name, p.name)
+    assert.equal(pj.version, p.version)
+  }
+  assert.ok(listed.some(p => p.name === 'relay'), 'relay ships in the marketplace')
+})
+
 test('no function handed $ is declared twice in a hooks file', async () => {
   const fs = await import('node:fs')
   const path = await import('node:path')

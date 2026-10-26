@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- **Relay** ships in this marketplace: `/plugin install relay@mod-box`. Its source lives in `plugins/relay/`; `build` keeps plugins listed in `SHIPPED` (`tools/box.mjs`) as they are and only adds them to the marketplace and the README.
+
 ## 0.7.1
 
 - **Relay** (0.3.0, MIT), managed natively as `relay@mod-box-local`: the main agent dispatches tasks to persistent worker sessions and gets compact relay packets back. It ships a skill, so it stays a plugin of its own; installed switched off and untrusted, group *context*, costs tokens with every worker run.
