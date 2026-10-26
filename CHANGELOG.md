@@ -1,8 +1,9 @@
 # Changelog
 
-## Unreleased
+## 0.7.1
 
 - **Relay** (0.3.0, MIT), managed natively as `relay@mod-box-local`: the main agent dispatches tasks to persistent worker sessions and gets compact relay packets back. It ships a skill, so it stays a plugin of its own; installed switched off and untrusted, group *context*, costs tokens with every worker run.
+- The test fixtures in `tools/fixtures/plugins` keep their manifests in `claude-plugin/` (no dot), so mod indexes such as modscode.com no longer list them as mods; `tools/fixture-plugins.mjs` restores the layout in a temp copy for the tests.
 
 ## 0.7.0
 
