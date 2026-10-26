@@ -4,7 +4,7 @@
     "name": "Lupus Malus Deviant",
     "url": "https://github.com/LupusMalusDeviant"
   },
-  "description": "The Mod Box (all mods in one plugin, with a window to switch, configure and import them) and its own mods one by one: Cache Meter, Subagent Saver, Read Guard, Secret Guard, Screen Mask, Package Guard, CI Watch, Sign Guard, Handoff Note, Desktop Pet, Blast Radius.",
+  "description": "The Mod Box (all mods in one plugin, with a window to switch, configure and import them), its own mods one by one (Cache Meter, Subagent Saver, Read Guard, Secret Guard, Screen Mask, Package Guard, CI Watch, Sign Guard, Handoff Note, Desktop Pet, Blast Radius) and plugins it manages natively (Relay).",
   "plugins": [
     {
       "name": "mod-box",
@@ -338,6 +338,36 @@
         "git",
         "destructive-commands",
         "security"
+      ]
+    },
+    {
+      "name": "relay",
+      "source": "./plugins/relay",
+      "description": "Main agent dispatches tasks to persistent Claude Code worker sessions via CLI; workers report back as compact, lossless-on-essentials relay packets.",
+      "version": "0.3.0",
+      "author": {
+        "name": "E. Lenk"
+      },
+      "license": "MIT",
+      "homepage": "https://github.com/LupusMalusDeviant/mod-box/tree/main/plugins/relay",
+      "category": "productivity",
+      "keywords": [
+        "orchestration",
+        "workers",
+        "sessions",
+        "agents",
+        "parallel",
+        "context",
+        "handoff"
+      ],
+      "tags": [
+        "orchestration",
+        "workers",
+        "sessions",
+        "agents",
+        "parallel",
+        "context",
+        "handoff"
       ]
     }
   ]

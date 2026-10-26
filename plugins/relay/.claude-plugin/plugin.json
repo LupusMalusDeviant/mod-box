@@ -1,0 +1,142 @@
+{
+  "name": "relay",
+  "version": "0.3.0",
+  "author": {
+    "name": "E. Lenk"
+  },
+  "license": "MIT",
+  "description": "Main agent dispatches tasks to persistent Claude Code worker sessions via CLI; workers report back as compact, lossless-on-essentials relay packets.",
+  "userConfig": {
+    "claudeBin": {
+      "type": "string",
+      "title": "Claude executable",
+      "description": "Executable used to start worker sessions (no shell).",
+      "default": "claude"
+    },
+    "permissionMode": {
+      "type": "string",
+      "title": "Worker permission mode",
+      "description": "Permission mode passed to worker sessions.",
+      "options": [
+        "default",
+        "acceptEdits",
+        "plan",
+        "bypassPermissions"
+      ],
+      "default": "acceptEdits"
+    },
+    "workerModel": {
+      "type": "string",
+      "title": "Worker model",
+      "description": "Default model for workers; empty uses the CLI default. Roles may override it.",
+      "default": "claude-sonnet-5-5"
+    },
+    "workerEffort": {
+      "type": "string",
+      "title": "Worker effort",
+      "description": "Default effort for workers; roles may override it.",
+      "options": [
+        "default",
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max"
+      ],
+      "default": "medium"
+    },
+    "maxBudgetUsd": {
+      "type": "number",
+      "title": "Budget per run (USD)",
+      "description": "Upper cost limit for one worker run; 0 means no limit.",
+      "default": 2
+    },
+    "maxParallel": {
+      "type": "number",
+      "title": "Parallel workers",
+      "description": "How many workers run at once; further tasks wait in the queue.",
+      "default": 3
+    },
+    "runTimeoutMin": {
+      "type": "number",
+      "title": "Timeout per run (minutes)",
+      "description": "A worker still running after this is stopped and reported as failed or partial; 0 means no timeout.",
+      "default": 30
+    },
+    "allowedTools": {
+      "type": "string",
+      "title": "Allowed tools",
+      "description": "Comma-separated tool rules workers may use without asking, e.g. Read, Grep, Bash(git status:*). Roles may override it.",
+      "default": ""
+    },
+    "disallowedTools": {
+      "type": "string",
+      "title": "Disallowed tools",
+      "description": "Comma-separated tool rules workers may never use, e.g. Bash(git push:*), WebFetch. Roles may override it.",
+      "default": "Bash(git push:*)"
+    },
+    "enforceOwns": {
+      "type": "boolean",
+      "title": "Enforce ownership",
+      "description": "Block Edit, Write and NotebookEdit in a worker outside the paths its role owns (shell writes are not covered).",
+      "default": true
+    },
+    "notifyMode": {
+      "type": "string",
+      "title": "Packet delivery",
+      "description": "prompt: wakes the main agent with a turn of its own. note: added silently, read at the next turn. toast: only a toast, packets via worker_status.",
+      "options": [
+        "prompt",
+        "note",
+        "toast"
+      ],
+      "default": "prompt"
+    },
+    "packetDetail": {
+      "type": "string",
+      "title": "Packet detail",
+      "description": "full: every field. lean: what needs action; facts, risks and next steps on demand.",
+      "options": [
+        "full",
+        "lean"
+      ],
+      "default": "full"
+    },
+    "fallbackCompress": {
+      "type": "boolean",
+      "title": "Fallback compression",
+      "description": "Build a packet with the fallback model when a worker forgot to emit one.",
+      "default": true
+    },
+    "fallbackModel": {
+      "type": "string",
+      "title": "Fallback compressor model",
+      "description": "Model that builds a relay packet when a worker forgot to emit one.",
+      "default": "claude-haiku-5-5"
+    },
+    "relayDir": {
+      "type": "string",
+      "title": "Relay folder",
+      "description": "Project folder for run files (under runs/) and the default roles file.",
+      "default": ".relay"
+    },
+    "rolesFile": {
+      "type": "string",
+      "title": "Roles file",
+      "description": "JSON file with predefined roles (brief, owns, model, effort, allowedTools, disallowedTools).",
+      "default": ".relay/roles.json"
+    },
+    "gitignore": {
+      "type": "boolean",
+      "title": "Ignore run files in git",
+      "description": "Add <relay folder>/runs/ to .gitignore in git projects; the roles file stays versioned.",
+      "default": true
+    },
+    "keepRuns": {
+      "type": "number",
+      "title": "Runs kept per role",
+      "description": "Run files rotate through this many slots per role; 0 keeps every run.",
+      "default": 20
+    }
+  }
+}

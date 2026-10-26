@@ -64,6 +64,7 @@ The own mods and the forks with real changes are also available one by one, with
 | [Handoff Note](plugins/handoff) | productivity | own | `/plugin install handoff@mod-box` |
 | [Desktop Pet](plugins/pet) | companion | own | `/plugin install pet@mod-box` |
 | [Blast Radius](plugins/blast-radius) | security | fork of [anthropics/claude-code-playground](https://github.com/anthropics/claude-code-playground/tree/main/claude-code/mods/blast-radius) | `/plugin install blast-radius@mod-box` |
+| [Relay](plugins/relay) | productivity | own, a plugin of its own (managed natively) | `/plugin install relay@mod-box` |
 <!-- /standalone mods -->
 
 For the other mods, use their originals; they are linked under [Credits](#credits). The Desktop Pet also has a repo of its own, [desktop-pet](https://github.com/LupusMalusDeviant/desktop-pet). The former [claude-mods](https://github.com/LupusMalusDeviant/claude-mods) marketplace has moved here.
@@ -138,7 +139,7 @@ These stay plugins of their own (see [Any plugin](#any-plugin-integrated-managed
 
 | Plugin | Group | What it does | Costs tokens? |
 |---|---|---|---|
-| `relay@mod-box-local` | context | The main agent hands tasks to persistent worker sessions (`claude -p`, one session per role, each with its own context and the paths it owns) and gets compact relay packets back: status, decisions, changed files, open questions, exact values; the full answers stay on disk (`.relay/runs/`). Tools `worker_send`, `worker_status`, `worker_expand`; skill `relay-orchestrator`; roles in `.relay/roles.json`; 18 options (model, effort, budget per run, parallel workers, timeout, allowed tools, ownership guard, packet delivery). Needs the `claude` CLI on PATH. Installed with `node tools/box.mjs native install relay --dir <relay folder>`. | yes: each worker run is a full Claude Code session (budget per run, default 2 USD); a Haiku call when a worker forgets its packet; the skill about 220 tokens per session, about 2.2k when used |
+| `relay@mod-box` | context | The main agent hands tasks to persistent worker sessions (`claude -p`, one session per role, each with its own context and the paths it owns) and gets compact relay packets back: status, decisions, changed files, open questions, exact values; the full answers stay on disk (`.relay/runs/`). Tools `worker_send`, `worker_status`, `worker_expand`; skill `relay-orchestrator`; roles in `.relay/roles.json`; 18 options (model, effort, budget per run, parallel workers, timeout, allowed tools, ownership guard, packet delivery). Needs the `claude` CLI on PATH. Install it with `/plugin install relay@mod-box`, or through the box with `node tools/box.mjs native install relay@mod-box`. | yes: each worker run is a full Claude Code session (budget per run, default 2 USD); a Haiku call when a worker forgets its packet; the skill about 220 tokens per session, about 2.2k when used |
 
 <p align="center"><img src="docs/images/cache-meter.png" alt="Cache Meter opened: commands, token cost and options" width="500"></p>
 
