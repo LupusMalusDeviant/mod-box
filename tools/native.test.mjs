@@ -10,6 +10,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { after, before, describe, test } from 'node:test'
 import { fileURLToPath } from 'node:url'
+import { fixturePlugins } from './fixture-plugins.mjs'
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 let tmp, env, market, exe
@@ -52,7 +53,7 @@ before(() => {
   // A short path: Windows refuses long ones inside git clones.
   tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mbn-'))
   market = path.join(tmp, 'market')
-  fs.cpSync(path.join(REPO, 'tools', 'fixtures', 'plugins'), market, { recursive: true })
+  fixturePlugins(market)
   env = { ...process.env, CLAUDE_CONFIG_DIR: path.join(tmp, 'cfg'), MODBOX_HOME: path.join(tmp, 'mb') }
   delete env.CLAUDE_CODE_PLUGIN_DIRS
   fs.mkdirSync(env.CLAUDE_CONFIG_DIR, { recursive: true })
@@ -140,7 +141,7 @@ describe('native management', () => {
 
   test('a plugin folder without a marketplace goes through the box\'s local marketplace', () => {
     const src = path.join(tmp, 'folder-plugin')
-    fs.cpSync(path.join(REPO, 'tools', 'fixtures', 'plugins', 'fx-lsp'), src, { recursive: true })
+    fs.cpSync(path.join(market, 'fx-lsp'), src, { recursive: true })
     const pj = path.join(src, '.claude-plugin', 'plugin.json')
     fs.writeFileSync(pj, fs.readFileSync(pj, 'utf8').replace(/fx-lsp/g, 'fx-folder'))
     const r = box(['native', 'install', 'fx-folder', '--dir', src])
