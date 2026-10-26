@@ -1,6 +1,6 @@
 {
   "name": "screen-mask",
-  "version": "0.7.0",
+  "version": "0.7.1",
   "description": "For screen sharing and recordings: hides API keys, tokens, private keys, e-mail addresses, IP addresses, your login name in paths and any names you list. Only the display changes; Claude still reads the original. Nothing leaves the machine. /mask switches it.",
   "author": {
     "name": "Lupus Malus Deviant"

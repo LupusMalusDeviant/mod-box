@@ -1,6 +1,6 @@
 {
   "name": "sign-guard",
-  "version": "0.7.0",
+  "version": "0.7.1",
   "description": "Spots Windows builds (cargo --release, dotnet publish, go build, pyinstaller, tauri, electron-builder, msbuild) and signs the new .exe/.msi/.msix with your own signing script.",
   "author": {
     "name": "Lupus Malus Deviant"

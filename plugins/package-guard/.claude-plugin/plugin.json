@@ -1,6 +1,6 @@
 {
   "name": "package-guard",
-  "version": "0.7.0",
+  "version": "0.7.1",
   "description": "Before Claude installs or runs a package (npm, pnpm, yarn, bun, npx, pip, uv, poetry, pipx, cargo), asks the public registry about it. Holds the command when the package does not exist (a made-up name), is under 14 days old, or looks like a well-known package and is young or thin (typosquatting). Allow in the band or with /pkg-allow.",
   "author": {
     "name": "Lupus Malus Deviant"
