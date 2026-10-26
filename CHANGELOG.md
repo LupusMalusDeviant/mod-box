@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- **Relay** (0.3.0, MIT), managed natively as `relay@mod-box-local`: the main agent dispatches tasks to persistent worker sessions and gets compact relay packets back. It ships a skill, so it stays a plugin of its own; installed switched off and untrusted, group *context*, costs tokens with every worker run.
+
 ## 0.7.0
 
 - **Standalone mods** move from claude-mods into this repo: `plugins/<name>/`, installable as `<name>@mod-box`, written by `build` and listed in the marketplace beside the box. Each listing has a license, version, category and keywords, and its hooks.json names the Claude Code events the mod hooks into (no command runs there).
