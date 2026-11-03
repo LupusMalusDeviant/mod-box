@@ -1,10 +1,10 @@
 # Vertrag 0001: relay mit Backends je Rolle
 
-**Status:** Entwurf, wartet auf Abnahme · **Stand:** 3. November 2026 · **Betrifft:** `plugins/relay` (heute 0.3.0)
+**Status:** abgenommen am 3. November 2026 (E1–E11 wie empfohlen, herdr gestrichen) · **Stand:** 3. November 2026 · **Betrifft:** `plugins/relay` (heute 0.3.0)
 
 Heute startet relay jeden Worker als `claude -p`. Künftig wählt jede Rolle ihr **Backend**: `claude`, `codex` oder `opencode`. Über opencode erreicht relay auch Ollama und OpenRouter. Warteschlange, Timeout, `owns`, Relay-Pakete und die drei Werkzeuge bleiben gleich. Neu sind die Backend-Schnittstelle, eine Schreibprüfung nach jedem Lauf, die gleich für alle Backends greift, Token-Angaben im Paket, Ollama als Ersatz-Verdichter und eine Warteschlange, die auf der Platte liegt.
 
-Dieser Vertrag legt Schnittstellen, Formate und Verhalten fest. Es wird noch nichts gebaut. Offene Entscheidungen stehen in Abschnitt 11.
+Dieser Vertrag legt Schnittstellen, Formate und Verhalten fest. Die Entscheidungen in Abschnitt 11 sind getroffen (jeweils der Vorschlag), herdr ist gestrichen. Die Ergebnisse der Prüfungen V1–V4 stehen in Abschnitt 12.
 
 ---
 
@@ -19,7 +19,6 @@ Geprüft am 3. November 2026 auf dem Rechner des Nutzers (Windows 11) mit `--hel
 | OpenCode | `opencode v2.2.5` | `npm/opencode` startet `npm/node_modules/@opencode/cli/bin/opencode.exe` | Benutzt standardmäßig einen Hintergrunddienst (siehe 3.3). |
 | Ollama | `0.40.13` | `AppData/Local/Programs/Ollama/ollama` | Installiert sind nur Cloud-Modelle (`kimi-k3:cloud`, `deepseek-v4-pro:cloud`), **kein lokales**. |
 | git | `2.55.0.windows.5` | | Für die Schreibprüfung und die Worktrees. |
-| herdr | **nicht installiert** | | Nur optional (Abschnitt 9). |
 
 Diese Fassungen gelten als **geprüfte Fassungen**. relay liest beim ersten Lauf eines Backends `--version` und zeigt die Fassung in `worker_status`. Weicht die Hauptfassung ab, warnt `worker_status` einmal, gestartet wird trotzdem.
 
@@ -87,7 +86,7 @@ export type RunOutcome = {
 export type ProcessResult = {
   stdout: string
   stderr: string
-  exitCode?: number                 // undefined, wenn die Plugin-API keinen liefert (Voraussetzung V1)
+  exitCode?: number                 // aus dem Ende von $.process.spawn ({ code, signal }, V1)
   isTimedOut: boolean
   isStoppedByLimit: boolean         // Token-Grenze (Abschnitt 5.2)
 }
@@ -129,7 +128,7 @@ export const BACKENDS: Record<BackendId, Backend>
 
 1. In `backends.ts` ein Objekt, das `Backend` erfüllt, und den Namen in `BackendId` und `BACKENDS` eintragen.
 2. In `plugin.json` die Einstellung `<id>Bin` und, falls nötig, eigene Einstellungen anlegen; `defaultBackend` bekommt die neue Option.
-3. Eine gefälschte CLI unter `plugins/relay/hooks/fakes/` und Testfälle nach Abschnitt 10.
+3. Eine gefälschte CLI in `plugins/relay/tests/fakes.ts` und Testfälle nach Abschnitt 10.
 4. Die geprüfte Fassung in Abschnitt 1 dieses Vertrags eintragen (Vertrag zuerst ändern, dann bauen).
 
 Kandidaten, die so später dazukommen können, sind z. B. Gemini CLI oder Aider. Sie sind **nicht** Teil dieses Vertrags.
@@ -151,7 +150,7 @@ Was ignoriert wird, steht einmal in `worker_status` hinter der Rolle (`· ignori
 
 `$.process.spawn` startet ohne Shell. Unter Windows lassen sich `.cmd`-Starter so nicht aufrufen. Daher:
 
-- Die Einstellungen `claudeBin`, `codexBin`, `opencodeBin`, `ollamaBin` nehmen einen Programmnamen, einen vollständigen Pfad **oder** eine JSON-Liste (`["node", "C:/…/fake-codex.mjs"]`). Die Liste ist das Programm plus feste Vorab-Argumente; so laufen auch die gefälschten CLIs der Tests.
+- Die Einstellungen `claudeBin`, `codexBin`, `opencodeBin`, `ollamaBin` nehmen einen Programmnamen, einen vollständigen Pfad **oder** eine JSON-Liste (`["node", "C:/…/codex.js"]`). Die Liste ist das Programm plus feste Vorab-Argumente, z. B. für einen Starter, der über `node` läuft. Die gefälschten CLIs der Tests brauchen das nicht (Abschnitt 10.1).
 - Scheitert der Start (Programm nicht gefunden), meldet das Paket `failed` mit dem Hinweis, den vollständigen Pfad zur `.exe` einzutragen, für codex mit dem Pfad aus Abschnitt 1.
 
 ---
@@ -368,7 +367,7 @@ Heute baut `fallbackModel` (Haiku) über `$.model.complete` ein fehlendes Paket 
 
 **Kette:** Scheitert Ollama (nicht erreichbar, kein JSON, Timeout 120 s), versucht relay **nicht** von selbst Haiku, sondern meldet `failed` wie heute bei ausgeschaltetem Ersatz (Entscheidung E5).
 
-**Hinweis Datenschutz:** Auf dem Rechner des Nutzers sind nur Ollama-**Cloud**-Modelle installiert. Mit ihnen verlässt die Worker-Antwort den Rechner genauso wie mit Haiku. Ein lokales Modell muss der Nutzer erst holen (`ollama pull <modell>`, Plan P11).
+**Hinweis Datenschutz:** Auf dem Rechner des Nutzers sind nur Ollama-**Cloud**-Modelle installiert. Mit ihnen verlässt die Worker-Antwort den Rechner genauso wie mit Haiku. Ein lokales Modell muss der Nutzer erst holen (`ollama pull <modell>`, Plan P11a).
 
 **Weniger Ersatz bei codex:** codex kann seine letzte Antwort mit `--output-schema` auf ein JSON-Schema zwingen. Dann ginge aber der Volltext verloren, oder er müsste als Feld im JSON stehen. Vorschlag: **nicht nutzen**, das Paket kommt wie bei allen Backends aus dem ```relay-Block. Offen als Entscheidung E6.
 
@@ -402,7 +401,7 @@ export type QueuedJob = {
 
 Fertige Läufe stehen **nicht** in der Datei; sie werden beim Abschluss entfernt (ihr Ergebnis liegt in `runs/`).
 
-**Schreiben:** Nach jeder Änderung schreibt relay die ganze Datei, vorher die alte Fassung nach `queue.json.bak`. Ist `queue.json` beim Lesen kaputt, gilt `queue.json.bak`, und `worker_status` meldet das einmal. Kann die Plugin-API umbenennen, wird stattdessen über `queue.json.tmp` und Umbenennen geschrieben (Voraussetzung V3).
+**Schreiben:** Nach jeder Änderung schreibt relay die ganze Datei, vorher die alte Fassung nach `queue.json.bak`. Ist `queue.json` beim Lesen kaputt, gilt `queue.json.bak`, und `worker_status` meldet das einmal. `$.fs` kann weder umbenennen noch löschen (V3), daher bleibt es bei diesem Verfahren; `tempFiles` werden nach dem Lauf mit leerem Inhalt überschrieben statt gelöscht.
 
 ### 7.2 Wiederaufnahme bei `session.start`
 
@@ -441,7 +440,6 @@ Neu in `plugin.json` (`userConfig`), alles mit Standard so, dass ohne Änderung 
 | `isolation` | `shared` | Standard für Rollen: `shared` · `worktree` |
 | `maxTokensPerRun` | `0` | nur codex/opencode (5.2) |
 | `fallbackBackend`, `ollamaModel`, `ollamaBin` | siehe 6 | |
-| `herdrBin` | leer | siehe 9 |
 
 Hinweis: `writeCheck: report` ist neu standardmäßig an. Ohne git-Repo meldet es nur einmal „nicht geprüft“, verhält sich also wie 0.3.0.
 
@@ -461,26 +459,25 @@ Wechselt eine Rolle ihr Backend, ist ihre alte Session nutzlos: relay verwirft s
 
 ---
 
-## 9. herdr (optional, nur Anzeige)
+## 9. Live-Protokoll
 
-- relay schreibt während jedes Laufs `<relayDir>/runs/<rolle>/live.log`: für JSONL-Backends eine lesbare Zeile je Ereignis (Werkzeug, Text gekürzt, Token), für claude nur Start und Ende (claude liefert mit `--output-format json` nichts zwischendurch). Diese Datei gibt es **immer**, mit oder ohne herdr.
-- Einstellung `herdrBin` (Standard leer = aus). Ist sie gesetzt, öffnet relay beim Start eines Laufs ein Pane je Rolle, das `live.log` anzeigt, und schließt es nicht (der Nutzer schließt es). Die genauen herdr-Befehle legt der Bau an der installierten Fassung fest und trägt sie hier nach; herdr ist auf dem Rechner noch nicht installiert (Plan P12).
-- Fehlt herdr oder scheitert der Aufruf, läuft der Worker trotzdem; `worker_status` meldet einmal „herdr nicht erreichbar“. relay hängt in keinem Punkt von herdr ab.
+relay schreibt während jedes Laufs `<relayDir>/runs/<rolle>/live.log`: für JSONL-Backends eine lesbare Zeile je Ereignis (Werkzeug, Text gekürzt, Token), für claude nur Start und Ende (claude liefert mit `--output-format json` nichts zwischendurch). Die Datei wird bei jedem Lauf der Rolle neu begonnen. Weil `$.fs` nicht anhängen kann, schreibt relay sie gesammelt, höchstens alle 2 Sekunden und am Ende des Laufs.
+
+herdr ist gestrichen (Abnahme am 3. November 2026). Wer mitlesen will, öffnet `live.log` selbst.
 
 ---
 
 ## 10. Tests
 
-Alle Tests laufen mit `claude plugin test .` wie in der CI (Ubuntu und Windows). Keine echten Modelle, kein Python: die gefälschten CLIs sind Node-Skripte.
+Alle Tests laufen mit `claude plugin test .` wie in der CI (Ubuntu und Windows). Keine echten Modelle, keine echten Prozesse, kein Python.
 
 ### 10.1 Gefälschte CLIs
 
-`plugins/relay/hooks/fakes/fake-claude.mjs`, `fake-codex.mjs`, `fake-opencode.mjs`, `fake-ollama.mjs`. Jede:
-- schreibt `argv`, stdin und die relay-Umgebungsvariablen nach `$RELAY_FAKE_LOG` (JSON je Aufruf), damit Tests den Aufruf prüfen,
-- spielt ein Szenario aus `$RELAY_FAKE_SCENARIO`: `ok`, `no-packet`, `error`, `auth`, `session-not-found`, `crash` (Exit 2 ohne Ausgabe), `hang` (wartet ewig), `slow-tokens` (ein Zug pro Sekunde mit 10k Token), `write-outside` (schreibt eine Datei außerhalb von `owns`), `commit` (schreibt und committet),
-- gibt die Ausgabe im Format der echten CLI aus, abgeleitet aus Testvorlagen echter Läufe (K5).
-
-Eingebunden über die Bin-Einstellungen als Liste: `["node", "<pfad>/fake-codex.mjs"]`.
+`claude plugin test` startet keine echten Prozesse (V2). Die Grundfunktionen werden im Test per `on('process.spawn' | 'process.run' | 'fs.read' | …, …)` ersetzt. Daher sind die gefälschten CLIs **TypeScript-Helfer** in `plugins/relay/tests/fakes.ts`, die `process.spawn` abfangen (abgenommen am 3. November 2026, statt der früher geplanten Node-Skripte):
+- Der Helfer erkennt am ersten argv-Eintrag bzw. am Unterbefehl, welche CLI gemeint ist (`claude`, `codex`, `opencode`, `ollama`), und hält jeden Aufruf (`argv`, `cwd`, `env`, `input`) in einer Liste fest, die der Test prüft.
+- Er spielt ein Szenario, das der Test je Aufruf festlegt: `ok`, `no-packet`, `error`, `auth`, `session-not-found`, `crash` (Exit 2 ohne Ausgabe), `hang` (endet erst beim Abbruch), `slow-tokens` (ein Zug je Uhr-Takt mit 10k Token), `write-outside` und `commit` (verändern die gefälschten `process.run`-Antworten von git so, als hätte der Worker außerhalb von `owns` geschrieben bzw. committet).
+- Die Ausgabe hat das Format der echten CLI, abgeleitet aus Testvorlagen echter Läufe (K5).
+- Zeit läuft über `mock.clock` (V4), damit Timeout, Herzschlag und Token-Grenze ohne Warten testbar sind.
 
 ### 10.2 Testfälle
 
@@ -490,17 +487,19 @@ Eingebunden über die Bin-Einstellungen als Liste: `["node", "<pfad>/fake-codex.
 | Auslesen je Backend (rein) | Antwort, Session-ID, Token-Summe über mehrere Züge, Kosten, jeder Fehlerfall aus 3.1–3.3, kaputte JSONL-Zeilen werden übersprungen | [Claude-prüfbar] |
 | Regel-Übersetzung (rein) | `Bash(git push:*)` → opencode-Muster, ignorierte Regeln werden gemeldet | [Claude-prüfbar] |
 | Schreibprüfung (rein) | `compareSnapshots`: neu, geändert, gelöscht, vorher schon geändert und erneut geändert, Commit im Lauf, parallel laufende Rollen, kein git | [Claude-prüfbar] |
-| Start (mit Fake) | jede Fake-CLI startet, Paket kommt an, Session-ID wird beim nächsten Lauf weitergegeben | [Claude-prüfbar], Voraussetzung V2 |
+| Start (mit Fake) | jede Fake-CLI startet, Paket kommt an, Session-ID wird beim nächsten Lauf weitergegeben | [Claude-prüfbar] |
 | Warteschlange (mit Fake) | `maxParallel 1`: zweiter Auftrag wartet; gleiche Rolle zweimal → seriell; `queue.json` nach jedem Schritt; Neustart mit `queued` → läuft weiter; Neustart mit `running` → Paket „unterbrochen“; kaputte Datei → `.bak`; zweite Session → nur lesend | [Claude-prüfbar] |
-| Timeout (mit Fake `hang`) | Lauf wird gestoppt, Paket `partial`/`failed`, Platz wird frei | [Claude-prüfbar], wenn die Test-Uhr steuerbar ist (V4), sonst über eine verborgene Testeinstellung in Sekunden |
+| Timeout (mit Fake `hang`) | Lauf wird gestoppt, Paket `partial`/`failed`, Platz wird frei | [Claude-prüfbar] (mit `mock.clock`) |
 | Token-Grenze (Fake `slow-tokens`) | Stopp nach Überschreiten, Kopfzeile | [Claude-prüfbar] |
-| Schreibprüfung (Fake `write-outside`, `commit`) in einem Temp-git-Repo | Konflikt im Paket, Status `partial` | [Claude-prüfbar] |
-| Ersatz-Verdichter (Fake `no-packet` + `fake-ollama`) | Paket aus Ollama, Ollama scheitert → `failed` | [Claude-prüfbar] |
-| herdr aus/fehlend | Lauf unbeeinflusst | [Claude-prüfbar] |
+| Schreibprüfung (Fake `write-outside`, `commit`) mit gefälschten git-Antworten | Konflikt im Paket, Status `partial` | [Claude-prüfbar] |
+| Ersatz-Verdichter (Fake `no-packet` + Fake-ollama) | Paket aus Ollama, Ollama scheitert → `failed` | [Claude-prüfbar] |
+| Live-Protokoll | `live.log` wird geschrieben, für JSONL-Backends je Ereignis eine Zeile | [Claude-prüfbar] |
 
 ---
 
-## 11. Offene Entscheidungen
+## 11. Entscheidungen
+
+**Abgenommen am 3. November 2026: in allen Punkten der Vorschlag.** Die Alternativen bleiben zur Nachvollziehbarkeit stehen.
 
 1. **E1 – Sicherheitsmodell.** Vorschlag: A (Schreibprüfung, melden) Pflicht für alle, D für codex, E für opencode, C (Worktree) wahlweise je Rolle, B (zurücksetzen) nicht jetzt. Alternativen: C für alle Nicht-claude-Rollen erzwingen; oder B gleich mitbauen.
 2. **E2 – Parallele Rollen im selben Ordner.** Vorschlag: erlaubt, Zuordnung nach 4.3 („vermutlich von …“, „nicht eindeutig“). Alternative „seriell“: Bei `writeCheck: report` laufen schreibende Rollen im geteilten Ordner nacheinander, nur Worktree-Rollen parallel.
@@ -518,12 +517,12 @@ Eingebunden über die Bin-Einstellungen als Liste: `["node", "<pfad>/fake-codex.
 
 ## 12. Voraussetzungen und Prüfungen vor dem Bau
 
-**Plugin-API** (an `claude-code` prüfen, bevor gebaut wird):
-- **V1** Liefert `$.process.spawn` den Exit-Code? Wenn nicht, werten die Backends nur stdout/stderr aus (die Abbildungen oben sind dafür ausgelegt).
-- **V2** Startet `$.process.spawn` in `claude plugin test` echte Prozesse? Wenn nicht, bekommt `start()` eine austauschbare Spawn-Funktion, und die Tests mit Fake-CLI laufen über sie.
-- **V3** Kann `$.fs` umbenennen und löschen? Sonst Schreibweise mit `.bak` (7.1), und `tempFiles` werden überschrieben statt gelöscht.
-- **V4** Lässt sich `$.clock` im Test vorspulen?
-- **V5** Beendet `child.return()` unter Windows den ganzen Prozessbaum (codex startet Sandbox-Prozesse)?
+**Plugin-API** (geprüft am 3. November 2026 an den Typen in `.claude-plugin/types/claude-code/index.d.ts`):
+- **V1** Liefert `$.process.spawn` den Exit-Code? **Ja.** Der Strom liefert `{ stream, text }`-Teile und endet mit `{ code, signal }`.
+- **V2** Startet `$.process.spawn` in `claude plugin test` echte Prozesse? **Nein.** Grundfunktionen werden im Test per `on(...)` ersetzt; daher die TS-Fälschungen aus 10.1.
+- **V3** Kann `$.fs` umbenennen und löschen? **Nein** (nur read, write, list, exists, stat). Es bleibt bei `.bak` (7.1), `tempFiles` werden überschrieben.
+- **V4** Lässt sich die Uhr im Test vorspulen? **Ja**, über `mock.clock`.
+- **V5** Beendet das Abbrechen des Stroms unter Windows den ganzen Prozessbaum (codex startet Sandbox-Prozesse)? **Offen**, nur am echten Rechner prüfbar (P9).
 
 **CLIs** (erste Bauaufgabe, jeweils mit einem echten, kurzen Lauf):
 - **K1** Liest `opencode run` die Aufgabe von stdin?
@@ -538,20 +537,19 @@ Eingebunden über die Bin-Einstellungen als Liste: `["node", "<pfad>/fake-codex.
 
 | Nr. | Schritt | Marke |
 |---|---|---|
-| P1 | Vertrag abnehmen, Entscheidungen E1–E11 eintragen | [braucht Nutzer/Hardware] |
-| P2 | Voraussetzungen V1–V4 an der Plugin-API prüfen, Ergebnis hier eintragen | [Claude-prüfbar] |
+| P1 | Vertrag abnehmen, Entscheidungen E1–E11 eintragen (erledigt 3. November 2026) | [braucht Nutzer/Hardware] |
+| P2 | Voraussetzungen V1–V4 an der Plugin-API prüfen, Ergebnis hier eintragen (erledigt) | [Claude-prüfbar] |
 | P3 | Je ein echter Kurzlauf codex und opencode (Ollama-Cloud) zur Testvorlage, K1–K5 beantworten (kostet Token, braucht Anmeldung) | [braucht Nutzer/Hardware] |
 | P4 | `backends.ts`: Typen, claude-Backend als Auszug aus `start()`/`finish()` ohne Verhaltensänderung, Regressionstest argv | [Claude-prüfbar] |
 | P5 | codex- und opencode-Backend mit Aufbau, Live-Lesen, Auslesen, Fehlerabbildung, Tests mit Vorlagen | [Claude-prüfbar] |
-| P6 | Fake-CLIs und Start-Tests | [Claude-prüfbar] |
+| P6 | Fake-CLIs (`tests/fakes.ts`) und Start-Tests | [Claude-prüfbar] |
 | P7 | Schreibprüfung `compareSnapshots` und Einbindung, Paketfeld `write_check` | [Claude-prüfbar] |
 | P8 | Worktree-Isolation je Rolle | [Claude-prüfbar] |
 | P9 | Codex-Sandbox und V5 unter Windows im echten Lauf prüfen (Schreiben außerhalb, `git push`, Stopp bei Timeout) | [braucht Nutzer/Hardware] |
 | P10 | Warteschlange auf der Platte, Wiederaufnahme, Besitzer-Herzschlag | [Claude-prüfbar] |
 | P11 | Ersatz-Verdichter Ollama bauen | [Claude-prüfbar] |
 | P11a | Probe mit lokalem Modell (`ollama pull`) | [braucht Nutzer/Hardware] |
-| P12 | `live.log` immer | [Claude-prüfbar] |
-| P12a | herdr-Pane, sobald herdr installiert ist | [braucht Nutzer/Hardware] |
+| P12 | `live.log` | [Claude-prüfbar] |
 | P13 | Kosten/Token in Kopfzeile, `packet.json`, Summen in `worker_status` | [Claude-prüfbar] |
 | P14 | README, Skill `relay-orchestrator`, `plugin.json`-Einstellungen, Fassung | [Claude-prüfbar] |
 | P15 | Echter Gesamtlauf: drei Rollen, je ein Backend, parallel, mit Neustart dazwischen | [braucht Nutzer/Hardware] |
