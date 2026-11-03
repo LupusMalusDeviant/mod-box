@@ -1,0 +1,557 @@
+# Vertrag 0001: relay mit Backends je Rolle
+
+**Status:** Entwurf, wartet auf Abnahme · **Stand:** 3. November 2026 · **Betrifft:** `plugins/relay` (heute 0.3.0)
+
+Heute startet relay jeden Worker als `claude -p`. Künftig wählt jede Rolle ihr **Backend**: `claude`, `codex` oder `opencode`. Über opencode erreicht relay auch Ollama und OpenRouter. Warteschlange, Timeout, `owns`, Relay-Pakete und die drei Werkzeuge bleiben gleich. Neu sind die Backend-Schnittstelle, eine Schreibprüfung nach jedem Lauf, die gleich für alle Backends greift, Token-Angaben im Paket, Ollama als Ersatz-Verdichter und eine Warteschlange, die auf der Platte liegt.
+
+Dieser Vertrag legt Schnittstellen, Formate und Verhalten fest. Es wird noch nichts gebaut. Offene Entscheidungen stehen in Abschnitt 11.
+
+---
+
+## 1. Geprüfte Fassungen
+
+Geprüft am 3. November 2026 auf dem Rechner des Nutzers (Windows 11) mit `--help` und, wo die Hilfe nichts sagt, an den Zeichenketten der installierten Programme.
+
+| Programm | Fassung | Pfad | Anmerkung |
+|---|---|---|---|
+| Claude Code | `2.1.310` | `~/.local/bin/claude` (echte `.exe`) | Optionen wie heute in `register.ts` verwendet, alle vorhanden. |
+| Codex CLI | `codex-cli 0.166.0` | `npm/codex` ist ein Shell- bzw. `.cmd`-Starter; die eigentliche Datei ist `npm/node_modules/@openai/codex/node_modules/@openai/codex-win32-x64/vendor/x86_64-pc-windows-msvc/bin/codex.exe` | Ein `.cmd` lässt sich ohne Shell nicht starten (siehe 2.5). |
+| OpenCode | `opencode v2.2.5` | `npm/opencode` startet `npm/node_modules/@opencode/cli/bin/opencode.exe` | Benutzt standardmäßig einen Hintergrunddienst (siehe 3.3). |
+| Ollama | `0.40.13` | `AppData/Local/Programs/Ollama/ollama` | Installiert sind nur Cloud-Modelle (`kimi-k3:cloud`, `deepseek-v4-pro:cloud`), **kein lokales**. |
+| git | `2.55.0.windows.5` | | Für die Schreibprüfung und die Worktrees. |
+| herdr | **nicht installiert** | | Nur optional (Abschnitt 9). |
+
+Diese Fassungen gelten als **geprüfte Fassungen**. relay liest beim ersten Lauf eines Backends `--version` und zeigt die Fassung in `worker_status`. Weicht die Hauptfassung ab, warnt `worker_status` einmal, gestartet wird trotzdem.
+
+---
+
+## 2. Backend-Schnittstelle
+
+### 2.1 Typen
+
+Neue Datei `plugins/relay/hooks/backends.ts`. Sie enthält **nur reine Funktionen** (kein `$`), damit Aufbau und Auslesen ohne Prozesse testbar sind. Gestartet wird weiter zentral in `register.ts`.
+
+```ts
+export type BackendId = 'claude' | 'codex' | 'opencode'
+
+// Was ein Lauf braucht; relay füllt es aus Rolle, Rollen-Datei und Einstellungen.
+export type LaunchSpec = {
+  role: string
+  task: string                 // Aufgabentext, wie beim Auftrag
+  protocol: string             // protocolPrompt(role, brief, owns), unverändert
+  isNew: boolean               // keine Session bekannt → neue
+  sessionId?: string           // bekannte Session der Rolle (Fortsetzen) oder vorab vergebene (neu)
+  model?: string               // im Format des Backends
+  effort?: string              // '' = Standard der CLI
+  owns: string[]
+  allowedTools: string[]       // Claude-Regeln; andere Backends übersetzen, was geht (2.4)
+  disallowedTools: string[]
+  cwd: string                  // Projektordner oder Worktree der Rolle (Abschnitt 4)
+  isGitRepo: boolean
+  bin: string[]                // Programm plus feste Vorab-Argumente (2.5)
+  settings: BackendSettings    // die Einstellungen dieses Backends (Abschnitt 8)
+}
+
+// Was gestartet wird. Kein Shell-Aufruf, nie.
+export type Invocation = {
+  argv: string[]
+  input?: string                    // stdin
+  env: Record<string, string>       // zusätzlich zur geerbten Umgebung
+  presetSessionId?: string          // vorab vergebene ID, gilt bis parse etwas anderes meldet
+  tempFiles?: { path: string; content: string }[] // vor dem Start schreiben, danach löschen
+}
+
+export type Usage = {
+  inputTokens?: number
+  cachedInputTokens?: number
+  outputTokens?: number
+  reasoningTokens?: number
+  costUsd?: number                  // nur, wenn die CLI einen Betrag meldet
+  turns?: number
+  model?: string                    // wie von der CLI gemeldet
+}
+
+export type RunError = {
+  kind: 'budget' | 'auth' | 'session-not-found' | 'model' | 'sandbox' | 'cli' | 'unknown'
+  message: string                   // höchstens 500 Zeichen, aus JSON oder stderr
+}
+
+// Was ein Lauf ergab, unabhängig vom Backend.
+export type RunOutcome = {
+  answer: string                    // Volltext des Workers inkl. ```relay-Block
+  sessionId?: string                // für den nächsten Lauf der Rolle
+  usage: Usage
+  error?: RunError
+}
+
+export type ProcessResult = {
+  stdout: string
+  stderr: string
+  exitCode?: number                 // undefined, wenn die Plugin-API keinen liefert (Voraussetzung V1)
+  isTimedOut: boolean
+  isStoppedByLimit: boolean         // Token-Grenze (Abschnitt 5.2)
+}
+
+export interface Backend {
+  id: BackendId
+  capabilities: {
+    budgetUsd: boolean              // CLI kann einen Höchstbetrag selbst durchsetzen
+    presetSessionId: boolean        // relay darf die ID vorab vergeben
+    inProcessOwnsGuard: boolean     // relays Edit/Write-Hooks greifen im Worker
+    sandbox: boolean                // OS-Sandbox der CLI
+    usage: 'cost' | 'tokens' | 'both'
+    streamsEvents: boolean          // stdout ist JSONL, live lesbar
+  }
+  build(spec: LaunchSpec): Invocation
+  // Live-Auswertung für Token-Grenze und Anzeige; optional.
+  onLine?(line: string, acc: Usage): Usage
+  parse(result: ProcessResult): RunOutcome
+  versionArgv(bin: string[]): string[]
+}
+
+export const BACKENDS: Record<BackendId, Backend>
+```
+
+### 2.2 Ablauf in `register.ts`
+
+`start()` wird backend-neutral:
+
+1. `effective()` liefert zusätzlich `backend` (Rolle → Rollen-Datei → `defaultBackend`).
+2. Arbeitsordner vorbereiten (Abschnitt 4): Ordner wählen, bei `writeCheck` Schnappschuss nehmen.
+3. `inv = BACKENDS[id].build(spec)`, `tempFiles` schreiben, `$.process.spawn({ argv: inv.argv, cwd, input: inv.input, env: { ...basisEnv, ...inv.env } })`.
+4. stdout zeilenweise an `onLine` geben (falls vorhanden), Token-Grenze prüfen, Timeout wie heute.
+5. `outcome = parse(result)`; `outcome.sessionId ?? inv.presetSessionId` wird die Session der Rolle.
+6. Schreibprüfung (Abschnitt 4), dann `finish()` wie heute: Paket suchen, sonst Ersatz-Verdichter, Paket schreiben, melden.
+
+`basisEnv` ist für **alle** Backends `RELAY_WORKER=1`, `RELAY_CWD`, bei `enforceOwns` `RELAY_OWNS`. Bei codex und opencode greift das nicht direkt (kein Claude-Plugin geladen), schützt aber, wenn so ein Worker selbst `claude` startet: dort schaltet sich relay dann als Worker, nicht als Orchestrator.
+
+### 2.3 Ein weiteres Backend hinzufügen
+
+1. In `backends.ts` ein Objekt, das `Backend` erfüllt, und den Namen in `BackendId` und `BACKENDS` eintragen.
+2. In `plugin.json` die Einstellung `<id>Bin` und, falls nötig, eigene Einstellungen anlegen; `defaultBackend` bekommt die neue Option.
+3. Eine gefälschte CLI unter `plugins/relay/hooks/fakes/` und Testfälle nach Abschnitt 10.
+4. Die geprüfte Fassung in Abschnitt 1 dieses Vertrags eintragen (Vertrag zuerst ändern, dann bauen).
+
+Kandidaten, die so später dazukommen können, sind z. B. Gemini CLI oder Aider. Sie sind **nicht** Teil dieses Vertrags.
+
+### 2.4 Was je Backend aus den Rollen-Angaben wird
+
+| Angabe | claude | codex | opencode |
+|---|---|---|---|
+| `protocol` | `--append-system-prompt` | `-c developer_instructions=<JSON-String>` (JSON ist gültiges TOML) | eigener Agent über `OPENCODE_CONFIG_CONTENT` (siehe 3.3), `--agent relay-<rolle>` |
+| `model` | `--model` | `-m` | `-m <provider>/<modell>[#variante]`, Pflicht mit `/`, sonst Abbruch vor dem Start |
+| `effort` | `--effort` | `-c model_reasoning_effort="<stufe>"` (`xhigh`/`max` → `high`) | wird ignoriert, Variante steckt im Modellnamen; `worker_status` sagt das |
+| `allowedTools` | `--allowedTools` | wird ignoriert (keine Werkzeugregeln) | wird ignoriert |
+| `disallowedTools` | `--disallowedTools` | nur `Bash(...)`-Regeln wirken indirekt über die Sandbox (kein Netz, siehe 4.2); sonst ignoriert | `Bash(<muster>:*)` → `permission.bash["<muster>*"] = "deny"`; andere Regeln ignoriert |
+| Budget | `--max-budget-usd` | – (Token-Grenze, 5.2) | – (Token-Grenze, 5.2) |
+
+Was ignoriert wird, steht einmal in `worker_status` hinter der Rolle (`· ignoriert: allowedTools`), damit niemand sich auf eine Regel verlässt, die nicht greift.
+
+### 2.5 Programmaufruf ohne Shell
+
+`$.process.spawn` startet ohne Shell. Unter Windows lassen sich `.cmd`-Starter so nicht aufrufen. Daher:
+
+- Die Einstellungen `claudeBin`, `codexBin`, `opencodeBin`, `ollamaBin` nehmen einen Programmnamen, einen vollständigen Pfad **oder** eine JSON-Liste (`["node", "C:/…/fake-codex.mjs"]`). Die Liste ist das Programm plus feste Vorab-Argumente; so laufen auch die gefälschten CLIs der Tests.
+- Scheitert der Start (Programm nicht gefunden), meldet das Paket `failed` mit dem Hinweis, den vollständigen Pfad zur `.exe` einzutragen, für codex mit dem Pfad aus Abschnitt 1.
+
+---
+
+## 3. Die drei Backends im Einzelnen
+
+### 3.1 claude (heutiges Verhalten, unverändert)
+
+**Start (neu):**
+```
+claude -p --output-format json --permission-mode <permissionMode>
+  --append-system-prompt <protocol> --session-id <uuid>
+  [--model m] [--effort e] [--max-budget-usd n] [--allowedTools …] [--disallowedTools …]
+stdin: Aufgabe
+```
+**Fortsetzen:** wie oben, statt `--session-id` `--resume <id>`.
+**Session-ID:** vorab von relay vergeben (`crypto.randomUUID()`), `session_id` aus dem JSON gewinnt.
+**Auslesen:** ein JSON-Objekt auf stdout: `result` → Antwort, `session_id`, `num_turns` → `turns`, `total_cost_usd` → `costUsd`, `usage.input_tokens`/`output_tokens`/`cache_read_input_tokens` → Token, falls vorhanden.
+**Fehler:**
+
+| Lage | Abbildung |
+|---|---|
+| `is_error` mit `subtype` `error_max_budget_usd` | `error.kind = 'budget'`; Paket des Workers bleibt, Status `done` wird zu `partial` |
+| `is_error` sonst | `kind = 'cli'`, Meldung `worker error (<subtype>)` wie heute |
+| stdout kein JSON | Antwort = stdout wie heute |
+| stdout leer, Exit ≠ 0 | `kind = 'cli'`, stderr gekürzt |
+
+`argv` muss für claude **zeichengleich** zu 0.3.0 bleiben (Regressionstest, Abschnitt 10).
+
+### 3.2 codex
+
+**Start (neu):**
+```
+codex exec --json --sandbox <codexSandbox> --cd <cwd>
+  -c approval_policy="never"
+  -c developer_instructions=<JSON-String von protocol>
+  [-m m] [-c model_reasoning_effort="e"] [--skip-git-repo-check, wenn kein git]
+  -
+stdin: Aufgabe
+```
+`codexSandbox` ist `workspace-write` (Standard) oder `read-only`. `danger-full-access` und `--dangerously-bypass-approvals-and-sandbox` setzt relay **nie**.
+
+**Fortsetzen:**
+```
+codex exec resume --json <thread_id>
+  -c sandbox_mode="<codexSandbox>" -c approval_policy="never"
+  -c developer_instructions=<…> [-m m] [-c model_reasoning_effort="e"] [--skip-git-repo-check]
+  -
+stdin: Aufgabe
+```
+Wichtig: `codex exec resume` kennt in 0.166.0 **weder `--sandbox` noch `--cd`**. Die Sandbox wird daher über `-c sandbox_mode=…` gesetzt, das Arbeitsverzeichnis über `cwd` des Prozesses. Ein Test prüft, dass ein Fortsetzen nie ohne Sandbox-Angabe startet.
+
+**Session-ID:** kann nicht vorab vergeben werden. Sie kommt aus dem ersten Ereignis `thread.started` (`thread_id`). Fehlt sie (Absturz vor dem ersten Ereignis), bleibt die Rolle ohne Session und der nächste Lauf startet neu; das Paket sagt es unter `risks`.
+
+**Auslesen (JSONL, ein Ereignis je Zeile; Ereignisnamen in der installierten Fassung gefunden):**
+
+| Ereignis | Verwendung |
+|---|---|
+| `thread.started` `{ thread_id }` | `sessionId` |
+| `item.completed` mit `item.type = "agent_message"` | `item.text`; die **letzte** solche Nachricht ist die Antwort |
+| `turn.completed` `{ usage: { input_tokens, cached_input_tokens, output_tokens, reasoning_output_tokens } }` | Token, über alle Züge summiert |
+| `turn.failed` `{ error: { message } }` | `error` |
+| `error` `{ message }` | `error` |
+| alles andere | wird ignoriert (nur für die Live-Anzeige) |
+
+Die genauen Feldnamen werden beim Bau mit einem echten Lauf als Testvorlage festgehalten (Prüfung K5). Kosten in USD meldet codex nicht; `costUsd` bleibt leer.
+
+**Fehler:**
+
+| Lage | Abbildung |
+|---|---|
+| `turn.failed` oder `error` beim Fortsetzen, Meldung enthält „not found“ | `kind = 'session-not-found'`: relay vergisst die Session, startet **nicht** von selbst neu und meldet `failed` mit „Session weg, nächster Auftrag startet frisch“ |
+| Meldung zu Anmeldung (401, „login“) | `kind = 'auth'` |
+| Meldung zur Sandbox | `kind = 'sandbox'` |
+| sonst | `kind = 'unknown'` mit Meldung |
+| keine Ereignisse, Exit ≠ 0 | `kind = 'cli'`, stderr gekürzt |
+| Exit 0, aber keine `agent_message` | Antwort leer → wie heute „Worker produced no usable answer“ |
+
+### 3.3 opencode (Ollama, OpenRouter und andere Anbieter)
+
+**Start (neu und Fortsetzen, ein Befehl):**
+```
+opencode run --format json --standalone --auto
+  -m <provider>/<modell> --agent relay-<rolle>
+  --session <id> --title "relay <rolle>"
+  <aufgabe>
+env: OPENCODE_CONFIG_CONTENT=<JSON, siehe unten>
+```
+- `--session <id>`: laut Hilfe „Session ID to continue, or to create if it does not exist“. relay vergibt die ID daher vorab wie bei claude. Ob opencode eine frei gewählte ID annimmt oder ein eigenes Format verlangt (z. B. Vorsilbe `ses_`), prüft der Bau zuerst (Prüfung K2). Geht es nicht, wird die ID aus dem ersten Ereignis (`sessionID`) übernommen und beim nächsten Lauf mit `--session` fortgesetzt.
+- `--standalone`: eigener Server je Lauf statt des gemeinsamen Hintergrunddienstes. Nur so beendet das Stoppen bei Timeout auch die Arbeit; sonst läuft die Session im Dienst weiter (Prüfung K3).
+- `--auto`: bestätigt alles, was nicht ausdrücklich verboten ist. Ohne `--auto` hängt ein nicht-interaktiver Lauf an der ersten Rückfrage bis zum Timeout. Die Verbote kommen aus der Konfiguration.
+- `OPENCODE_CONFIG_CONTENT` (Umgebungsvariable, in der installierten Fassung vorhanden) enthält einen Agenten für die Rolle:
+  ```json
+  {
+    "agent": { "relay-<rolle>": { "mode": "primary", "prompt": "<protocol>" } },
+    "permission": { "bash": { "git push*": "deny" }, "edit": { "<owns>/**": "allow", "*": "deny" } }
+  }
+  ```
+  Ob `permission.edit` Pfadmuster versteht, prüft der Bau (Prüfung K4). Wenn nicht, entfällt der `edit`-Teil, und es gilt nur die Schreibprüfung nach dem Lauf.
+- Aufgabe als Argument: Ob `opencode run` stdin liest, ist aus der Hilfe nicht ersichtlich (Prüfung K1). Bis dahin geht die Aufgabe als Argument. Ist sie länger als 24 000 Zeichen (Windows-Grenze für eine Befehlszeile: 32 767), schreibt relay sie nach `.relay/tmp/<rolle>-<lauf>.md` und übergibt `--file <pfad>` mit dem kurzen Argument „Die Aufgabe steht in der angehängten Datei.“
+
+**Auslesen (JSONL; jedes Ereignis `{ type, timestamp, sessionID, … }`, Aufbau in der installierten Fassung gefunden):**
+
+| Ereignis | Verwendung |
+|---|---|
+| beliebig, Feld `sessionID` | `sessionId` |
+| `text` `{ part: { text } }` | Antwort: alle Textteile in Reihenfolge, durch Leerzeile getrennt |
+| `step_finish` `{ part: { tokens, cost, reason } }` | Token (`tokens.input`, `tokens.output`, `tokens.reasoning`, `tokens.cache.read`) und `cost` über alle Schritte summiert |
+| `step_start` | `turns` +1 und Modellname für die Anzeige |
+| `error` `{ error: { message } }` | `error`; opencode setzt dann Exit 1 |
+| `tool_use` | nur Live-Anzeige |
+
+**Fehler:** wie bei codex (`auth`, `model` bei „model not found“ bzw. unbekanntem Anbieter, `unknown`, `cli`). Liefert ein Anbieter `cost = 0` (Ollama), steht im Paket `$0.00` nur, wenn Token > 0 sind; sonst fehlt der Betrag.
+
+**Ollama und OpenRouter** sind für relay einfach Modellnamen: `ollama/kimi-k3:cloud`, `openrouter/<anbieter>/<modell>`. Anmeldung und Anbieter richtet der Nutzer in opencode selbst ein; relay fasst `opencode auth` nicht an.
+
+---
+
+## 4. Gleiche Sicherheit für alle Backends
+
+### 4.1 Ausgangslage
+
+Die `owns`-Prüfung von relay hängt an Claude-Code-Hooks (`tool.call` für Edit, Write, NotebookEdit). Sie greift nur in claude-Workern und auch dort nicht für Schreiben über die Shell. In codex- und opencode-Workern greift sie gar nicht.
+
+### 4.2 Die Optionen
+
+| | Option | Was sie leistet | Was sie kostet / wo sie endet |
+|---|---|---|---|
+| **A** | **Schreibprüfung per git nach jedem Lauf** (melden) | Für alle Backends gleich, erfasst auch Shell-Schreiben und Commits. Fremde Schreibvorgänge erscheinen im Paket als Konflikt. | Verhindert nichts, meldet nur. Braucht ein git-Repo. Laufen mehrere Rollen gleichzeitig im selben Ordner, ist nicht eindeutig, wer was schrieb (4.3). Von git ignorierte Dateien bleiben unsichtbar. |
+| **B** | A **plus Zurücksetzen** | Änderungen außerhalb von `owns` werden rückgängig gemacht. | Nur sauber für Dateien, die vorher unverändert waren. Neue Dateien müssten gelöscht werden; relay verschiebt sie stattdessen nach `.relay/quarantine/`. Bei vorher schon geänderten Dateien braucht es eine Inhaltskopie vor dem Lauf. Fehlerträchtig, schwer nachzuvollziehen. |
+| **C** | **Eigener Worktree je Rolle** | Jede Rolle arbeitet in `.relay/worktrees/<rolle>` auf dem Branch `relay/<rolle>`. Gleichzeitige Rollen stören sich nicht, A wird eindeutig, der Hauptordner bleibt unberührt. | Platz auf der Platte; nicht eingecheckte Dinge (z. B. `node_modules`, `.env`) fehlen im Worktree. Die Ergebnisse müssen zurück in den Hauptstand: relay führt nichts selbst zusammen, sondern meldet den Branch unter `needs_from_main` (Entscheidung E3). Der Worktree-Pfad einer Rolle bleibt fest, sonst finden claude und codex ihre Sessions nicht wieder. |
+| **D** | **Codex-Sandbox** (`workspace-write`) | Betriebssystem-Sperre: codex schreibt nur in seinem Arbeitsordner, Netz ist aus (damit scheitert auch `git push`). | Kennt `owns` nicht, nur den ganzen Ordner. Erst zusammen mit C wird daraus „nur die eigene Rolle“. Wie gut die Sandbox unter Windows greift, ist am Rechner zu prüfen (Plan P9). |
+| **E** | **opencode-Rechte** in der Konfiguration (3.3) | Verbietet `git push` und, falls unterstützt, Schreiben außerhalb von `owns` schon im Lauf. | Hängt an opencodes Rechtesystem; Shell-Befehle mit Umleitung (`>`) prüft es nicht nach Pfad. |
+| – | Codex- oder opencode-Hooks einrichten | Wäre eine Prüfung im Lauf. | **Verworfen:** relay müsste fremde Konfiguration (`~/.codex/…`, Hook-Vertrauen) ändern. Das sind Regeldateien des Nutzers. |
+
+### 4.3 Vorschlag
+
+- **A ist Pflicht für alle Backends** (Einstellung `writeCheck`, Standard `report`), auch für claude als zweite Linie hinter dem Hook.
+- **D immer für codex** (`workspace-write`), **E immer für opencode**.
+- **C wahlweise je Rolle** (`isolation: "worktree"` in der Rollen-Datei oder beim Auftrag). Empfohlen für codex- und opencode-Rollen, die parallel zu anderen schreiben.
+- **B nicht jetzt.** Kann später als `writeCheck: "revert"` dazukommen, mit eigenem Vertrag.
+
+Rollen im **selben** Ordner, die gleichzeitig laufen: Eine Änderung außerhalb der eigenen `owns`, die in den `owns` einer anderen gerade laufenden Rolle liegt, gilt als „vermutlich von <andere Rolle>“ und ist kein Konflikt. Eine Änderung außerhalb aller `owns` wird bei **allen** gleichzeitig laufenden Rollen als „nicht eindeutig zuzuordnen“ gemeldet. Wer das nicht will, wählt C oder bei Entscheidung E2 die Variante „seriell“.
+
+### 4.4 Ablauf der Schreibprüfung
+
+Reine Funktion in `protocol.ts`, Eingabe sind zwei Schnappschüsse, Ausgabe die Liste der Pfade:
+
+```ts
+export type Snapshot = {
+  head: string                         // git rev-parse HEAD ('' ohne Commit)
+  dirty: Record<string, string>        // Pfad → git hash-object des Inhalts, für alles aus git status
+}
+
+export type WriteCheck = {
+  checked: boolean                      // false: kein git, git-Fehler, writeCheck off
+  reason?: string                       // warum nicht geprüft
+  changed: { path: string; change: 'created' | 'modified' | 'deleted' }[]
+  outside: string[]                     // außerhalb von owns, eindeutig dieser Rolle
+  unattributed: string[]                // außerhalb aller owns, Rollen liefen parallel
+  byOtherRole: { path: string; role: string }[]
+}
+
+export function compareSnapshots(before: Snapshot, after: Snapshot, committed: string[], owns: readonly string[],
+  others: { role: string; owns: readonly string[] }[]): WriteCheck
+```
+
+Schnappschuss: `git status --porcelain=v1 -z --untracked-files=all`, dann für jeden genannten Pfad `git hash-object`. Commits während des Laufs: `git diff --name-status -z <head vorher> <head nachher>` ergibt `committed`. Ohne `owns` prüft relay trotzdem und trägt alle Änderungen unter `artifacts` nach, die der Worker nicht selbst genannt hat.
+
+**Im Paket:** neues Feld `write_check` (wird mit gespeichert). Gibt es `outside`-Pfade:
+- Status `done` wird zu `partial`,
+- jeder Pfad steht unter `risks` als `wrote outside owns: <pfad> (<art>)`,
+- die Kopfzeile bekommt `⚠ wrote outside owns (n)`.
+
+`unattributed` und `byOtherRole` stehen nur unter `risks`, der Status bleibt.
+
+---
+
+## 5. Kosten
+
+### 5.1 Was im Paket steht
+
+Die Kopfzeile bleibt eine Zeile, ergänzt um Backend und Verbrauch:
+
+```
+[relay] ingester · run 4 finished (claude · 6 turns, $0.42)
+[relay] coder · run 2 finished (codex · gpt-5.5-codex · 48.2k in (31.0k cached) / 3.1k out tokens)
+[relay] scout · run 7 finished (opencode · ollama/kimi-k3:cloud · 12.4k in / 1.8k out tokens, stopped after 30 min)
+```
+
+Tausender als `k` mit einer Nachkommastelle, unter 1000 als Zahl. `packet.json` bekommt die Felder `usage` (Typ `Usage`) und `backend`. Jede Rolle führt in `$.store` eine Summe (`totals: Usage`), `worker_status` zeigt sie: `· 3 runs, 112.0k in / 9.4k out tokens` bzw. `$1.27`.
+
+### 5.2 Grenzen
+
+- **claude:** `maxBudgetUsd` wie heute, durchgesetzt von der CLI.
+- **codex, opencode:** kein Betrag. Es gilt `runTimeoutMin` wie heute, dazu wahlweise **`maxTokensPerRun`** (Standard `0` = aus): relay zählt die Token live aus den JSONL-Ereignissen (`onLine`) und stoppt den Lauf, sobald Ein- plus Ausgabe-Token die Grenze überschreiten. Weil erst nach einem Zug gezählt wird, kann ein Lauf die Grenze um einen Zug überschreiten. Das Paket meldet dann `partial`, Kopfzeile `stopped at <n> tokens`. Ob es diese Grenze überhaupt geben soll, ist Entscheidung E4.
+
+---
+
+## 6. Paket-Ersatz
+
+Heute baut `fallbackModel` (Haiku) über `$.model.complete` ein fehlendes Paket nach. Neu:
+
+| Einstellung | Werte | Standard |
+|---|---|---|
+| `fallbackBackend` | `claude` · `ollama` · `off` | `claude` |
+| `fallbackModel` | Modell für `claude` | `claude-haiku-5-5` |
+| `ollamaModel` | Modell für `ollama` | leer (dann wie `off`) |
+| `ollamaBin` | wie 2.5 | `ollama` |
+
+`fallbackCompress` bleibt als Schalter erhalten; aus heißt dasselbe wie `fallbackBackend: off`.
+
+**Ollama-Aufruf:** `ollama run <ollamaModel> --format json --hidethinking --nowordwrap`, stdin = `fallbackPrompt(role)` + Leerzeile + `---` + Antwort des Workers. Keine Netz-API, nur der Prozess. Antwort durch `parsePacket`, `compressed_by: 'fallback'`, die Kopfzeile nennt das Modell: `(packet built by fallback compressor ollama/<modell>)`.
+
+**Kette:** Scheitert Ollama (nicht erreichbar, kein JSON, Timeout 120 s), versucht relay **nicht** von selbst Haiku, sondern meldet `failed` wie heute bei ausgeschaltetem Ersatz (Entscheidung E5).
+
+**Hinweis Datenschutz:** Auf dem Rechner des Nutzers sind nur Ollama-**Cloud**-Modelle installiert. Mit ihnen verlässt die Worker-Antwort den Rechner genauso wie mit Haiku. Ein lokales Modell muss der Nutzer erst holen (`ollama pull <modell>`, Plan P11).
+
+**Weniger Ersatz bei codex:** codex kann seine letzte Antwort mit `--output-schema` auf ein JSON-Schema zwingen. Dann ginge aber der Volltext verloren, oder er müsste als Feld im JSON stehen. Vorschlag: **nicht nutzen**, das Paket kommt wie bei allen Backends aus dem ```relay-Block. Offen als Entscheidung E6.
+
+---
+
+## 7. Warteschlange auf der Platte
+
+### 7.1 Ort und Format
+
+Datei `<relayDir>/queue.json` (Standard `.relay/queue.json`). Sie wird wie `runs/` in die `.gitignore` eingetragen. Dazu kommen `.relay/tmp/` und `.relay/worktrees/`. Alle Einträge schreibt die bestehende `ensureGitignore` (bei `gitignore: true`).
+
+```ts
+export type QueueFile = {
+  version: 1
+  owner?: { session: string; heartbeatAt: string }   // ISO-Zeit, siehe 7.3
+  jobs: QueuedJob[]
+}
+
+export type QueuedJob = {
+  id: string                    // 'j_' + 12 Zeichen zufällig
+  role: string
+  task: string
+  model?: string
+  enqueuedAt: string            // ISO
+  state: 'queued' | 'running'
+  run?: number                  // gesetzt bei running
+  startedAt?: string
+  backend: BackendId            // beim Einreihen festgehalten
+}
+```
+
+Fertige Läufe stehen **nicht** in der Datei; sie werden beim Abschluss entfernt (ihr Ergebnis liegt in `runs/`).
+
+**Schreiben:** Nach jeder Änderung schreibt relay die ganze Datei, vorher die alte Fassung nach `queue.json.bak`. Ist `queue.json` beim Lesen kaputt, gilt `queue.json.bak`, und `worker_status` meldet das einmal. Kann die Plugin-API umbenennen, wird stattdessen über `queue.json.tmp` und Umbenennen geschrieben (Voraussetzung V3).
+
+### 7.2 Wiederaufnahme bei `session.start`
+
+1. Datei lesen. Jobs mit `state: 'queued'` bleiben in ihrer Reihenfolge und starten über `pump`, sobald Plätze frei sind.
+2. Jobs mit `state: 'running'` sind tot: Kindprozesse enden mit dem Modul. relay schreibt für sie ein Paket `failed` mit „unterbrochen durch Neustart des Plugins oder Ende der Session“, macht die Schreibprüfung gegen den Stand vor dem Lauf (der Schnappschuss liegt in `.relay/tmp/<rolle>-<lauf>.snapshot.json`), entfernt den Job und meldet das Paket auf dem gewohnten Weg. **Kein automatischer Neustart** (Entscheidung E7), weil ein halber Lauf schon geschrieben haben kann.
+3. Die Session-IDs der Rollen bleiben wie heute in `$.store`; der nächste Auftrag setzt fort.
+4. Rollen, die es in `$.store` nicht mehr gibt, deren Jobs aber in der Datei stehen, legt relay mit den Werten der Rollen-Datei neu an. Gibt es die Rolle dort auch nicht, bleibt der Job liegen und `worker_status` zeigt ihn als „verwaist“.
+
+### 7.3 Zwei Sessions im selben Projekt
+
+Jede Claude-Session mit relay würde dieselbe Datei lesen. `owner` legt fest, wer die Warteschlange abarbeitet:
+
+- Beim Start übernimmt eine Session die Datei, wenn `owner` fehlt oder `heartbeatAt` älter als 3 Minuten ist. Sie erneuert `heartbeatAt` jede Minute (`$.clock.after`).
+- Eine zweite Session sieht einen frischen `owner` und arbeitet **nur lesend**: `worker_status` zeigt Rollen und Warteschlange mit dem Hinweis „wird von einer anderen Session abgearbeitet“, `worker_send` lehnt mit dieser Meldung ab (Entscheidung E8).
+
+### 7.4 Was sich für die Werkzeuge ändert
+
+- `worker_send` bekommt die Felder `backend` (`claude` · `codex` · `opencode`, gespeichert wie `model`) und `isolation` (`shared` · `worktree`, gespeichert).
+- `worker_status` zeigt je Rolle Backend, Fassung, Verbrauch, ignorierte Regeln; die Warteschlange mit Wartezeit; verwaiste Jobs.
+- Kein weiteres Werkzeug. Einen wartenden Job zu löschen bleibt außen vor (Entscheidung E9).
+
+---
+
+## 8. Einstellungen und Rollen-Datei
+
+Neu in `plugin.json` (`userConfig`), alles mit Standard so, dass ohne Änderung alles wie in 0.3.0 läuft:
+
+| Einstellung | Standard | Bedeutung |
+|---|---|---|
+| `defaultBackend` | `claude` | Backend für Rollen ohne eigene Angabe |
+| `codexBin` | `codex` | wie 2.5 |
+| `codexSandbox` | `workspace-write` | `workspace-write` · `read-only` |
+| `opencodeBin` | `opencode` | wie 2.5 |
+| `opencodeStandalone` | an | `--standalone` (3.3) |
+| `writeCheck` | `report` | `report` · `off` (4.3) |
+| `isolation` | `shared` | Standard für Rollen: `shared` · `worktree` |
+| `maxTokensPerRun` | `0` | nur codex/opencode (5.2) |
+| `fallbackBackend`, `ollamaModel`, `ollamaBin` | siehe 6 | |
+| `herdrBin` | leer | siehe 9 |
+
+Hinweis: `writeCheck: report` ist neu standardmäßig an. Ohne git-Repo meldet es nur einmal „nicht geprüft“, verhält sich also wie 0.3.0.
+
+Rollen-Datei, neue Felder je Rolle: `backend`, `isolation`. `model` gilt im Format des Backends. Beispiel:
+
+```json
+{
+  "roles": {
+    "ingester": { "backend": "opencode", "model": "ollama/kimi-k3:cloud", "owns": ["wiki/sources/"] },
+    "coder":    { "backend": "codex", "model": "gpt-5.5-codex", "effort": "high", "owns": ["src/"], "isolation": "worktree" },
+    "architect": { "owns": ["wiki/_schema/"], "effort": "high" }
+  }
+}
+```
+
+Wechselt eine Rolle ihr Backend, ist ihre alte Session nutzlos: relay verwirft sie (wie `fresh: true`) und sagt es in der Antwort von `worker_send`.
+
+---
+
+## 9. herdr (optional, nur Anzeige)
+
+- relay schreibt während jedes Laufs `<relayDir>/runs/<rolle>/live.log`: für JSONL-Backends eine lesbare Zeile je Ereignis (Werkzeug, Text gekürzt, Token), für claude nur Start und Ende (claude liefert mit `--output-format json` nichts zwischendurch). Diese Datei gibt es **immer**, mit oder ohne herdr.
+- Einstellung `herdrBin` (Standard leer = aus). Ist sie gesetzt, öffnet relay beim Start eines Laufs ein Pane je Rolle, das `live.log` anzeigt, und schließt es nicht (der Nutzer schließt es). Die genauen herdr-Befehle legt der Bau an der installierten Fassung fest und trägt sie hier nach; herdr ist auf dem Rechner noch nicht installiert (Plan P12).
+- Fehlt herdr oder scheitert der Aufruf, läuft der Worker trotzdem; `worker_status` meldet einmal „herdr nicht erreichbar“. relay hängt in keinem Punkt von herdr ab.
+
+---
+
+## 10. Tests
+
+Alle Tests laufen mit `claude plugin test .` wie in der CI (Ubuntu und Windows). Keine echten Modelle, kein Python: die gefälschten CLIs sind Node-Skripte.
+
+### 10.1 Gefälschte CLIs
+
+`plugins/relay/hooks/fakes/fake-claude.mjs`, `fake-codex.mjs`, `fake-opencode.mjs`, `fake-ollama.mjs`. Jede:
+- schreibt `argv`, stdin und die relay-Umgebungsvariablen nach `$RELAY_FAKE_LOG` (JSON je Aufruf), damit Tests den Aufruf prüfen,
+- spielt ein Szenario aus `$RELAY_FAKE_SCENARIO`: `ok`, `no-packet`, `error`, `auth`, `session-not-found`, `crash` (Exit 2 ohne Ausgabe), `hang` (wartet ewig), `slow-tokens` (ein Zug pro Sekunde mit 10k Token), `write-outside` (schreibt eine Datei außerhalb von `owns`), `commit` (schreibt und committet),
+- gibt die Ausgabe im Format der echten CLI aus, abgeleitet aus Testvorlagen echter Läufe (K5).
+
+Eingebunden über die Bin-Einstellungen als Liste: `["node", "<pfad>/fake-codex.mjs"]`.
+
+### 10.2 Testfälle
+
+| Bereich | Fälle | Marke |
+|---|---|---|
+| Aufbau je Backend (rein) | neu/fortsetzen, mit/ohne Modell, Effort-Abbildung, Sandbox bei codex-Fortsetzen vorhanden, `--skip-git-repo-check` ohne git, opencode-Modell ohne `/` abgelehnt, lange Aufgabe → `--file`, claude-argv zeichengleich zu 0.3.0 | [Claude-prüfbar] |
+| Auslesen je Backend (rein) | Antwort, Session-ID, Token-Summe über mehrere Züge, Kosten, jeder Fehlerfall aus 3.1–3.3, kaputte JSONL-Zeilen werden übersprungen | [Claude-prüfbar] |
+| Regel-Übersetzung (rein) | `Bash(git push:*)` → opencode-Muster, ignorierte Regeln werden gemeldet | [Claude-prüfbar] |
+| Schreibprüfung (rein) | `compareSnapshots`: neu, geändert, gelöscht, vorher schon geändert und erneut geändert, Commit im Lauf, parallel laufende Rollen, kein git | [Claude-prüfbar] |
+| Start (mit Fake) | jede Fake-CLI startet, Paket kommt an, Session-ID wird beim nächsten Lauf weitergegeben | [Claude-prüfbar], Voraussetzung V2 |
+| Warteschlange (mit Fake) | `maxParallel 1`: zweiter Auftrag wartet; gleiche Rolle zweimal → seriell; `queue.json` nach jedem Schritt; Neustart mit `queued` → läuft weiter; Neustart mit `running` → Paket „unterbrochen“; kaputte Datei → `.bak`; zweite Session → nur lesend | [Claude-prüfbar] |
+| Timeout (mit Fake `hang`) | Lauf wird gestoppt, Paket `partial`/`failed`, Platz wird frei | [Claude-prüfbar], wenn die Test-Uhr steuerbar ist (V4), sonst über eine verborgene Testeinstellung in Sekunden |
+| Token-Grenze (Fake `slow-tokens`) | Stopp nach Überschreiten, Kopfzeile | [Claude-prüfbar] |
+| Schreibprüfung (Fake `write-outside`, `commit`) in einem Temp-git-Repo | Konflikt im Paket, Status `partial` | [Claude-prüfbar] |
+| Ersatz-Verdichter (Fake `no-packet` + `fake-ollama`) | Paket aus Ollama, Ollama scheitert → `failed` | [Claude-prüfbar] |
+| herdr aus/fehlend | Lauf unbeeinflusst | [Claude-prüfbar] |
+
+---
+
+## 11. Offene Entscheidungen
+
+1. **E1 – Sicherheitsmodell.** Vorschlag: A (Schreibprüfung, melden) Pflicht für alle, D für codex, E für opencode, C (Worktree) wahlweise je Rolle, B (zurücksetzen) nicht jetzt. Alternativen: C für alle Nicht-claude-Rollen erzwingen; oder B gleich mitbauen.
+2. **E2 – Parallele Rollen im selben Ordner.** Vorschlag: erlaubt, Zuordnung nach 4.3 („vermutlich von …“, „nicht eindeutig“). Alternative „seriell“: Bei `writeCheck: report` laufen schreibende Rollen im geteilten Ordner nacheinander, nur Worktree-Rollen parallel.
+3. **E3 – Ergebnisse aus Worktrees.** Vorschlag: relay führt nicht zusammen; das Paket nennt den Branch `relay/<rolle>` unter `needs_from_main`, der Main-Agent bzw. der Nutzer führt zusammen. Alternative: relay führt selbst per `git merge --ff-only` zusammen, wenn nur `owns`-Pfade geändert wurden.
+4. **E4 – Token-Grenze für codex/opencode.** Vorschlag: `maxTokensPerRun` einbauen, Standard aus. Alternative: weglassen, nur Timeout.
+5. **E5 – Ersatz-Kette.** Vorschlag: Scheitert Ollama, gibt es kein Paket (`failed`, Volltext lesbar). Alternative: dann Haiku versuchen.
+6. **E6 – `--output-schema` bei codex.** Vorschlag: nicht nutzen. Alternative: nutzen, mit Volltext als Feld im JSON, dafür fast nie Ersatz-Verdichter bei codex.
+7. **E7 – Unterbrochene Läufe nach Neustart.** Vorschlag: als `failed` melden, nicht neu starten. Alternative: wieder vorn einreihen.
+8. **E8 – Zweite Session im selben Projekt.** Vorschlag: nur lesend, `worker_send` lehnt ab. Alternative: `worker_send` reiht in die Datei ein, die besitzende Session arbeitet es ab (dann kommen die Pakete aber bei der anderen Session an).
+9. **E9 – Wartende Aufträge zurückziehen.** Vorschlag: nicht in diesem Vertrag. Alternative: `worker_cancel` (Job aus der Warteschlange entfernen, laufenden Lauf stoppen) gleich mit festlegen.
+10. **E10 – Ort der Warteschlange.** Vorschlag: `.relay/queue.json` im Projekt (sichtbar, von mehreren Sessions lesbar). Alternative: nur im `$.store` des Plugins wie die Rollen.
+11. **E11 – Fassung von relay.** Vorschlag: 0.4.0, weil Einstellungen und Paketfelder hinzukommen, aber nichts Bestehendes bricht.
+
+---
+
+## 12. Voraussetzungen und Prüfungen vor dem Bau
+
+**Plugin-API** (an `claude-code` prüfen, bevor gebaut wird):
+- **V1** Liefert `$.process.spawn` den Exit-Code? Wenn nicht, werten die Backends nur stdout/stderr aus (die Abbildungen oben sind dafür ausgelegt).
+- **V2** Startet `$.process.spawn` in `claude plugin test` echte Prozesse? Wenn nicht, bekommt `start()` eine austauschbare Spawn-Funktion, und die Tests mit Fake-CLI laufen über sie.
+- **V3** Kann `$.fs` umbenennen und löschen? Sonst Schreibweise mit `.bak` (7.1), und `tempFiles` werden überschrieben statt gelöscht.
+- **V4** Lässt sich `$.clock` im Test vorspulen?
+- **V5** Beendet `child.return()` unter Windows den ganzen Prozessbaum (codex startet Sandbox-Prozesse)?
+
+**CLIs** (erste Bauaufgabe, jeweils mit einem echten, kurzen Lauf):
+- **K1** Liest `opencode run` die Aufgabe von stdin?
+- **K2** Nimmt `opencode run --session` eine von relay vergebene ID an, und in welchem Format?
+- **K3** Stoppt `--standalone` beim Beenden des Prozesses auch die Arbeit?
+- **K4** Versteht opencodes `permission.edit` Pfadmuster?
+- **K5** Genaue JSON-Felder von codex (`turn.completed.usage`, `item.completed.item`) und opencode (`step_finish.part.tokens`) als Testvorlage festhalten.
+
+---
+
+## 13. Umsetzungsplan
+
+| Nr. | Schritt | Marke |
+|---|---|---|
+| P1 | Vertrag abnehmen, Entscheidungen E1–E11 eintragen | [braucht Nutzer/Hardware] |
+| P2 | Voraussetzungen V1–V4 an der Plugin-API prüfen, Ergebnis hier eintragen | [Claude-prüfbar] |
+| P3 | Je ein echter Kurzlauf codex und opencode (Ollama-Cloud) zur Testvorlage, K1–K5 beantworten (kostet Token, braucht Anmeldung) | [braucht Nutzer/Hardware] |
+| P4 | `backends.ts`: Typen, claude-Backend als Auszug aus `start()`/`finish()` ohne Verhaltensänderung, Regressionstest argv | [Claude-prüfbar] |
+| P5 | codex- und opencode-Backend mit Aufbau, Live-Lesen, Auslesen, Fehlerabbildung, Tests mit Vorlagen | [Claude-prüfbar] |
+| P6 | Fake-CLIs und Start-Tests | [Claude-prüfbar] |
+| P7 | Schreibprüfung `compareSnapshots` und Einbindung, Paketfeld `write_check` | [Claude-prüfbar] |
+| P8 | Worktree-Isolation je Rolle | [Claude-prüfbar] |
+| P9 | Codex-Sandbox und V5 unter Windows im echten Lauf prüfen (Schreiben außerhalb, `git push`, Stopp bei Timeout) | [braucht Nutzer/Hardware] |
+| P10 | Warteschlange auf der Platte, Wiederaufnahme, Besitzer-Herzschlag | [Claude-prüfbar] |
+| P11 | Ersatz-Verdichter Ollama bauen | [Claude-prüfbar] |
+| P11a | Probe mit lokalem Modell (`ollama pull`) | [braucht Nutzer/Hardware] |
+| P12 | `live.log` immer | [Claude-prüfbar] |
+| P12a | herdr-Pane, sobald herdr installiert ist | [braucht Nutzer/Hardware] |
+| P13 | Kosten/Token in Kopfzeile, `packet.json`, Summen in `worker_status` | [Claude-prüfbar] |
+| P14 | README, Skill `relay-orchestrator`, `plugin.json`-Einstellungen, Fassung | [Claude-prüfbar] |
+| P15 | Echter Gesamtlauf: drei Rollen, je ein Backend, parallel, mit Neustart dazwischen | [braucht Nutzer/Hardware] |
