@@ -15,16 +15,25 @@ export type QueuedJob = {
 
 export type QueueFile = {
   version: 1
-  owner?: { session: string; heartbeatAt: string }
+  // token: this module's own claim; a session that finds another token there
+  // stops working the queue (contract 0001, Nachtrag 1).
+  owner?: { session: string; heartbeatAt: string; token?: string }
   jobs: QueuedJob[]
 }
 
 // A session that has not beaten its heart for this long gives up the queue.
 export const OWNER_STALE_MS = 3 * 60_000
 export const HEARTBEAT_MS = 60_000
+// How long a fresh claim waits before it reads the file back to see whether
+// it held ($.fs has no exclusive create, V3).
+export const CLAIM_SETTLE_MS = 2_000
 
 export function emptyQueue(): QueueFile {
   return { version: 1, jobs: [] }
+}
+
+export function newToken(): string {
+  return crypto.randomUUID().replace(/-/g, '')
 }
 
 export function newJobId(): string {
@@ -63,8 +72,13 @@ export function loadQueue(main: string | undefined, backup: string | undefined):
 // owner's heartbeat is stale.
 export function mayOwn(q: QueueFile, session: string, now: number): boolean {
   if (!q.owner || q.owner.session === session) return true
-  const beat = Date.parse(q.owner.heartbeatAt)
-  return !Number.isFinite(beat) || now - beat > OWNER_STALE_MS
+  return !isFresh(q.owner, now)
+}
+
+// Whether an owner's heartbeat is recent enough to hold the queue.
+export function isFresh(owner: { heartbeatAt: string }, now: number): boolean {
+  const beat = Date.parse(owner.heartbeatAt)
+  return Number.isFinite(beat) && now - beat <= OWNER_STALE_MS
 }
 
 export function serializeQueue(q: QueueFile): string {

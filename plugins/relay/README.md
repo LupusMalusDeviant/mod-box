@@ -19,8 +19,9 @@ Du redest nur mit dem Main-Agent. Er verteilt Aufgaben an die Worker. Die Worker
 
 - **Rolle**: ein Worker mit Namen, Aufgabenbeschreibung (*brief*) und eigenem Schreibbereich (*owns*). Eine Rolle behält ihre Session über viele Aufgaben hinweg und erinnert sich an frühere Läufe.
 - **Lauf**: eine Aufgabe für eine Rolle. Er läuft im Hintergrund als `claude -p`, `codex exec` oder `opencode run`. Der Main-Agent arbeitet währenddessen weiter. Was der Lauf gerade tut, steht in `.relay/runs/<rolle>/live.log`.
-- **Schreibprüfung**: Nach jedem Lauf vergleicht relay den git-Stand mit dem vor dem Lauf, für alle Backends gleich. Schreibt ein Worker außerhalb seiner `owns`, wird `done` zu `partial`, der Pfad steht unter den Risiken und die Kopfzeile trägt `⚠ wrote outside owns (n)`. Die Prüfung meldet nur, sie macht nichts rückgängig.
-- **Warteschlange**: Wartende Aufträge liegen in `.relay/queue.json` und überstehen einen Neustart des Plugins.
+- **Schreibprüfung**: Nach jedem Lauf vergleicht relay den git-Stand mit dem vor dem Lauf, für alle Backends gleich. Schreibt ein Worker außerhalb seiner `owns`, wird `done` zu `partial`, der Pfad steht unter den Risiken und die Kopfzeile trägt `⚠ wrote outside owns (n)`. Die Prüfung meldet nur, sie macht nichts rückgängig. Eine Umbenennung zählt am alten Ort als Löschung. Kann git einen Pfad nicht vergleichen (z. B. ein Submodul), sagt das Paket es unter den Risiken (`⚠ write check incomplete`). `owns` unterscheidet Groß- und Kleinschreibung so, wie das Dateisystem des Projekts es tut.
+- **Warteschlange**: Wartende Aufträge liegen in `.relay/queue.json` und überstehen einen Neustart des Plugins. Lässt sich die Datei nicht schreiben, nimmt `worker_send` den Auftrag nicht an und startet nichts.
+- **Keine Zugangsdaten nach außen**: Was relay ablegt oder meldet (`live.log`, Volltexte, Pakete, `worker_status`), wird vorher von Zugangsdaten bereinigt (`Authorization`-Kopfzeilen, `token=…`, `password: …`, Benutzer:Passwort in URLs, bekannte Schlüsselformate). Nur `queue.json` hält einen wartenden Auftrag wörtlich, weil relay ihn so starten muss.
 - **Relay-Paket**: das Ergebnis eines Laufs. Es enthält Status, Zusammenfassung, Entscheidungen, Fakten, geänderte Dateien, offene Fragen, was der Main-Agent tun oder entscheiden muss, Risiken und nächste Schritte.
 - **Ergebnisse laufen immer über den Main-Agent.** Worker sprechen nie direkt miteinander. Damit ist klar, wer was weiß und wer was entscheidet.
 
@@ -69,7 +70,7 @@ Einstellbar in der Mod Box unter ⚙ oder mit `/plugin configure relay@<marketpl
 | **Disallowed tools** (`disallowedTools`) | `Bash(git push:*)` | Werkzeuge, die Worker nie nutzen dürfen, z. B. `Bash(git push:*), Bash(rm:*)`. Pro Rolle überschreibbar. |
 | **Enforce ownership** (`enforceOwns`) | an | Ein claude-Worker darf nur in seinen eigenen Pfaden (*owns*) Dateien anlegen oder ändern. Andere Schreibversuche werden blockiert, und der Worker meldet stattdessen, was geändert werden müsste. Gilt für die Werkzeuge Edit, Write und NotebookEdit. Schreiben über die Shell erfasst der Wächter **nicht**; das fängt die Schreibprüfung nachträglich auf. |
 | **Write check** (`writeCheck`) | `report` | Vergleicht nach jedem Lauf den git-Stand mit dem davor und meldet Schreiben außerhalb von `owns`, auch über die Shell und per Commit, für alle Backends. Braucht ein git-Repo, sonst wird nicht geprüft. Von git ignorierte Dateien sieht die Prüfung nicht. `off` = keine Prüfung. |
-| **Default isolation** (`isolation`) | `shared` | `shared`: Rollen arbeiten im Projektordner. `worktree`: jede Rolle in einem eigenen git-Worktree `.relay/worktrees/<rolle>` auf dem Branch `relay/<rolle>`. relay führt nichts zusammen, das Paket nennt den Branch. Nicht eingecheckte Dinge (`node_modules`, `.env`) fehlen im Worktree. Pro Rolle überschreibbar. |
+| **Default isolation** (`isolation`) | `shared` | `shared`: Rollen arbeiten im Projektordner. `worktree`: jede Rolle in einem eigenen git-Worktree `.relay/worktrees/<rolle>` auf dem Branch `relay/<rolle>`. relay führt nichts zusammen, das Paket nennt den Branch. Nicht eingecheckte Dinge (`node_modules`, `.env`) fehlen im Worktree. Lässt sich der Worktree nicht anlegen oder ist der Ordner nicht der eigene (ein Link, kein registrierter Worktree, ein anderer Branch), startet der Lauf nicht und meldet `failed`; relay weicht nie auf den Projektordner aus. Pro Rolle überschreibbar. |
 
 Was ein Backend nicht umsetzen kann (z. B. `allowedTools` bei codex), sagt `worker_send` in seiner Antwort und `worker_status` hinter der Rolle (`· ignored: …`). opencode bekommt `git push` und `Bash(...)`-Verbote als eigene Rechte, codex verlässt sich auf die Sandbox.
 
@@ -91,7 +92,7 @@ Die Kopfzeile eines Pakets nennt Backend und Verbrauch, z. B. `(claude · 6 turn
 
 | Einstellung | Standard | Was sie bewirkt |
 |---|---|---|
-| **Relay folder** (`relayDir`) | `.relay` | Projektordner für die Volltexte (`runs/`), die Warteschlange (`queue.json`), Hilfsdateien (`tmp/`), Worktrees (`worktrees/`) und die Rollen-Datei. |
+| **Relay folder** (`relayDir`) | `.relay` | Projektordner für die Volltexte (`runs/`), die Warteschlange (`queue.json`), Hilfsdateien (`tmp/`), Worktrees (`worktrees/`) und die Rollen-Datei. Muss im Projekt liegen; ein Pfad nach außen (`../…`, absolut) wird durch `.relay` ersetzt. |
 | **Roles file** (`rolesFile`) | `.relay/roles.json` | Datei mit fest definierten Rollen (siehe unten). Sie gehört ins Repository. |
 | **Ignore run files in git** (`gitignore`) | an | Trägt in Git-Projekten `.relay/runs/`, `queue.json`, `queue.json.bak`, `tmp/` und `worktrees/` in die `.gitignore` ein. Die Rollen-Datei bleibt versioniert. |
 | **Runs kept per role** (`keepRuns`) | `20` | Wie viele Läufe pro Rolle auf der Platte bleiben. Ältere werden überschrieben. `0` = alle behalten. |
@@ -143,7 +144,9 @@ Faustregel: **Keine zwei Rollen besitzen denselben Pfad.** Gemeinsame Dateien wi
 ## Grenzen
 
 - Worker laufen als Unterprozesse der Session. Wird das Plugin neu geladen oder endet die Session, werden laufende Worker beendet. Sie kommen beim nächsten Start als `interrupted` zurück (mit Schreibprüfung) und werden **nicht** neu gestartet. Wartende Aufgaben bleiben in `.relay/queue.json` und starten wieder. Die Sessions der Rollen bleiben gespeichert, der nächste Auftrag macht mit dem alten Kontext weiter.
-- Pro Projekt arbeitet **eine** Claude-Session die Warteschlange ab. Eine zweite Session im selben Projekt liest nur mit; `worker_send` lehnt dort ab. Nach drei Minuten ohne Lebenszeichen der ersten übernimmt die nächste, die startet.
+- Pro Projekt arbeitet **eine** Claude-Session die Warteschlange ab. Eine zweite Session im selben Projekt liest nur mit; `worker_send` lehnt dort ab. Nach drei Minuten ohne Lebenszeichen der ersten übernimmt die nächste, die startet. Starten zwei gleichzeitig, gilt der Anspruch, der nach zwei Sekunden noch in der Datei steht; findet eine Session später einen frischeren fremden Anspruch, hört sie auf und liest nur noch.
+- Laufende Aufträge, deren Rolle es nicht mehr gibt oder deren Meldung scheitert, bleiben nach einem Neustart in der Warteschlange stehen; `worker_status` zeigt sie, der nächste Start versucht es wieder.
+- opencode bekommt jede Aufgabe als Datei (`.relay/tmp/<rolle>-<lauf>.md`, absoluter Pfad, nach dem Lauf geleert), nie auf der Befehlszeile.
 - Worker können dir keine Fragen stellen. Alles, was eine Entscheidung braucht, kommt im Paket unter „Needs from main“ zurück.
 - Jeder Lauf ist eine vollständige Session der jeweiligen CLI und kostet entsprechend. Für kurze Recherchen sind normale Subagents günstiger.
 - Anmeldung und Anbieter für codex und opencode richtest du in der jeweiligen CLI selbst ein; relay fasst das nicht an.

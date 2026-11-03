@@ -126,7 +126,11 @@ describe('opencode backend', () => {
     await w.send($, { role: 'scout', task: 'Look', model: 'ollama/kimi-k3:cloud', disallowedTools: ['Bash(rm:*)'], owns: ['notes/'] })
     await w.until(() => w.submitted.length === 2)
     const a = w.spawns[0]!
-    expect(a.argv).toEqual(['opencode', 'run', '--format', 'json', '--standalone', '--auto', '-m', 'ollama/kimi-k3:cloud', '--agent', 'relay-scout', '--title', 'relay scout', 'Look'])
+    expect(a.argv).toEqual([
+      'opencode', 'run', '--format', 'json', '--standalone', '--auto', '-m', 'ollama/kimi-k3:cloud', '--agent', 'relay-scout', '--title', 'relay scout',
+      'The task is in the attached file.', '--file', '/w/.relay/tmp/scout-2.md',
+    ])
+    expect(a.attachment).toBe('Look')
     const cfg = JSON.parse(a.env.OPENCODE_CONFIG_CONTENT!)
     expect(cfg.permission.bash).toEqual({ 'git push*': 'deny', 'rm*': 'deny' })
     expect(cfg.permission.edit).toEqual({ 'notes/**': 'allow', '*': 'deny' })
@@ -139,14 +143,35 @@ describe('opencode backend', () => {
     expect(b[b.indexOf('--session') + 1]).toBe('ses_abc')
   })
 
-  test('a long task goes into a file', { options: { defaultBackend: 'opencode' } }, async ($: any, on: any) => {
+  test('every task goes into a file, cleared after the run', { options: { defaultBackend: 'opencode' } }, async ($: any, on: any) => {
     const w = fakeWorld(on)
     if (!(await w.start($))) return
     await w.send($, { role: 'scout', task: 'x'.repeat(30_000), model: 'ollama/m' })
     await w.until(() => w.submitted.length === 1)
     const argv = w.spawns[0]!.argv
-    expect(argv[argv.indexOf('--file') + 1]).toBe('.relay/tmp/scout-1.md')
+    expect(argv[argv.indexOf('--file') + 1]).toBe('/w/.relay/tmp/scout-1.md')
+    expect(w.spawns[0]!.attachment).toBe('x'.repeat(30_000))
     expect(w.files.get('.relay/tmp/scout-1.md')).toBe('')
+  })
+
+  // Finding 1: a task that looks like an option never reaches argv.
+  test('a task that looks like an option is not one', { options: { defaultBackend: 'opencode' } }, async ($: any, on: any) => {
+    const w = fakeWorld(on)
+    if (!(await w.start($))) return
+    await w.send($, { role: 'scout', task: '--session=ses_other', model: 'ollama/m' })
+    await w.until(() => w.submitted.length === 1)
+    expect(w.spawns[0]!.argv.some(a => a.includes('ses_other'))).toBe(false)
+    expect(w.spawns[0]!.attachment).toBe('--session=ses_other')
+  })
+
+  // Finding 15: in a worktree the worker reads the same file relay wrote.
+  test('a worktree role gets an absolute task file it can read', { options: { defaultBackend: 'opencode' } }, async ($: any, on: any) => {
+    const w = fakeWorld(on)
+    if (!(await w.start($))) return
+    await w.send($, { role: 'scout', task: 'Look in the worktree', model: 'ollama/m', isolation: 'worktree' })
+    await w.until(() => w.submitted.length === 1)
+    expect(w.spawns[0]!.cwd).toBe('/w/.relay/worktrees/scout')
+    expect(w.spawns[0]!.attachment).toBe('Look in the worktree')
   })
 
   test('changing the backend drops the session', async ($: any, on: any) => {

@@ -2,6 +2,8 @@
 // `$`), so building and parsing can be tested without processes; register.ts
 // does the starting.
 
+import { redact } from './protocol.ts'
+
 export type BackendId = 'claude' | 'codex' | 'opencode'
 
 export const BACKEND_IDS: readonly BackendId[] = ['claude', 'codex', 'opencode']
@@ -11,7 +13,7 @@ export type BackendSettings = {
   maxBudgetUsd: number
   codexSandbox: 'workspace-write' | 'read-only'
   opencodeStandalone: boolean
-  tmpDir: string // where long opencode tasks go (relative to the project)
+  tmpDir: string // absolute folder for opencode's task files
 }
 
 // What a run needs; relay fills it from the role, the roles file and the options.
@@ -96,10 +98,20 @@ export const CHECKED_VERSIONS: Record<BackendId | 'ollama', string> = {
   ollama: '0.40.13',
 }
 
-// Longest task opencode gets as an argument; Windows allows 32767 per command line.
-export const MAX_ARG_TASK = 24_000
+// The only text opencode gets as its message argument; the task is in the file.
+export const OPENCODE_TASK_MESSAGE = 'The task is in the attached file.'
 
-const cut = (s: string, n = 500) => (s.length > n ? `${s.slice(0, n)}…` : s)
+// Redacted before it is cut: a cut never leaves half a credential behind.
+const cut = (text: string, n = 500) => {
+  const s = redact(text)
+  return s.length > n ? `${s.slice(0, n)}…` : s
+}
+
+export const isAbsolutePath = (p: string) => /^([a-zA-Z]:)?[\\/]/.test(p)
+
+// A session id a CLI reported, safe to pass as an argument value: it can
+// never read as an option. Anything else starts a fresh session.
+export const isSafeId = (id: string) => /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/.test(id)
 
 // A bin option: a program name, a full path, or a JSON list (program plus
 // fixed leading arguments).
@@ -252,7 +264,7 @@ const codex: Backend = {
     // `codex exec resume` knows neither --sandbox nor --cd in 0.166.0: the
     // sandbox goes through -c, the folder through the process's cwd.
     const argv =
-      spec.isNew || !spec.sessionId
+      spec.isNew || !spec.sessionId || !isSafeId(spec.sessionId)
         ? [...spec.bin, 'exec', '--json', '--sandbox', sandbox, '--cd', spec.cwd, ...shared, '-']
         : [...spec.bin, 'exec', 'resume', '--json', spec.sessionId, '-c', `sandbox_mode="${sandbox}"`, ...shared, '-']
     return { argv, input: spec.task, env: {} }
@@ -319,13 +331,13 @@ const opencode: Backend = {
     if (!spec.model || !spec.model.includes('/')) {
       throw new Error(`opencode needs a model as provider/model (e.g. ollama/kimi-k3:cloud), got "${spec.model ?? ''}".`)
     }
-    const tempFiles: Invocation['tempFiles'] = []
-    let taskArgs = [spec.task]
-    if (spec.task.length > MAX_ARG_TASK) {
-      const path = `${spec.settings.tmpDir}/${spec.role}-${spec.run}.md`
-      tempFiles.push({ path, content: spec.task })
-      taskArgs = ['--file', path, 'The task is in the attached file.']
-    }
+    // The task never goes into argv (contract 0001, Nachtrag 1): there it could
+    // be read as an option and shows in every process list. It goes into a file
+    // at an absolute path, the same one for relay and for a worker that runs in
+    // its own worktree; argv carries only a fixed message.
+    if (!isAbsolutePath(spec.settings.tmpDir)) throw new Error(`opencode needs an absolute folder for the task file, got "${spec.settings.tmpDir}".`)
+    const path = `${spec.settings.tmpDir.replace(/[\\/]+$/, '')}/${spec.role}-${spec.run}.md`
+    const sessionId = !spec.isNew && spec.sessionId && isSafeId(spec.sessionId) ? spec.sessionId : undefined
     const argv = [
       ...spec.bin,
       'run',
@@ -337,15 +349,17 @@ const opencode: Backend = {
       spec.model,
       '--agent',
       `relay-${spec.role}`,
-      ...(!spec.isNew && spec.sessionId ? ['--session', spec.sessionId] : []),
+      ...(sessionId ? ['--session', sessionId] : []),
       '--title',
       `relay ${spec.role}`,
-      ...taskArgs,
+      OPENCODE_TASK_MESSAGE,
+      '--file',
+      path,
     ]
     return {
       argv,
       env: { OPENCODE_CONFIG_CONTENT: JSON.stringify(opencodeConfig(spec)) },
-      ...(tempFiles.length ? { tempFiles } : {}),
+      tempFiles: [{ path, content: spec.task }],
     }
   },
   onLine(line, acc) {

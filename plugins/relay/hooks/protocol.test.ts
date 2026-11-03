@@ -49,7 +49,7 @@ test('ownership: owned, foreign, outside and escaping paths', async () => {
   const owns = ['wiki/sources/']
   expect(ownershipDenial('wiki/sources/a.md', cwd, owns)).toBe(undefined)
   expect(ownershipDenial('C:\\proj\\wiki\\sources\\b.md', cwd, owns)).toBe(undefined)
-  expect(ownershipDenial('C:/PROJ/wiki/sources/c.md', cwd, owns)).toBe(undefined)
+  expect(ownershipDenial('C:/PROJ/wiki/sources/c.md', cwd, owns, { caseInsensitive: true })).toBe(undefined)
   expect(ownershipDenial('wiki/_schema/x.md', cwd, owns)?.includes('not owned')).toBe(true)
   expect(ownershipDenial('wiki/sources/../_schema/x.md', cwd, owns)?.includes('..')).toBe(true)
   expect(ownershipDenial('D:/other/x.md', cwd, owns)?.includes('outside')).toBe(true)

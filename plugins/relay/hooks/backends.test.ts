@@ -11,8 +11,22 @@ import {
   type LaunchSpec,
   type ProcessResult,
 } from './backends.ts'
-import { applyWriteCheck, compareSnapshots, parseNameStatus, parsePorcelain, type Packet } from './protocol.ts'
-import { loadQueue, mayOwn, serializeQueue } from './queue.ts'
+import {
+  applyWriteCheck,
+  compareSnapshots,
+  isOwnedPath,
+  isSamePath,
+  ownershipDenial,
+  parseNameStatus,
+  parsePorcelain,
+  parseWorktreeList,
+  redact,
+  redactDeep,
+  safeRelayDir,
+  UNHASHED,
+  type Packet,
+} from './protocol.ts'
+import { isFresh, loadQueue, mayOwn, parseQueue, serializeQueue } from './queue.ts'
 
 const spec = (over: Partial<LaunchSpec> = {}): LaunchSpec => ({
   role: 'r',
@@ -26,7 +40,7 @@ const spec = (over: Partial<LaunchSpec> = {}): LaunchSpec => ({
   cwd: '/w',
   isGitRepo: true,
   bin: ['x'],
-  settings: { permissionMode: 'acceptEdits', maxBudgetUsd: 0, codexSandbox: 'workspace-write', opencodeStandalone: true, tmpDir: '.relay/tmp' },
+  settings: { permissionMode: 'acceptEdits', maxBudgetUsd: 0, codexSandbox: 'workspace-write', opencodeStandalone: true, tmpDir: '/w/.relay/tmp' },
   ...over,
 })
 const done = (stdout: string, exitCode = 0, stderr = ''): ProcessResult => ({ stdout, stderr, exitCode, isTimedOut: false, isStoppedByLimit: false })
@@ -50,6 +64,27 @@ describe('building', () => {
 
   test('opencode: a model without a provider is refused before the start', () => {
     expect(() => BACKENDS.opencode.build(spec({ model: 'kimi' }))).toThrow('provider/model')
+  })
+
+  // Findings 1 and 15: the task never goes into argv; the file path is absolute.
+  test('opencode: the task goes into an absolute file, argv holds a fixed message', () => {
+    const task = '--session=ses_other Authorization: Bearer example-bearer-value-0001'
+    const inv = BACKENDS.opencode.build(spec({ model: 'ollama/m', task, role: 'scout', run: 4 }))
+    expect(inv.argv.some(a => a.includes('ses_other') || a.includes('example-bearer'))).toBe(false)
+    expect(inv.argv.slice(-3)).toEqual(['The task is in the attached file.', '--file', '/w/.relay/tmp/scout-4.md'])
+    expect(inv.tempFiles).toEqual([{ path: '/w/.relay/tmp/scout-4.md', content: task }])
+    expect(inv.input).toBe(undefined)
+    expect(() => BACKENDS.opencode.build(spec({ model: 'ollama/m', settings: { ...spec().settings, tmpDir: '.relay/tmp' } }))).toThrow('absolute')
+  })
+
+  test('a stored session id that could read as an option starts fresh', () => {
+    const o = BACKENDS.opencode.build(spec({ model: 'ollama/m', isNew: false, sessionId: '--agent=build' })).argv
+    expect(o).not.toContain('--session')
+    expect(BACKENDS.opencode.build(spec({ model: 'ollama/m', isNew: false, sessionId: 'ses_1' })).argv).toContain('ses_1')
+    const c = BACKENDS.codex.build(spec({ isNew: false, sessionId: '--dangerously-bypass-approvals-and-sandbox' })).argv
+    expect(c[1]).toBe('exec')
+    expect(c[2]).toBe('--json')
+    expect(c.join(' ')).not.toContain('dangerously')
   })
 
   test('opencode: Bash rules become deny patterns, others are listed as ignored', () => {
@@ -137,16 +172,63 @@ describe('write check', () => {
     expect(parsePorcelain(' M a.ts\0?? b/c.md\0R  new.ts\0old.ts\0 D gone.ts\0')).toEqual([
       { path: 'a.ts', code: ' M' },
       { path: 'b/c.md', code: '??' },
-      { path: 'new.ts', code: 'R ' },
+      { path: 'new.ts', code: 'R ', orig: 'old.ts' },
       { path: 'gone.ts', code: ' D' },
     ])
-    expect(parseNameStatus('M\0a.ts\0R100\0old.ts\0new.ts\0A\0b.ts\0')).toEqual(['a.ts', 'new.ts', 'b.ts'])
+    expect(parseNameStatus('M\0a.ts\0R100\0old.ts\0new.ts\0A\0b.ts\0C75\0c.ts\0d.ts\0D\0e.ts\0')).toEqual([
+      { path: 'a.ts', change: 'modified' },
+      { path: 'old.ts', change: 'deleted' },
+      { path: 'new.ts', change: 'created' },
+      { path: 'b.ts', change: 'created' },
+      { path: 'd.ts', change: 'created' },
+      { path: 'e.ts', change: 'deleted' },
+    ])
   })
 
+  // Finding 9: a rename out of an unowned path is a deletion there.
+  test('a rename keeps its source: deleted outside owns is reported', () => {
+    const committed = parseNameStatus('R100\0docs/protected.md\0src/protected.md\0')
+    const c = compareSnapshots({ head: 'a', dirty: {} }, { head: 'b', dirty: {} }, committed, ['src/'], [])
+    expect(c.changed).toEqual([
+      { path: 'docs/protected.md', change: 'deleted' },
+      { path: 'src/protected.md', change: 'created' },
+    ])
+    expect(c.outside).toEqual(['docs/protected.md'])
+  })
+
+  // Finding 12: on a case-sensitive filesystem SRC/ is not src/.
+  test('owns compares case by the filesystem', () => {
+    expect(isOwnedPath('SRC/protected.ts', ['src/'])).toBe(false)
+    expect(isOwnedPath('SRC/protected.ts', ['src/'], { caseInsensitive: true })).toBe(true)
+    expect(ownershipDenial('/w/SRC/x.ts', '/w', ['src/'])?.includes('not owned')).toBe(true)
+    expect(ownershipDenial('/W/src/x.ts', '/w', ['src/'])?.includes('outside the project')).toBe(true)
+    expect(ownershipDenial('/W/src/x.ts', '/w', ['src/'], { caseInsensitive: true })).toBe(undefined)
+    const c = compareSnapshots({ head: 'a', dirty: {} }, { head: 'a', dirty: { 'SRC/protected.ts': 'new:1' } }, [], ['src/'], [])
+    expect(c.outside).toEqual(['SRC/protected.ts'])
+    expect(isSamePath('C:\\Proj\\x', 'c:/proj/x/', { caseInsensitive: true })).toBe(true)
+    expect(isSamePath('/w/X', '/w/x')).toBe(false)
+  })
+
+  // Finding 10: a path git could not hash is never silently equal.
+  test('an unhashed path makes the check incomplete, and the packet says so', () => {
+    const c = compareSnapshots({ head: 'a', dirty: { sub: UNHASHED, 'a.md': 'h1' } }, { head: 'a', dirty: { sub: UNHASHED, 'a.md': 'h2' } }, [], [], [])
+    expect(c.changed).toEqual([{ path: 'a.md', change: 'modified' }])
+    expect(c.incomplete?.[0]).toContain('sub: git could not hash it')
+    const p: Packet = { status: 'done', summary: '', decisions: [], facts: [], artifacts: [], open_questions: [], needs_from_main: [], risks: [], next_suggested: [], sections: [] }
+    applyWriteCheck(p, c)
+    expect(p.risks[0]).toContain('write check incomplete: sub')
+  })
+
+  test('worktree list: path and branch per entry, detached without branch', () => {
+    expect(parseWorktreeList('worktree /w\0HEAD a\0branch refs/heads/main\0\0worktree /w/.relay/worktrees/c\0HEAD b\0detached\0\0')).toEqual([
+      { path: '/w', branch: 'refs/heads/main' },
+      { path: '/w/.relay/worktrees/c' },
+    ])
+  })
   test('created, modified, deleted, changed again, committed; owned paths are fine', () => {
     const before = { head: 'a', dirty: { 'src/x.ts': 'h1', 'docs/old.md': 'h2' } }
     const after = { head: 'b', dirty: { 'src/x.ts': 'h3', 'docs/old.md': 'deleted', 'docs/new.md': 'new:h4' } }
-    const c = compareSnapshots(before, after, ['README.md'], ['src/'], [])
+    const c = compareSnapshots(before, after, [{ path: 'README.md', change: 'modified' }], ['src/'], [])
     expect(c.changed).toEqual([
       { path: 'README.md', change: 'modified' },
       { path: 'docs/new.md', change: 'created' },
@@ -172,6 +254,36 @@ describe('write check', () => {
   })
 })
 
+// Finding 8: relayDir stays inside the project.
+describe('relay folder', () => {
+  test('a relayDir outside the project falls back to .relay', () => {
+    expect(safeRelayDir('.relay/')).toEqual({ dir: '.relay' })
+    expect(safeRelayDir('./work\\relay')).toEqual({ dir: 'work/relay' })
+    for (const bad of ['../outside', '/tmp/relay', 'C:/relay', 'a/../../b', 'C:relay']) {
+      expect(safeRelayDir(bad).dir).toBe('.relay')
+      expect(safeRelayDir(bad).note).toContain('outside the project')
+    }
+  })
+})
+
+// Finding 2: credentials never leave relay.
+describe('redaction', () => {
+  test('header, key=value, URL user and private key are redacted; counters stay', () => {
+    const text = [
+      'curl -H "Authorization: Bearer example-bearer-value-0001"',
+      'export API_KEY=example-token-value-0002',
+      '{"password": "example-password-0003"}',
+      'git push https://bot:example-password-0003@example.com/r.git',
+      'max_tokens: 2000, token limit reached, input tokens: 48.2k',
+    ].join('\n')
+    const out = redact(text)
+    for (const s of ['example-bearer-value-0001', 'example-token-value-0002', 'example-password-0003']) expect(out.includes(s)).toBe(false)
+    expect(out).toContain('max_tokens: 2000, token limit reached, input tokens: 48.2k')
+    expect(out).toContain('https://bot:[redacted]@example.com')
+    expect(redactDeep({ a: ['token=example-token-value-0002'], n: 3 })).toEqual({ a: ['token=[redacted]'], n: 3 })
+  })
+})
+
 describe('queue file', () => {
   test('backup when broken, ownership by heartbeat', () => {
     const q = { version: 1 as const, owner: { session: 'a', heartbeatAt: new Date(0).toISOString() }, jobs: [] }
@@ -180,5 +292,13 @@ describe('queue file', () => {
     expect(mayOwn(q, 'b', 60_000)).toBe(false)
     expect(mayOwn(q, 'b', 4 * 60_000)).toBe(true)
     expect(mayOwn(q, 'a', 60_000)).toBe(true)
+  })
+
+  test('the owner token survives a round trip; freshness by heartbeat', () => {
+    const q = { version: 1 as const, owner: { session: 'a', heartbeatAt: new Date(0).toISOString(), token: 't1' }, jobs: [] }
+    expect(parseQueue(serializeQueue(q))?.owner?.token).toBe('t1')
+    expect(isFresh(q.owner, 60_000)).toBe(true)
+    expect(isFresh(q.owner, 4 * 60_000)).toBe(false)
+    expect(isFresh({ heartbeatAt: 'nonsense' }, 0)).toBe(false)
   })
 })
