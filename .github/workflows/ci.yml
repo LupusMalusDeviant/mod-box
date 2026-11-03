@@ -48,6 +48,11 @@ jobs:
       - name: Plugin tests
         run: claude plugin test .
 
+      # At the root the Mod Box is the plugin under test; relay is its own
+      # plugin, so its engine tests run with relay loaded here.
+      - name: Relay plugin tests
+        run: claude plugin test plugins/relay
+
       - name: Tool tests
         run: node --test tools/box.test.mjs
 

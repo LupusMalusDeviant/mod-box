@@ -239,7 +239,7 @@ opencode run --format json --standalone --auto
   <aufgabe>
 env: OPENCODE_CONFIG_CONTENT=<JSON, siehe unten>
 ```
-- `--session <id>`: laut Hilfe „Session ID to continue, or to create if it does not exist“. relay vergibt die ID daher vorab wie bei claude. Ob opencode eine frei gewählte ID annimmt oder ein eigenes Format verlangt (z. B. Vorsilbe `ses_`), prüft der Bau zuerst (Prüfung K2). Geht es nicht, wird die ID aus dem ersten Ereignis (`sessionID`) übernommen und beim nächsten Lauf mit `--session` fortgesetzt.
+- `--session <id>`: laut Hilfe „Session ID to continue, or to create if it does not exist“. Ob opencode eine frei gewählte ID annimmt oder ein eigenes Format verlangt (z. B. Vorsilbe `ses_`), ist ohne echten Lauf nicht prüfbar (K2). **Gebaut ist daher der sichere Weg:** Ein neuer Lauf startet ohne `--session`, relay übernimmt die ID aus dem ersten Ereignis (`sessionID`) und setzt beim nächsten Lauf mit `--session <id>` fort. Zeigt K2, dass vorab vergebene IDs gehen, kann das nachgezogen werden.
 - `--standalone`: eigener Server je Lauf statt des gemeinsamen Hintergrunddienstes. Nur so beendet das Stoppen bei Timeout auch die Arbeit; sonst läuft die Session im Dienst weiter (Prüfung K3).
 - `--auto`: bestätigt alles, was nicht ausdrücklich verboten ist. Ohne `--auto` hängt ein nicht-interaktiver Lauf an der ersten Rückfrage bis zum Timeout. Die Verbote kommen aus der Konfiguration.
 - `OPENCODE_CONFIG_CONTENT` (Umgebungsvariable, in der installierten Fassung vorhanden) enthält einen Agenten für die Rolle:
@@ -318,7 +318,7 @@ export function compareSnapshots(before: Snapshot, after: Snapshot, committed: s
   others: { role: string; owns: readonly string[] }[]): WriteCheck
 ```
 
-Schnappschuss: `git status --porcelain=v1 -z --untracked-files=all`, dann für jeden genannten Pfad `git hash-object`. Commits während des Laufs: `git diff --name-status -z <head vorher> <head nachher>` ergibt `committed`. Ohne `owns` prüft relay trotzdem und trägt alle Änderungen unter `artifacts` nach, die der Worker nicht selbst genannt hat.
+Schnappschuss: `git status --porcelain=v1 -z --untracked-files=all`, dann für alle genannten Pfade auf einmal `git hash-object --stdin-paths`. Der Wert in `dirty` ist der Hash, bei einer gelöschten Datei `deleted`, bei einer von git noch nicht erfassten Datei `new:<hash>` (daran erkennt `compareSnapshots` „created“). Pfade unter `relayDir` zählen nicht. Commits während des Laufs: `git diff --name-status -z <head vorher> <head nachher>` ergibt `committed`. Ohne `owns` prüft relay trotzdem und trägt alle Änderungen unter `artifacts` nach, die der Worker nicht selbst genannt hat.
 
 **Im Paket:** neues Feld `write_check` (wird mit gespeichert). Gibt es `outside`-Pfade:
 - Status `done` wird zu `partial`,
@@ -338,8 +338,10 @@ Die Kopfzeile bleibt eine Zeile, ergänzt um Backend und Verbrauch:
 ```
 [relay] ingester · run 4 finished (claude · 6 turns, $0.42)
 [relay] coder · run 2 finished (codex · gpt-5.5-codex · 48.2k in (31.0k cached) / 3.1k out tokens)
-[relay] scout · run 7 finished (opencode · ollama/kimi-k3:cloud · 12.4k in / 1.8k out tokens, stopped after 30 min)
+[relay] scout · run 7 finished (opencode · ollama/kimi-k3:cloud · 12.4k in / 1.8k out tokens, $0.00, stopped after 30 min)
 ```
+
+(`$0.00` nach der Regel aus 3.3: Ollama meldet `cost = 0` bei Token > 0.)
 
 Tausender als `k` mit einer Nachkommastelle, unter 1000 als Zahl. `packet.json` bekommt die Felder `usage` (Typ `Usage`) und `backend`. Jede Rolle führt in `$.store` eine Summe (`totals: Usage`), `worker_status` zeigt sie: `· 3 runs, 112.0k in / 9.4k out tokens` bzw. `$1.27`.
 
@@ -553,3 +555,5 @@ Alle Tests laufen mit `claude plugin test .` wie in der CI (Ubuntu und Windows).
 | P13 | Kosten/Token in Kopfzeile, `packet.json`, Summen in `worker_status` | [Claude-prüfbar] |
 | P14 | README, Skill `relay-orchestrator`, `plugin.json`-Einstellungen, Fassung | [Claude-prüfbar] |
 | P15 | Echter Gesamtlauf: drei Rollen, je ein Backend, parallel, mit Neustart dazwischen | [braucht Nutzer/Hardware] |
+
+**Stand 3. November 2026:** P4–P8 und P10–P14 sind in relay 0.4.0 gebaut und mit `claude plugin test plugins/relay` geprüft (`hooks/backends.test.ts`, `hooks/protocol.test.ts`, `tests/relay.test.ts`). Die Testvorlagen für codex und opencode folgen den Feldnamen aus Abschnitt 3; ob sie zeichengenau stimmen, zeigt erst P3 (K5). Offen sind P3, P9, P11a und P15.

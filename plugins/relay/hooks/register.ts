@@ -1,15 +1,45 @@
 import type { Register, EngineInterface } from 'claude-code'
 import {
+  BACKEND_IDS,
+  BACKENDS,
+  CHECKED_VERSIONS,
+  ignoredRules,
+  liveLine,
+  majorOf,
+  ollamaArgv,
+  parseBin,
+  sumUsage,
+  totalTokens,
+  tokens,
+  usageText,
+  versionOf,
+  type BackendId,
+  type Invocation,
+  type LaunchSpec,
+  type ProcessResult,
+  type RunOutcome,
+  type Usage,
+} from './backends.ts'
+import {
+  applyWriteCheck,
+  compareSnapshots,
   extractSection,
   fallbackPrompt,
   ownershipDenial,
+  parseNameStatus,
   parsePacket,
+  parsePorcelain,
   protocolPrompt,
   renderPacket,
   stripPacket,
   toList,
   type Packet,
+  type Snapshot,
+  type WriteCheck,
 } from './protocol.ts'
+import { HEARTBEAT_MS, loadQueue, mayOwn, newJobId, serializeQueue, emptyQueue, type QueueFile, type QueuedJob } from './queue.ts'
+
+type Isolation = 'shared' | 'worktree'
 
 // What a role is made of. A role's own values (set through worker_send) win
 // over the roles file, which wins over the mod's options.
@@ -20,18 +50,21 @@ type RoleDef = {
   effort?: string
   allowedTools?: string[]
   disallowedTools?: string[]
+  backend?: BackendId
+  isolation?: Isolation
 }
 
 type Role = RoleDef & {
   name: string
   sessionId?: string
+  // The backend the stored session belongs to.
+  sessionBackend?: BackendId
   runs: number
   isBusy: boolean
   lastStatus?: Packet['status']
   lastSummary?: string
+  totals?: Usage
 }
-
-type Job = { role: string; task: string; model?: string }
 
 const ROLE_NAME = /^[a-z0-9][a-z0-9_-]{0,31}$/
 
@@ -54,30 +87,89 @@ const config = {
   rolesFile: '.relay/roles.json',
   gitignore: true,
   keepRuns: 20,
+  defaultBackend: 'claude' as BackendId,
+  codexBin: 'codex',
+  codexSandbox: 'workspace-write' as 'workspace-write' | 'read-only',
+  opencodeBin: 'opencode',
+  opencodeStandalone: true,
+  writeCheck: 'report' as 'report' | 'off',
+  isolation: 'shared' as Isolation,
+  maxTokensPerRun: 0,
+  fallbackBackend: 'claude' as 'claude' | 'ollama' | 'off',
+  ollamaModel: '',
+  ollamaBin: 'ollama',
 }
 
 let cwd = ''
 let roles: Record<string, Role> = {}
-let queue: Job[] = []
+let queue: QueueFile = emptyQueue()
 let running = 0
 let unread: string[] = []
 let isGitignoreChecked = false
+// This session works the project's queue; another one only reads it.
+let isOwner = true
+let session = ''
+let lastQueueText: string | undefined
+let notices: string[] = []
+let heartbeat: { cancel: () => void } | undefined
+const versions: Partial<Record<BackendId, string>> = {}
 // Set in a worker session: the paths it may write (empty: unrestricted).
 let workerOwns: string[] = []
 let workerCwd = ''
 
+const isBackend = (v: unknown): v is BackendId => BACKEND_IDS.includes(v as BackendId)
+
+// Roles stored by 0.3.0 carry a session but no backend: it was claude's.
+const sessionBackendOf = (role: Role): BackendId | undefined => role.sessionBackend ?? (role.sessionId ? 'claude' : undefined)
+const isIsolation = (v: unknown): v is Isolation => v === 'shared' || v === 'worktree'
+
 function storeKey() {
   return `roles:${cwd}`
+}
+
+function relayPath(p: string) {
+  return `${config.relayDir.replace(/\\/g, '/').replace(/\/+$/, '')}/${p}`
+}
+
+function absolute(p: string) {
+  return /^([a-zA-Z]:)?[\\/]/.test(p) ? p : `${cwd.replace(/[\\/]+$/, '')}/${p}`
 }
 
 async function save($: EngineInterface) {
   await $.store.set(storeKey(), roles)
 }
 
+const queued = () => queue.jobs.filter(j => j.state === 'queued')
+
+async function writeQueue($: EngineInterface) {
+  if (!isOwner) return
+  await ensureGitignore($)
+  const text = serializeQueue(queue)
+  try {
+    if (lastQueueText !== undefined) await $.fs.write(relayPath('queue.json.bak'), lastQueueText)
+    await $.fs.write(relayPath('queue.json'), text)
+    lastQueueText = text
+  } catch {
+    // the queue still works in memory
+  }
+}
+
+async function readText($: EngineInterface, path: string) {
+  try {
+    return (await $.fs.exists(path)) ? String(await $.fs.read(path)) : undefined
+  } catch {
+    return undefined
+  }
+}
+
+async function readQueue($: EngineInterface) {
+  return loadQueue(await readText($, relayPath('queue.json')), await readText($, relayPath('queue.json.bak')))
+}
+
 function showStatus($: EngineInterface) {
   const busy = Object.values(roles).filter(r => r.isBusy).map(r => r.name)
-  const waiting = queue.length ? ` · ${queue.length} queued` : ''
-  $.ui.status(busy.length || queue.length ? `relay: ${busy.join(', ') || 'none'} working${waiting}` : undefined)
+  const waiting = queued().length ? ` · ${queued().length} queued` : ''
+  $.ui.status(busy.length || queued().length ? `relay: ${busy.join(', ') || 'none'} working${waiting}` : undefined)
 }
 
 function slotOf(run: number) {
@@ -85,7 +177,7 @@ function slotOf(run: number) {
 }
 
 function runPath(role: string, run: number, kind: 'full.md' | 'packet.json') {
-  return `${config.relayDir}/runs/${role}/${String(slotOf(run)).padStart(3, '0')}.${kind}`
+  return relayPath(`runs/${role}/${String(slotOf(run)).padStart(3, '0')}.${kind}`)
 }
 
 function isRotatedOut(role: Role, run: number) {
@@ -107,6 +199,8 @@ async function loadRoleDefs($: EngineInterface): Promise<Record<string, RoleDef>
         ...(typeof d.effort === 'string' ? { effort: d.effort } : {}),
         ...(d.allowedTools !== undefined ? { allowedTools: toList(d.allowedTools) } : {}),
         ...(d.disallowedTools !== undefined ? { disallowedTools: toList(d.disallowedTools) } : {}),
+        ...(isBackend(d.backend) ? { backend: d.backend } : {}),
+        ...(isIsolation(d.isolation) ? { isolation: d.isolation } : {}),
       }
     }
     return defs
@@ -117,158 +211,352 @@ async function loadRoleDefs($: EngineInterface): Promise<Record<string, RoleDef>
 
 function effective(role: Role, def: RoleDef | undefined) {
   const effort = role.effort ?? def?.effort ?? config.workerEffort
+  const backend = role.backend ?? def?.backend ?? config.defaultBackend
   return {
     brief: role.brief || def?.brief || '',
     owns: role.owns?.length ? role.owns : (def?.owns ?? []),
-    model: role.model || def?.model || config.workerModel,
+    // workerModel names a Claude model; other backends need their own.
+    model: role.model || def?.model || (backend === 'claude' ? config.workerModel : ''),
     effort: effort === 'default' ? '' : effort,
     allowedTools: role.allowedTools ?? def?.allowedTools ?? config.allowedTools,
     disallowedTools: role.disallowedTools ?? def?.disallowedTools ?? config.disallowedTools,
+    backend,
+    isolation: role.isolation ?? def?.isolation ?? config.isolation,
   }
+}
+
+function binOf(id: BackendId) {
+  return parseBin(id === 'codex' ? config.codexBin : id === 'opencode' ? config.opencodeBin : config.claudeBin, id)
 }
 
 async function ensureGitignore($: EngineInterface) {
   if (isGitignoreChecked || !config.gitignore) return
   isGitignoreChecked = true
-  const entry = `${config.relayDir.replace(/\\/g, '/').replace(/\/+$/, '')}/runs/`
+  const base = config.relayDir.replace(/\\/g, '/').replace(/\/+$/, '')
+  const entries = ['runs/', 'queue.json', 'queue.json.bak', 'tmp/', 'worktrees/'].map(e => `${base}/${e}`)
   try {
     if (await $.fs.exists('.gitignore')) {
       const text = await $.fs.read('.gitignore')
-      if (!text.split(/\r?\n/).some(l => l.trim() === entry)) {
-        await $.fs.write('.gitignore', `${text}${text.endsWith('\n') || !text ? '' : '\n'}${entry}\n`)
-      }
+      const have = new Set(text.split(/\r?\n/).map(l => l.trim()))
+      const missing = entries.filter(e => !have.has(e))
+      if (missing.length) await $.fs.write('.gitignore', `${text}${text.endsWith('\n') || !text ? '' : '\n'}${missing.join('\n')}\n`)
     } else if (await $.fs.exists('.git')) {
-      await $.fs.write('.gitignore', `${entry}\n`)
+      await $.fs.write('.gitignore', `${entries.join('\n')}\n`)
     }
   } catch {
     // not worth failing a run over
   }
 }
 
+// ── git: working folder and write check ─────────────────────────────────
+
+async function git($: EngineInterface, dir: string, args: string[], stdin?: string) {
+  try {
+    return await $.process.run(['git', ...args], { cwd: dir, timeoutMs: 60_000, ...(stdin !== undefined ? { stdin } : {}) })
+  } catch (err) {
+    return { exitCode: 1, stdout: '', stderr: String(err) }
+  }
+}
+
+async function isGitRepo($: EngineInterface, dir: string) {
+  const r = await git($, dir, ['rev-parse', '--is-inside-work-tree'])
+  return r.exitCode === 0 && r.stdout.trim() === 'true'
+}
+
+type Workdir = { dir: string; isGit: boolean; worktree?: { path: string; branch: string }; note?: string }
+
+// The folder a run works in: the project, or the role's own worktree.
+async function workdirOf($: EngineInterface, role: string, isolation: Isolation): Promise<Workdir> {
+  const isGit = await isGitRepo($, cwd)
+  if (isolation !== 'worktree') return { dir: cwd, isGit }
+  if (!isGit) return { dir: cwd, isGit, note: 'isolation "worktree" needs a git repository; the run used the project folder.' }
+  const rel = relayPath(`worktrees/${role}`)
+  const path = absolute(rel)
+  const branch = `relay/${role}`
+  if (!(await $.fs.exists(`${rel}/.git`))) {
+    await ensureGitignore($)
+    const hasBranch = (await git($, cwd, ['rev-parse', '--verify', '--quiet', `refs/heads/${branch}`])).exitCode === 0
+    const r = await git($, cwd, hasBranch ? ['worktree', 'add', path, branch] : ['worktree', 'add', '-b', branch, path])
+    if (r.exitCode !== 0) {
+      return { dir: cwd, isGit, note: `the worktree could not be created (${r.stderr.trim().slice(0, 200)}); the run used the project folder.` }
+    }
+  }
+  return { dir: path, isGit: true, worktree: { path: rel, branch } }
+}
+
+async function takeSnapshot($: EngineInterface, dir: string): Promise<Snapshot | undefined> {
+  const head = await git($, dir, ['rev-parse', 'HEAD'])
+  const status = await git($, dir, ['status', '--porcelain=v1', '-z', '--untracked-files=all'])
+  if (status.exitCode !== 0) return undefined
+  const prefix = `${config.relayDir.replace(/\\/g, '/').replace(/^\.\//, '').replace(/\/+$/, '')}/`
+  const entries = parsePorcelain(status.stdout).filter(e => !e.path.startsWith(prefix))
+  const dirty: Record<string, string> = {}
+  const present = entries.filter(e => !e.code.includes('D'))
+  for (const e of entries) if (e.code.includes('D')) dirty[e.path] = 'deleted'
+  if (present.length) {
+    const hashed = await git($, dir, ['hash-object', '--stdin-paths'], `${present.map(e => e.path).join('\n')}\n`)
+    const hashes = hashed.stdout.split(/\r?\n/).filter(Boolean)
+    present.forEach((e, i) => {
+      const h = hashes[i] ?? '?'
+      dirty[e.path] = e.code === '??' ? `new:${h}` : h
+    })
+  }
+  return { head: head.exitCode === 0 ? head.stdout.trim() : '', dirty }
+}
+
+async function writeCheckOf($: EngineInterface, role: string, owns: string[], dir: string, before: Snapshot | undefined): Promise<WriteCheck> {
+  const none = (reason: string): WriteCheck => ({ checked: false, reason, changed: [], outside: [], unattributed: [], byOtherRole: [] })
+  if (!before) return none('no snapshot before the run (no git repository or git failed)')
+  const after = await takeSnapshot($, dir)
+  if (!after) return none('git failed after the run')
+  let committed: string[] = []
+  if (before.head && after.head && before.head !== after.head) {
+    committed = parseNameStatus((await git($, dir, ['diff', '--name-status', '-z', before.head, after.head])).stdout)
+  }
+  // Roles in their own worktree cannot have written here.
+  const others = Object.values(roles)
+    .filter(r => r.isBusy && r.name !== role && runningIn[r.name] === dir)
+    .map(r => ({ role: r.name, owns: ownsOf[r.name] ?? [] }))
+  return compareSnapshots(before, after, committed, owns, others)
+}
+
+// Where each busy role runs and what it owns, for attributing changes.
+const runningIn: Record<string, string> = {}
+const ownsOf: Record<string, string[]> = {}
+
+// ── runs ────────────────────────────────────────────────────────────────
+
 // Starts queued jobs while there is room and their role is idle.
 async function pump($: EngineInterface) {
+  if (!isOwner) return
   while (running < Math.max(1, config.maxParallel)) {
-    const index = queue.findIndex(j => !roles[j.role]?.isBusy)
-    if (index < 0) break
-    const [job] = queue.splice(index, 1)
-    if (job) await start($, job)
+    const job = queue.jobs.find(j => j.state === 'queued' && roles[j.role] && !roles[j.role]?.isBusy)
+    if (!job) break
+    await start($, job)
   }
   showStatus($)
 }
 
-async function start($: EngineInterface, job: Job) {
+async function iso($: EngineInterface) {
+  return new Date(await $.clock.now()).toISOString()
+}
+
+function snapshotPath(role: string, run: number) {
+  return relayPath(`tmp/${role}-${run}.snapshot.json`)
+}
+
+async function start($: EngineInterface, job: QueuedJob) {
   const role = roles[job.role]
   if (!role) return
   const eff = effective(role, (await loadRoleDefs($))[role.name])
-  const isNew = role.sessionId === undefined
-  const sessionId = role.sessionId ?? crypto.randomUUID()
+  const id = eff.backend
+  const backend = BACKENDS[id]
   const run = role.runs + 1
-  const model = job.model || eff.model
-  const argv = [
-    config.claudeBin,
-    '-p',
-    '--output-format',
-    'json',
-    '--permission-mode',
-    config.permissionMode,
-    '--append-system-prompt',
-    protocolPrompt(role.name, eff.brief, eff.owns),
-    ...(isNew ? ['--session-id', sessionId] : ['--resume', sessionId]),
-    ...(model ? ['--model', model] : []),
-    ...(eff.effort ? ['--effort', eff.effort] : []),
-    ...(config.maxBudgetUsd > 0 ? ['--max-budget-usd', String(config.maxBudgetUsd)] : []),
-    ...(eff.allowedTools.length ? ['--allowedTools', ...eff.allowedTools] : []),
-    ...(eff.disallowedTools.length ? ['--disallowedTools', ...eff.disallowedTools] : []),
-  ]
-  const env: Record<string, string> = { RELAY_WORKER: '1', RELAY_CWD: cwd }
-  if (config.enforceOwns && eff.owns.length) env.RELAY_OWNS = JSON.stringify(eff.owns)
-
   role.isBusy = true
   role.runs = run
-  role.sessionId = sessionId
   running++
+  job.state = 'running'
+  job.run = run
+  job.startedAt = await iso($)
+  ownsOf[role.name] = eff.owns
   await save($)
+  await writeQueue($)
   showStatus($)
 
   // The child outlives the tool call that queued it: this loop runs on.
   void (async () => {
-    let stdout = ''
-    let stderr = ''
-    let isTimedOut = false
-    const child = $.process.spawn({ argv, cwd, input: job.task, env })
-    const timer =
-      config.runTimeoutMin > 0
-        ? $.clock.after(config.runTimeoutMin * 60_000, () => {
-            isTimedOut = true
-            void child.return(undefined as never)
-          })
-        : undefined
+    const proc: ProcessResult = { stdout: '', stderr: '', isTimedOut: false, isStoppedByLimit: false }
+    let outcome: RunOutcome = { answer: '', usage: {} }
+    let check: WriteCheck | undefined
+    let inv: Invocation | undefined
+    const notes: string[] = []
+    const live = liveLog($, role.name, run, id)
+    let work: Workdir = { dir: cwd, isGit: false }
     try {
-      for await (const chunk of child) {
-        if (chunk.stream === 'stdout') stdout += chunk.text
-        else stderr += chunk.text
+      work = await workdirOf($, role.name, eff.isolation)
+      runningIn[role.name] = work.dir
+      if (work.note) notes.push(work.note)
+      await checkVersion($, id)
+      const before = config.writeCheck === 'report' && work.isGit ? await takeSnapshot($, work.dir) : undefined
+      if (before) await $.fs.write(snapshotPath(role.name, run), JSON.stringify(before))
+
+      const isNew = role.sessionId === undefined || sessionBackendOf(role) !== id
+      const spec: LaunchSpec = {
+        role: role.name,
+        run,
+        task: job.task,
+        protocol: protocolPrompt(role.name, eff.brief, eff.owns),
+        isNew,
+        ...(isNew ? {} : { sessionId: role.sessionId }),
+        ...(job.model || eff.model ? { model: job.model || eff.model } : {}),
+        effort: eff.effort,
+        owns: eff.owns,
+        allowedTools: eff.allowedTools,
+        disallowedTools: eff.disallowedTools,
+        cwd: work.dir,
+        isGitRepo: work.isGit,
+        bin: binOf(id),
+        settings: {
+          permissionMode: config.permissionMode,
+          maxBudgetUsd: config.maxBudgetUsd,
+          codexSandbox: config.codexSandbox,
+          opencodeStandalone: config.opencodeStandalone,
+          tmpDir: relayPath('tmp'),
+        },
       }
+      try {
+        inv = backend.build(spec)
+      } catch (err) {
+        outcome = { answer: '', usage: {}, error: { kind: 'model', message: err instanceof Error ? err.message : String(err) } }
+      }
+      if (inv) {
+        if (inv.presetSessionId) {
+          role.sessionId = inv.presetSessionId
+          role.sessionBackend = id
+          await save($)
+        }
+        for (const f of inv.tempFiles ?? []) await $.fs.write(f.path, f.content)
+        await spawnRun($, role.name, eff.owns, work.dir, inv, backend.onLine?.bind(backend), proc, live)
+        for (const f of inv.tempFiles ?? []) await $.fs.write(f.path, '').catch(() => undefined)
+        outcome = backend.parse(proc)
+        if (!outcome.answer.trim() && !proc.stdout.trim() && proc.exitCode === undefined && outcome.error?.kind === 'cli') {
+          outcome.error.message += ` · could not start ${inv.argv[0]}; set ${id}Bin to the full path of the executable`
+        }
+      }
+      check = config.writeCheck === 'report' ? await writeCheckOf($, role.name, eff.owns, work.dir, before) : undefined
     } catch (err) {
-      stderr += `\n${String(err)}`
+      proc.stderr += `\n${String(err)}`
+      outcome.error ??= { kind: 'unknown', message: String(err).slice(0, 500) }
     }
-    timer?.cancel()
+    delete runningIn[role.name]
     running--
     try {
-      await finish($, role, run, job.task, stdout, stderr, isTimedOut)
+      const model = job.model || eff.model || outcome.usage.model || ''
+      await finish($, { role, run, job, id, model, outcome, proc, check, work, notes, presetSessionId: inv?.presetSessionId })
+      await live.close(outcome, proc)
     } finally {
       await pump($)
     }
   })()
 }
 
-async function finish(
+// Starts the child and reads it to its end; stops it at the timeout or the
+// token limit.
+async function spawnRun(
   $: EngineInterface,
-  role: Role,
-  run: number,
-  task: string,
-  stdout: string,
-  stderr: string,
-  isTimedOut: boolean,
+  role: string,
+  owns: string[],
+  dir: string,
+  inv: Invocation,
+  onLine: ((line: string, acc: Usage) => Usage) | undefined,
+  proc: ProcessResult,
+  live: ReturnType<typeof liveLog>,
 ) {
-  let answer = ''
-  let meta = ''
+  const env: Record<string, string> = { RELAY_WORKER: '1', RELAY_CWD: dir }
+  if (config.enforceOwns && owns.length) env.RELAY_OWNS = JSON.stringify(owns)
+  const child = $.process.spawn({ argv: inv.argv, cwd: dir, ...(inv.input !== undefined ? { input: inv.input } : {}), env: { ...env, ...inv.env } })
+  const stop = () => void child.return(undefined as never)
+  const timer =
+    config.runTimeoutMin > 0
+      ? $.clock.after(config.runTimeoutMin * 60_000, () => {
+          proc.isTimedOut = true
+          stop()
+        })
+      : undefined
+  let usage: Usage = {}
+  let rest = ''
   try {
-    const json = JSON.parse(stdout) as {
-      result?: string
-      is_error?: boolean
-      subtype?: string
-      session_id?: string
-      num_turns?: number
-      total_cost_usd?: number
+    for (;;) {
+      const step = await child.next()
+      if (step.done) {
+        proc.exitCode = step.value?.code ?? undefined
+        break
+      }
+      const chunk = step.value
+      if (chunk.stream === 'stderr') {
+        proc.stderr += chunk.text
+        continue
+      }
+      proc.stdout += chunk.text
+      const lines = (rest + chunk.text).split('\n')
+      rest = lines.pop() ?? ''
+      for (const line of lines) {
+        live.line(line)
+        if (onLine) usage = onLine(line, usage)
+      }
+      if (config.maxTokensPerRun > 0 && onLine && totalTokens(usage) > config.maxTokensPerRun && !proc.isStoppedByLimit) {
+        proc.isStoppedByLimit = true
+        stop()
+      }
     }
-    answer = json.result ?? ''
-    if (json.session_id) role.sessionId = json.session_id
-    meta = [
-      json.num_turns !== undefined ? `${json.num_turns} turns` : '',
-      json.total_cost_usd !== undefined ? `$${json.total_cost_usd.toFixed(2)}` : '',
-      json.is_error ? `worker error${json.subtype ? ` (${json.subtype})` : ''}` : '',
-    ]
-      .filter(Boolean)
-      .join(', ')
-  } catch {
-    answer = stdout
+  } catch (err) {
+    if (!proc.isTimedOut && !proc.isStoppedByLimit) proc.stderr += `\n${String(err)}`
   }
-  if (isTimedOut) meta = [meta, `stopped after ${config.runTimeoutMin} min`].filter(Boolean).join(', ')
+  if (rest) live.line(rest)
+  timer?.cancel()
+}
 
-  let packet = parsePacket(answer)
-  if (packet) packet.compressed_by = 'worker'
-  else if (answer.trim() && config.fallbackCompress) {
-    const compressed = await $.model.complete({ model: config.fallbackModel, system: fallbackPrompt(role.name), prompt: answer })
-    packet = compressed.isAnswered ? parsePacket(compressed.text) : undefined
-    if (packet) packet.compressed_by = 'fallback'
+// <relayDir>/runs/<role>/live.log: one readable line per event, written in
+// batches (the plugin API cannot append).
+function liveLog($: EngineInterface, role: string, run: number, id: BackendId) {
+  const path = relayPath(`runs/${role}/live.log`)
+  const lines = [`# ${role} · run ${run} · ${id} · started ${new Date().toISOString()}`]
+  let flushedAt = 0
+  const flush = async () => {
+    flushedAt = Date.now()
+    await $.fs.write(path, `${lines.join('\n')}\n`).catch(() => undefined)
   }
-  packet ??= {
+  void flush()
+  return {
+    line(raw: string) {
+      if (id === 'claude') return
+      const text = liveLine(id, raw)
+      if (!text) return
+      lines.push(text)
+      if (Date.now() - flushedAt >= 2000) void flush()
+    },
+    async close(outcome: RunOutcome, proc: ProcessResult) {
+      const state = proc.isTimedOut ? 'stopped (timeout)' : proc.isStoppedByLimit ? 'stopped (token limit)' : outcome.error ? `error: ${outcome.error.message}` : 'finished'
+      lines.push(`# ${state} · ${new Date().toISOString()}`)
+      await flush()
+    },
+  }
+}
+
+async function checkVersion($: EngineInterface, id: BackendId) {
+  if (versions[id] !== undefined) return
+  versions[id] = ''
+  try {
+    const r = await $.process.run(BACKENDS[id].versionArgv(binOf(id)), { timeoutMs: 15_000 })
+    const v = versionOf(`${r.stdout} ${r.stderr}`)
+    if (!v) return
+    versions[id] = v
+    if (majorOf(v) !== majorOf(CHECKED_VERSIONS[id])) {
+      notices.push(`${id} ${v} differs from the checked version ${CHECKED_VERSIONS[id]}; runs still start, but its output format may have changed.`)
+    }
+  } catch {
+    // the run itself reports a missing program
+  }
+}
+
+type RunResult = {
+  role: Role
+  run: number
+  job: QueuedJob
+  id: BackendId
+  model: string
+  outcome: RunOutcome
+  proc: ProcessResult
+  check?: WriteCheck
+  work: Workdir
+  notes: string[]
+  presetSessionId?: string
+}
+
+function failedPacket(summary: string): Packet {
+  return {
     status: 'failed',
-    summary: isTimedOut
-      ? `Worker was stopped after ${config.runTimeoutMin} minutes without a packet.`
-      : answer.trim()
-        ? 'Worker answered without a relay packet (fallback compression is off); read the full text.'
-        : `Worker produced no usable answer.${stderr.trim() ? ` stderr: ${stderr.trim().slice(0, 500)}` : ''}`,
+    summary,
     decisions: [],
     facts: [],
     artifacts: [],
@@ -279,20 +567,129 @@ async function finish(
     sections: [],
     compressed_by: 'none',
   }
-  if (isTimedOut && packet.status === 'done') packet.status = 'partial'
+}
 
+// Builds the packet when the worker forgot it: Haiku, an ollama model, or none.
+async function compress($: EngineInterface, role: string, answer: string): Promise<{ packet?: Packet; by?: string }> {
+  const backend = !config.fallbackCompress ? 'off' : config.fallbackBackend
+  if (backend === 'claude') {
+    const r = await $.model.complete({ model: config.fallbackModel, system: fallbackPrompt(role), prompt: answer })
+    return { packet: r.isAnswered ? parsePacket(r.text) : undefined, by: config.fallbackModel }
+  }
+  if (backend === 'ollama' && config.ollamaModel.trim()) {
+    try {
+      const r = await $.process.run(ollamaArgv(parseBin(config.ollamaBin, 'ollama'), config.ollamaModel.trim()), {
+        stdin: `${fallbackPrompt(role)}\n\n---\n${answer}`,
+        timeoutMs: 120_000,
+      })
+      return { packet: r.exitCode === 0 ? parsePacket(r.stdout) : undefined, by: `ollama/${config.ollamaModel.trim()}` }
+    } catch {
+      return { by: `ollama/${config.ollamaModel.trim()}` }
+    }
+  }
+  return {}
+}
+
+function headMeta(r: RunResult): string {
+  const u = r.outcome.usage
+  const parts: string[] = [r.id]
+  if (r.id === 'claude') {
+    const inner = [u.turns !== undefined ? `${u.turns} turns` : '', u.costUsd !== undefined ? `$${u.costUsd.toFixed(2)}` : '']
+      .filter(Boolean)
+      .join(', ')
+    if (inner) parts.push(inner)
+  } else {
+    if (r.model) parts.push(r.model)
+    const used = usageText(u, BACKENDS[r.id].capabilities.usage)
+    if (used) parts.push(used)
+  }
+  const tail = [
+    r.outcome.error ? (r.id === 'claude' ? r.outcome.error.message : `error (${r.outcome.error.kind})`) : '',
+    r.proc.isTimedOut ? `stopped after ${config.runTimeoutMin} min` : '',
+    r.proc.isStoppedByLimit ? `stopped at ${tokens(totalTokens(u))} tokens` : '',
+  ].filter(Boolean)
+  return [parts.join(' · '), ...tail].join(', ')
+}
+
+async function finish($: EngineInterface, r: RunResult) {
+  const { role, run, outcome, proc } = r
+  const answer = outcome.answer
+  let packet = parsePacket(answer)
+  let compressedBy: string | undefined
+  if (packet) packet.compressed_by = 'worker'
+  else if (answer.trim()) {
+    const c = await compress($, role.name, answer)
+    packet = c.packet
+    if (packet) {
+      packet.compressed_by = 'fallback'
+      compressedBy = c.by
+    }
+  }
+  const isGone = outcome.error?.kind === 'session-not-found'
+  packet ??= failedPacket(
+    isGone
+      ? `The worker's ${r.id} session is gone; the next task for this role starts fresh. (${outcome.error?.message ?? ''})`
+      : proc.isTimedOut
+        ? `Worker was stopped after ${config.runTimeoutMin} minutes without a packet.`
+        : proc.isStoppedByLimit
+          ? `Worker was stopped at the token limit (${config.maxTokensPerRun}) without a packet.`
+          : answer.trim()
+            ? 'Worker answered without a relay packet (fallback compression is off or failed); read the full text.'
+            : outcome.error
+              ? `Worker failed (${outcome.error.kind}): ${outcome.error.message}`
+              : `Worker produced no usable answer.${proc.stderr.trim() ? ` stderr: ${proc.stderr.trim().slice(0, 500)}` : ''}`,
+  )
+  if ((proc.isTimedOut || proc.isStoppedByLimit || outcome.error?.kind === 'budget') && packet.status === 'done') packet.status = 'partial'
+
+  // The role's session for its next run.
+  if (isGone) {
+    role.sessionId = undefined
+    role.sessionBackend = undefined
+  } else {
+    const next = outcome.sessionId ?? r.presetSessionId ?? (sessionBackendOf(role) === r.id ? role.sessionId : undefined)
+    role.sessionId = next
+    role.sessionBackend = next ? r.id : undefined
+    if (!next && r.id !== 'claude') packet.risks.push(`No ${r.id} session id was reported; the next task for ${role.name} starts a fresh session.`)
+  }
+
+  if (r.check) applyWriteCheck(packet, r.check)
+  if (r.work.worktree && (!r.check || r.check.changed.length)) {
+    packet.needs_from_main.push(`The changes are on branch ${r.work.worktree.branch} (worktree ${r.work.worktree.path}); relay does not merge them.`)
+  }
+  for (const n of r.notes) packet.risks.push(n)
+
+  role.totals = sumUsage(role.totals ?? {}, outcome.usage)
+  const outside = r.check?.outside.length ?? 0
+  let head = `[relay] ${role.name} · run ${run} finished (${headMeta(r)})`
+  if (compressedBy) head += ` (packet built by fallback compressor ${compressedBy})`
+  if (outside) head += ` ⚠ wrote outside owns (${outside})`
+  await deliver($, role, run, r.job, answer, packet, head, { backend: r.id, usage: outcome.usage })
+}
+
+// Stores the run's files, updates the role, drops the job and reports.
+async function deliver(
+  $: EngineInterface,
+  role: Role,
+  run: number,
+  job: QueuedJob,
+  answer: string,
+  packet: Packet,
+  head: string,
+  extra: { backend: BackendId; usage: Usage },
+) {
   await ensureGitignore($)
   const fullPath = runPath(role.name, run, 'full.md')
-  await $.fs.write(fullPath, `# ${role.name} · run ${run}\n\n## Task\n\n${task}\n\n## Answer\n\n${stripPacket(answer)}\n`)
-  await $.fs.write(runPath(role.name, run, 'packet.json'), JSON.stringify({ run, ...packet }, null, 2))
+  await $.fs.write(fullPath, `# ${role.name} · run ${run}\n\n## Task\n\n${job.task}\n\n## Answer\n\n${stripPacket(answer)}\n`)
+  await $.fs.write(runPath(role.name, run, 'packet.json'), JSON.stringify({ run, backend: extra.backend, usage: extra.usage, ...packet }, null, 2))
 
   role.isBusy = false
   role.lastStatus = packet.status
   role.lastSummary = packet.summary
   roles[role.name] = role
   await save($)
+  queue.jobs = queue.jobs.filter(j => j.id !== job.id)
+  await writeQueue($)
 
-  const head = `[relay] ${role.name} · run ${run} finished${meta ? ` (${meta})` : ''}`
   const text = renderPacket(head, packet, fullPath, config.packetDetail)
   if (config.notifyMode === 'note') {
     await $.session.append({ message: { type: 'user', content: [{ type: 'text', text }] } })
@@ -305,10 +702,52 @@ async function finish(
   }
 }
 
+// A job the file still marks running died with the last module: report it
+// as failed, with the write check against its snapshot, and never restart it.
+async function reportInterrupted($: EngineInterface, job: QueuedJob) {
+  const defs = await loadRoleDefs($)
+  let role = roles[job.role]
+  if (!role && defs[job.role]) role = roles[job.role] = { name: job.role, runs: job.run ?? 0, isBusy: false }
+  if (!role) return
+  const run = job.run ?? role.runs
+  role.runs = Math.max(role.runs, run)
+  const eff = effective(role, defs[role.name])
+  const packet = failedPacket('Interrupted: the plugin was reloaded or the session ended while this run was working. It was not restarted.')
+  if (config.writeCheck === 'report') {
+    let before: Snapshot | undefined
+    try {
+      before = JSON.parse(await $.fs.read(snapshotPath(role.name, run))) as Snapshot
+    } catch {
+      before = undefined
+    }
+    const dir = eff.isolation === 'worktree' ? absolute(relayPath(`worktrees/${role.name}`)) : cwd
+    applyWriteCheck(packet, await writeCheckOf($, role.name, eff.owns, dir, before))
+  }
+  await deliver($, role, run, job, '', packet, `[relay] ${role.name} · run ${run} interrupted (${job.backend})`, { backend: job.backend, usage: {} })
+}
+
 // A worker may only write what it owns, when the main agent asked for that.
 function denyUnowned(path: string | undefined) {
   const reason = ownershipDenial(path, workerCwd, workerOwns)
   return reason ? { deny: `relay: ${reason}` } : undefined
+}
+
+function roleLine(name: string, r: Role | undefined, def: RoleDef | undefined) {
+  const eff = effective(r ?? { name, runs: 0, isBusy: false }, def)
+  const waiting = queue.jobs.filter(j => j.role === name && j.state === 'queued').length
+  const state = r?.isBusy ? 'working' : waiting ? 'queued' : r ? 'idle' : 'defined, never run'
+  const total = r?.totals ? usageText(r.totals, BACKENDS[eff.backend].capabilities.usage) : ''
+  const ignored = ignoredRules(eff.backend, eff)
+  return (
+    `${name}: ${state}${waiting ? ` (${waiting} waiting)` : ''}, ${r?.runs ?? 0} run(s)` +
+    (r?.lastStatus ? `, last ${r.lastStatus}: ${r.lastSummary ?? ''}` : '') +
+    ` · ${eff.backend}${versions[eff.backend] ? ` ${versions[eff.backend]}` : ''}` +
+    (eff.model ? ` · ${eff.model}` : '') +
+    (eff.isolation === 'worktree' ? ' · worktree' : '') +
+    (eff.owns.length ? ` · owns ${eff.owns.join(', ')}` : '') +
+    (total ? ` · total ${total}` : '') +
+    (ignored.length ? ` · ignored: ${ignored.join(', ')}` : '')
+  )
 }
 
 export const register: Register = (on, options) => {
@@ -333,6 +772,19 @@ export const register: Register = (on, options) => {
   config.rolesFile = str('rolesFile', config.rolesFile).trim() || `${config.relayDir}/roles.json`
   config.gitignore = bool('gitignore', config.gitignore)
   config.keepRuns = num('keepRuns', config.keepRuns)
+  const backend = str('defaultBackend', config.defaultBackend)
+  config.defaultBackend = isBackend(backend) ? backend : 'claude'
+  config.codexBin = str('codexBin', config.codexBin)
+  config.codexSandbox = str('codexSandbox', config.codexSandbox) === 'read-only' ? 'read-only' : 'workspace-write'
+  config.opencodeBin = str('opencodeBin', config.opencodeBin)
+  config.opencodeStandalone = bool('opencodeStandalone', config.opencodeStandalone)
+  config.writeCheck = str('writeCheck', config.writeCheck) === 'off' ? 'off' : 'report'
+  config.isolation = str('isolation', config.isolation) === 'worktree' ? 'worktree' : 'shared'
+  config.maxTokensPerRun = num('maxTokensPerRun', config.maxTokensPerRun)
+  const fb = str('fallbackBackend', config.fallbackBackend)
+  config.fallbackBackend = fb === 'ollama' || fb === 'off' ? fb : 'claude'
+  config.ollamaModel = str('ollamaModel', config.ollamaModel)
+  config.ollamaBin = str('ollamaBin', config.ollamaBin)
 
   on('session.start', async ($, e, next) => {
     const started = await next(e)
@@ -348,21 +800,41 @@ export const register: Register = (on, options) => {
       return started
     }
     cwd = e.cwd
+    session = started?.sessionId ?? (await $.session.id().catch(() => '')) ?? ''
     roles = ((await $.store.get(storeKey())) as Record<string, Role> | undefined) ?? {}
     // Children die with the module: a role still marked busy is stale.
     for (const r of Object.values(roles)) r.isBusy = false
-    queue = []
     running = 0
+    notices = []
+    heartbeat?.cancel()
+    heartbeat = undefined
+
+    const loaded = await readQueue($)
+    if (loaded.isBroken) notices.push(loaded.isFromBackup ? 'queue.json was broken; relay read queue.json.bak instead.' : 'queue.json was broken and had no usable backup; the queue starts empty.')
+    queue = loaded.queue
+    lastQueueText = loaded.isBroken ? undefined : serializeQueue(queue)
+    const now = await $.clock.now()
+    isOwner = mayOwn(queue, session, now)
+    if (isOwner) {
+      queue.owner = { session, heartbeatAt: new Date(now).toISOString() }
+      await writeQueue($)
+      heartbeat = $.clock.every(HEARTBEAT_MS, () => {
+        void (async () => {
+          queue.owner = { session, heartbeatAt: await iso($) }
+          await writeQueue($)
+        })()
+      })
+    }
     await save($)
 
     await $.tool.register({
       name: 'worker_send',
       isDeferred: false,
       description:
-        'Send a task to a persistent worker session (its own Claude Code session, started via CLI). ' +
+        'Send a task to a persistent worker session (its own Claude Code, Codex or OpenCode session, started via CLI). ' +
         'Returns immediately; the worker runs in the background (or waits in the queue) and its compact relay packet arrives later. ' +
         'The same role keeps its context across tasks unless fresh is true. Roles may be predefined in the roles file; ' +
-        'brief/owns/model/effort/tools given here are stored for the role and win over the file.',
+        'brief/owns/model/effort/tools/backend/isolation given here are stored for the role and win over the file.',
       inputSchema: {
         type: 'object',
         properties: {
@@ -370,10 +842,12 @@ export const register: Register = (on, options) => {
           task: { type: 'string', description: 'The task, self-contained: what to do and what done looks like.' },
           brief: { type: 'string', description: 'Standing role description; stored.' },
           owns: { type: 'array', items: { type: 'string' }, description: 'Paths this role may write; stored and enforced.' },
-          model: { type: 'string', description: 'Model for this role; stored.' },
+          model: { type: 'string', description: 'Model for this role in the format of its backend (opencode: provider/model); stored.' },
           effort: { type: 'string', enum: ['default', 'low', 'medium', 'high', 'xhigh', 'max'], description: 'Effort for this role; stored.' },
           allowedTools: { type: 'array', items: { type: 'string' }, description: 'Tool rules allowed without asking; stored.' },
           disallowedTools: { type: 'array', items: { type: 'string' }, description: 'Tool rules the role may never use; stored.' },
+          backend: { type: 'string', enum: [...BACKEND_IDS], description: 'Worker CLI for this role; stored. Changing it drops the old session.' },
+          isolation: { type: 'string', enum: ['shared', 'worktree'], description: 'shared: the project folder. worktree: its own git worktree on branch relay/<role>. Stored.' },
           fresh: { type: 'boolean', description: 'Start a new worker session, dropping the old context.' },
         },
         required: ['role', 'task'],
@@ -383,7 +857,7 @@ export const register: Register = (on, options) => {
       name: 'worker_status',
       isDeferred: false,
       description:
-        'List worker roles (stored and from the roles file): working, queued or idle, runs, last status. ' +
+        'List worker roles (stored and from the roles file): working, queued or idle, runs, last status, backend and usage. ' +
         'Also returns packets that arrived unread (notify mode "toast").',
       inputSchema: { type: 'object', properties: {} },
     })
@@ -404,6 +878,23 @@ export const register: Register = (on, options) => {
         required: ['role'],
       },
     })
+
+    if (isOwner) {
+      // Runs the last module left behind: report the dead ones, start the rest.
+      const dead = queue.jobs.filter(j => j.state === 'running')
+      void (async () => {
+        for (const job of dead) await reportInterrupted($, job).catch(() => undefined)
+        queue.jobs = queue.jobs.filter(j => j.state === 'queued')
+        for (const job of queue.jobs) {
+          if (roles[job.role]) continue
+          const def = (await loadRoleDefs($))[job.role]
+          if (def) roles[job.role] = { name: job.role, runs: 0, isBusy: false }
+        }
+        await save($)
+        await writeQueue($)
+        await pump($)
+      })()
+    }
     showStatus($)
     return started
   })
@@ -420,23 +911,24 @@ export const register: Register = (on, options) => {
 
   on('tool.call', { tool: 'mcp__relay__worker_status' }, async $ => {
     const defs = await loadRoleDefs($)
+    if (!isOwner) queue = (await readQueue($)).queue
     const names = [...new Set([...Object.keys(roles), ...Object.keys(defs)])].sort()
-    const lines = names.map(name => {
-      const r = roles[name]
-      const eff = effective(r ?? { name, runs: 0, isBusy: false }, defs[name])
-      const queued = queue.filter(j => j.role === name).length
-      const state = r?.isBusy ? 'working' : queued ? 'queued' : r ? 'idle' : 'defined, never run'
-      return (
-        `${name}: ${state}${queued ? ` (${queued} waiting)` : ''}, ${r?.runs ?? 0} run(s)` +
-        (r?.lastStatus ? `, last ${r.lastStatus}: ${r.lastSummary ?? ''}` : '') +
-        (eff.owns.length ? ` · owns ${eff.owns.join(', ')}` : '') +
-        (eff.model ? ` · ${eff.model}` : '')
-      )
-    })
+    const lines = names.map(name => roleLine(name, roles[name], defs[name]))
     const out = [
       lines.length ? lines.join('\n') : 'No worker roles yet. Create one with worker_send or in the roles file.',
-      `Running ${running}/${Math.max(1, config.maxParallel)}, queued ${queue.length}.`,
+      `Running ${running}/${Math.max(1, config.maxParallel)}, queued ${queued().length}.`,
     ]
+    const now = await $.clock.now()
+    for (const j of queued()) {
+      const waited = Math.max(0, Math.round((now - Date.parse(j.enqueuedAt)) / 60_000))
+      const orphan = !roles[j.role] && !defs[j.role]
+      out.push(`- queued ${j.role} (${j.backend}) for ${waited} min${orphan ? ' · orphaned: the role exists neither in the store nor in the roles file' : ''}`)
+    }
+    if (!isOwner) out.push('This project\'s queue is worked by another session; this one only reads it.')
+    if (notices.length) {
+      out.push('', ...notices.map(n => `Note: ${n}`))
+      notices = []
+    }
     if (unread.length) {
       out.push('', `Unread packets (${unread.length}):`, '', unread.join('\n\n'))
       unread = []
@@ -486,33 +978,61 @@ export const register: Register = (on, options) => {
       effort?: string
       allowedTools?: string[]
       disallowedTools?: string[]
+      backend?: string
+      isolation?: string
       fresh?: boolean
+    }
+    if (!isOwner) {
+      const fresh = await readQueue($)
+      if (mayOwn(fresh.queue, session, await $.clock.now())) {
+        return { result: 'The session that worked this project\'s queue is gone; reload the plugin (or start a new session) to take it over.' }
+      }
+      return { result: 'This project\'s relay queue is worked by another Claude Code session; worker_send is refused here. Use that session, or worker_status to read.' }
     }
     const name = input.role.trim().toLowerCase()
     if (!ROLE_NAME.test(name)) return { result: `Invalid role name "${input.role}": use a-z, 0-9, - and _.` }
+    if (input.backend !== undefined && !isBackend(input.backend)) return { result: `Unknown backend "${input.backend}": use ${BACKEND_IDS.join(', ')}.` }
     const role: Role = roles[name] ?? { name, runs: 0, isBusy: false }
+    const inFlight = role.isBusy || queue.jobs.some(j => j.role === name)
+    const def = (await loadRoleDefs($))[name]
+    const backendBefore = effective(role, def).backend
     if (input.brief !== undefined) role.brief = input.brief
     if (input.owns !== undefined) role.owns = toList(input.owns)
     if (input.model !== undefined) role.model = input.model
     if (input.effort !== undefined) role.effort = input.effort
     if (input.allowedTools !== undefined) role.allowedTools = toList(input.allowedTools)
     if (input.disallowedTools !== undefined) role.disallowedTools = toList(input.disallowedTools)
+    if (isBackend(input.backend)) role.backend = input.backend
+    if (isIsolation(input.isolation)) role.isolation = input.isolation
+    const eff = effective(role, def)
+    const notes: string[] = []
     if (input.fresh) {
-      if (role.isBusy || queue.some(j => j.role === name)) return { result: `${name} has work in flight; fresh is only possible when it is idle.` }
+      if (inFlight) return { result: `${name} has work in flight; fresh is only possible when it is idle.` }
       role.sessionId = undefined
+      role.sessionBackend = undefined
     }
+    if (eff.backend !== backendBefore && role.sessionId) {
+      role.sessionId = undefined
+      role.sessionBackend = undefined
+      notes.push(`backend changed from ${backendBefore} to ${eff.backend}: the old session was dropped`)
+    }
+    const ignored = ignoredRules(eff.backend, eff)
+    if (ignored.length) notes.push(`${eff.backend} ignores: ${ignored.join(', ')}`)
     roles[name] = role
     await save($)
 
-    queue.push({ role: name, task: input.task })
+    queue.jobs.push({ id: newJobId(), role: name, task: input.task, enqueuedAt: await iso($), state: 'queued', backend: eff.backend })
+    await writeQueue($)
     const before = running
     await pump($)
-    const isStarted = running > before && role.isBusy && !queue.some(j => j.role === name)
+    const waiting = queued()
+    const isStarted = running > before && role.isBusy && !waiting.some(j => j.role === name)
+    const tail = notes.length ? ` (${notes.join('; ')})` : ''
     return {
       result: isStarted
-        ? `${name} run ${role.runs} started. Its relay packet will arrive later (${config.notifyMode}); continue with other work.`
-        : `${name}: task queued (position ${queue.findIndex(j => j.role === name) + 1} of ${queue.length}; ` +
-          `${role.isBusy ? 'the role is still working' : `all ${config.maxParallel} slots are busy`}).`,
+        ? `${name} run ${role.runs} started on ${eff.backend}. Its relay packet will arrive later (${config.notifyMode}); continue with other work.${tail}`
+        : `${name}: task queued (position ${waiting.findIndex(j => j.role === name) + 1} of ${waiting.length}; ` +
+          `${role.isBusy ? 'the role is still working' : `all ${config.maxParallel} slots are busy`}).${tail}`,
     }
   })
 }

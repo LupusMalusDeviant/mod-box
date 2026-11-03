@@ -16,6 +16,24 @@ export type Packet = {
   next_suggested: string[]
   sections: string[]
   compressed_by?: 'worker' | 'fallback' | 'none'
+  write_check?: WriteCheck
+}
+
+// The working tree as git sees it before and after a run (contract 0001, 4.4).
+// `dirty` maps each path git status lists to the hash of its content; a path
+// that is gone reads `deleted`, one git does not track yet `new:<hash>`.
+export type Snapshot = {
+  head: string
+  dirty: Record<string, string>
+}
+
+export type WriteCheck = {
+  checked: boolean
+  reason?: string
+  changed: { path: string; change: 'created' | 'modified' | 'deleted' }[]
+  outside: string[]
+  unattributed: string[]
+  byOtherRole: { path: string; role: string }[]
 }
 
 const LIST_FIELDS = ['decisions', 'open_questions', 'needs_from_main', 'risks', 'next_suggested', 'sections'] as const
@@ -156,14 +174,106 @@ export function ownershipDenial(path: string | undefined, cwd: string, owns: rea
   else if (/^([a-zA-Z]:)?\//.test(p)) return `${path} lies outside the project; this worker may only write under ${owns.join(', ')}.`
   else rel = p.replace(/^\.\//, '')
   if (rel.split('/').includes('..')) return `${path} leaves the owned paths (..); this worker may only write under ${owns.join(', ')}.`
-  const relLower = rel.toLowerCase()
-  const isOwned = owns.some(o => {
-    const own = norm(o).replace(/^\.\//, '').toLowerCase()
-    return relLower === own || relLower.startsWith(`${own}/`)
-  })
-  return isOwned
+  return isOwnedPath(rel, owns)
     ? undefined
     : `${rel} is not owned by this worker (owns: ${owns.join(', ')}). Put the change into "needs_from_main" instead.`
+}
+
+// Whether a project-relative path lies under one of the owned paths.
+export function isOwnedPath(rel: string, owns: readonly string[]): boolean {
+  const norm = (s: string) => s.replace(/\\/g, '/').replace(/\/+$/, '').replace(/^\.\//, '').toLowerCase()
+  const relLower = norm(rel)
+  return owns.some(o => {
+    const own = norm(o)
+    return relLower === own || relLower.startsWith(`${own}/`)
+  })
+}
+
+// `git status --porcelain=v1 -z --untracked-files=all` → path and its two
+// status letters; a rename lists its new path.
+export function parsePorcelain(text: string): { path: string; code: string }[] {
+  const out: { path: string; code: string }[] = []
+  const parts = text.split('\0')
+  for (let i = 0; i < parts.length; i++) {
+    const entry = parts[i] ?? ''
+    if (entry.length < 4) continue
+    const code = entry.slice(0, 2)
+    out.push({ path: entry.slice(3), code })
+    if (code.includes('R') || code.includes('C')) i++ // the old path follows
+  }
+  return out
+}
+
+// `git diff --name-status -z a b` → the paths a commit touched.
+export function parseNameStatus(text: string): string[] {
+  const parts = text.split('\0').filter(Boolean)
+  const out: string[] = []
+  for (let i = 0; i < parts.length; i++) {
+    const status = parts[i] ?? ''
+    if (/^[RC]/.test(status)) {
+      i++ // old path
+      const p = parts[++i]
+      if (p) out.push(p)
+    } else {
+      const p = parts[++i]
+      if (p) out.push(p)
+    }
+  }
+  return out
+}
+
+// What a run wrote, judged against what the role owns and what the roles
+// running beside it own.
+export function compareSnapshots(
+  before: Snapshot,
+  after: Snapshot,
+  committed: string[],
+  owns: readonly string[],
+  others: { role: string; owns: readonly string[] }[],
+): WriteCheck {
+  const kind = (path: string): 'created' | 'modified' | 'deleted' => {
+    const now = after.dirty[path]
+    if (now === 'deleted') return 'deleted'
+    if (now?.startsWith('new:') && !before.dirty[path]?.startsWith('new:')) return 'created'
+    if (now === undefined && before.dirty[path]?.startsWith('new:')) return 'deleted'
+    return 'modified'
+  }
+  const paths = new Set<string>()
+  for (const p of new Set([...Object.keys(before.dirty), ...Object.keys(after.dirty)])) {
+    if (before.dirty[p] !== after.dirty[p]) paths.add(p)
+  }
+  for (const p of committed) paths.add(p)
+  const changed = [...paths].sort().map(path => ({ path, change: kind(path) }))
+  const check: WriteCheck = { checked: true, changed, outside: [], unattributed: [], byOtherRole: [] }
+  if (!owns.length) return check
+  for (const { path } of changed) {
+    if (isOwnedPath(path, owns)) continue
+    const other = others.find(o => o.owns.length && isOwnedPath(path, o.owns))
+    if (other) check.byOtherRole.push({ path, role: other.role })
+    else if (others.length) check.unattributed.push(path)
+    else check.outside.push(path)
+  }
+  return check
+}
+
+// Folds a write check into the packet: writes outside `owns` turn done into
+// partial and land under risks; files the worker did not list are added.
+export function applyWriteCheck(p: Packet, check: WriteCheck): Packet {
+  p.write_check = check
+  if (!check.checked) return p
+  const listed = new Set(p.artifacts.map(a => a.path.replace(/\\/g, '/')))
+  const notMine = new Set([...check.unattributed, ...check.byOtherRole.map(b => b.path)])
+  for (const c of check.changed) {
+    if (!listed.has(c.path) && !notMine.has(c.path)) p.artifacts.push({ path: c.path, change: c.change, note: 'found by the write check' })
+  }
+  for (const path of check.outside) {
+    const c = check.changed.find(x => x.path === path)
+    p.risks.push(`wrote outside owns: ${path} (${c?.change ?? 'modified'})`)
+  }
+  for (const path of check.unattributed) p.risks.push(`changed outside all owns, not attributable (roles ran in parallel): ${path}`)
+  for (const { path, role } of check.byOtherRole) p.risks.push(`changed ${path}, probably by ${role}`)
+  if (check.outside.length && p.status === 'done') p.status = 'partial'
+  return p
 }
 
 // "a, b  c" or a list → ["a", "b", "c"]; tool rules with spaces stay whole
