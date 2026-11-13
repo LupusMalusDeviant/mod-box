@@ -1,6 +1,6 @@
 # Vertrag 0001: relay mit Backends je Rolle
 
-**Status:** abgenommen am 3. November 2026 (E1–E11 wie empfohlen, herdr gestrichen) · **Stand:** 3. November 2026, Nachtrag 1 (Abschnitt 14 und 14.1, N1–N28) zur Abnahme · **Betrifft:** `plugins/relay` (heute 0.3.0)
+**Status:** abgenommen am 3. November 2026 (E1–E11 wie empfohlen, herdr gestrichen) · **Stand:** 13. November 2026, Nachtrag 1 (Abschnitt 14 und 14.1, N1–N28) abgenommen am 13. November 2026 · **Betrifft:** `plugins/relay` (heute 0.3.0)
 
 Heute startet relay jeden Worker als `claude -p`. Künftig wählt jede Rolle ihr **Backend**: `claude`, `codex` oder `opencode`. Über opencode erreicht relay auch Ollama und OpenRouter. Warteschlange, Timeout, `owns`, Relay-Pakete und die drei Werkzeuge bleiben gleich. Neu sind die Backend-Schnittstelle, eine Schreibprüfung nach jedem Lauf, die gleich für alle Backends greift, Token-Angaben im Paket, Ollama als Ersatz-Verdichter und eine Warteschlange, die auf der Platte liegt.
 
@@ -562,7 +562,7 @@ Alle Tests laufen mit `claude plugin test .` wie in der CI (Ubuntu und Windows).
 
 ## 14. Nachtrag 1 (3. November 2026): Befunde aus dem Codex-Review von 0.4.0
 
-Ein Codex-Review von relay 0.4.0 (Stand `284a4a9`) fand 15 Befunde. Wo ihre Behebung vertragliches Verhalten ändert, steht es hier; die Entscheidungen E1–E11 bleiben unverändert. **Zur Abnahme durch den Nutzer.** Die Nummern sind die des Reviews.
+Ein Codex-Review von relay 0.4.0 (Stand `284a4a9`) fand 15 Befunde. Wo ihre Behebung vertragliches Verhalten ändert, steht es hier; die Entscheidungen E1–E11 bleiben unverändert. **Abgenommen am 13. November 2026.** Die Nummern sind die des Reviews.
 
 | Nr. | Änderung | Ersetzt / ergänzt | Befund |
 |---|---|---|---|
@@ -585,7 +585,7 @@ Ein Codex-Review von relay 0.4.0 (Stand `284a4a9`) fand 15 Befunde. Wo ihre Behe
 
 ### 14.1 Zweites Codex-Review (3. November 2026)
 
-Ein zweites Codex-Review (Stand `63ba3bf`) fand 14 weitere Befunde (6 hoch, 8 mittel). Die Zeilen N15–N28 ergänzen die Tabelle oben; **auch sie zur Abnahme durch den Nutzer.** „Befund“ nennt die Nummer im zweiten Review.
+Ein zweites Codex-Review (Stand `63ba3bf`) fand 14 weitere Befunde (6 hoch, 8 mittel). Die Zeilen N15–N28 ergänzen die Tabelle oben; **abgenommen am 13. November 2026.** „Befund“ nennt die Nummer im zweiten Review.
 
 | Nr. | Änderung | Ersetzt / ergänzt | Befund |
 |---|---|---|---|
