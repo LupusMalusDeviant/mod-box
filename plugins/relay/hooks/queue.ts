@@ -11,6 +11,9 @@ export type QueuedJob = {
   run?: number
   startedAt?: string
   backend: BackendId
+  // The run's files are stored but its packet was not delivered yet: the
+  // next start delivers the stored packet instead of calling it interrupted.
+  delivery?: 'stored'
 }
 
 export type QueueFile = {
@@ -64,7 +67,10 @@ export function loadQueue(main: string | undefined, backup: string | undefined):
   if (q) return { queue: q, isFromBackup: false, isBroken: false }
   const isBroken = !!main?.trim()
   const b = parseQueue(backup)
-  if (b) return { queue: b, isFromBackup: isBroken, isBroken }
+  // Read from the backup whenever main gave nothing usable, empty included:
+  // the caller then never backs that main text up over the good copy
+  // (contract 0001, N21).
+  if (b) return { queue: b, isFromBackup: true, isBroken }
   return { queue: emptyQueue(), isFromBackup: false, isBroken }
 }
 

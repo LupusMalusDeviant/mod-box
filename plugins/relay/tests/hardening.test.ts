@@ -200,7 +200,7 @@ describe('finding 8: a worktree must be the role\'s own', () => {
     await w.send($, { role: 'coder', task: 't', isolation: 'worktree' })
     expect(await w.until(() => w.submitted.length === 1)).toBe(true)
     expect(w.spawns).toHaveLength(0)
-    expect(w.submitted[0]).toContain('is a link')
+    expect(w.submitted[0]).toContain('resolves to /other/checkout, outside the project')
   })
 
   test('a folder that is no registered worktree, or on another branch, is not used', async ($: any, on: any) => {

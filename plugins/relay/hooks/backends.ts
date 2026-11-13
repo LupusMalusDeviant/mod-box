@@ -289,9 +289,8 @@ const codex: Backend = {
     }
     const error: RunError | undefined = message
       ? { kind: classifyError(message), message: cut(message) }
-      : answer
-        ? undefined
-        : cliFailure(r)
+      : // a nonzero exit is a failure even when an answer came first
+        cliFailure(r)
     return { answer, sessionId, usage: clean(usage), error }
   },
   versionArgv: bin => [...bin, '--version'],
@@ -382,9 +381,8 @@ const opencode: Backend = {
     const answer = texts.join('\n\n')
     const error: RunError | undefined = message
       ? { kind: classifyError(message), message: cut(message) }
-      : answer
-        ? undefined
-        : cliFailure(r)
+      : // a nonzero exit is a failure even when an answer came first
+        cliFailure(r)
     return { answer, sessionId, usage: clean(usage), error }
   },
   versionArgv: bin => [...bin, '--version'],

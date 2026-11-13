@@ -23,6 +23,7 @@ import {
   redact,
   redactDeep,
   safeRelayDir,
+  toProjectPath,
   UNHASHED,
   type Packet,
 } from './protocol.ts'
@@ -282,6 +283,42 @@ describe('redaction', () => {
     expect(out).toContain('https://bot:[redacted]@example.com')
     expect(redactDeep({ a: ['token=example-token-value-0002'], n: 3 })).toEqual({ a: ['token=[redacted]'], n: 3 })
   })
+
+  // Review 2, finding 4: numeric and quoted values are whole values.
+  test('numeric credentials and quoted values with spaces are redacted whole; counters stay', () => {
+    expect(redact('password=12345678')).toBe('password=[redacted]')
+    expect(redact('client_secret: 4711')).not.toContain('4711')
+    const quoted = redact('password="correct horse battery staple" next')
+    expect(quoted).not.toContain('horse')
+    expect(quoted).not.toContain('staple')
+    expect(quoted).toContain('next')
+    expect(redact("secret='a b c'")).not.toContain(' b ')
+    const json = redact(JSON.stringify({ log: 'password="two words" end' }))
+    expect(json).not.toContain('two words')
+    expect(json).toContain('end')
+    expect(redact('max_tokens: 2000, input tokens: 48.2k, tokens=31')).toBe('max_tokens: 2000, input tokens: 48.2k, tokens=31')
+  })
+
+  // Review 2, finding 13: diff paths are relative to the project, not the repo.
+  test('repo paths become project paths', () => {
+    expect(toProjectPath('sub/src/a.ts', '')).toBe('sub/src/a.ts')
+    expect(toProjectPath('sub/src/a.ts', 'sub/')).toBe('src/a.ts')
+    expect(toProjectPath('other/b.ts', 'sub/')).toBe('../other/b.ts')
+    expect(toProjectPath('top.ts', 'a/b/')).toBe('../../top.ts')
+  })
+})
+
+// Review 2, finding 12: a nonzero exit is a failure even with an answer.
+describe('exit code', () => {
+  test('codex and opencode: answer plus exit 1 reports an error', () => {
+    const codex = BACKENDS.codex.parse(done(jsonl({ type: 'item.completed', item: { type: 'agent_message', text: 'half' } }), 1, 'crashed'))
+    expect(codex.answer).toBe('half')
+    expect(codex.error?.kind).toBe('cli')
+    const oc = BACKENDS.opencode.parse(done(jsonl({ type: 'text', sessionID: 'ses_1', part: { text: 'half' } }), 1, 'crashed'))
+    expect(oc.answer).toBe('half')
+    expect(oc.error?.kind).toBe('cli')
+    expect(BACKENDS.codex.parse(done(jsonl({ type: 'item.completed', item: { type: 'agent_message', text: 'ok' } }))).error).toBeUndefined()
+  })
 })
 
 describe('queue file', () => {
@@ -289,6 +326,10 @@ describe('queue file', () => {
     const q = { version: 1 as const, owner: { session: 'a', heartbeatAt: new Date(0).toISOString() }, jobs: [] }
     expect(loadQueue('{ x', serializeQueue(q))).toMatchObject({ isBroken: true, isFromBackup: true })
     expect(loadQueue(undefined, undefined).queue.jobs).toEqual([])
+    // Review 2, finding 6: an empty main read from the backup says so, so the
+    // backup is never overwritten by the empty main.
+    expect(loadQueue('', serializeQueue(q))).toMatchObject({ isFromBackup: true })
+    expect(loadQueue(undefined, serializeQueue(q)).isFromBackup).toBe(true)
     expect(mayOwn(q, 'b', 60_000)).toBe(false)
     expect(mayOwn(q, 'b', 4 * 60_000)).toBe(true)
     expect(mayOwn(q, 'a', 60_000)).toBe(true)

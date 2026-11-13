@@ -31,6 +31,7 @@ import {
   parsePacket,
   parsePorcelain,
   parseWorktreeList,
+  toProjectPath,
   protocolPrompt,
   redact,
   redactDeep,
@@ -80,6 +81,9 @@ type Role = RoleDef & {
   sessionId?: string
   // The backend the stored session belongs to.
   sessionBackend?: BackendId
+  // The folder the stored session works in; absent (0.3.0, shared) is the
+  // project. A run in another folder starts a fresh session.
+  sessionDir?: string
   runs: number
   isBusy: boolean
   lastStatus?: Packet['status']
@@ -146,6 +150,10 @@ let heartbeat: { cancel: () => void } | undefined
 // failed): they stay in queue.json and are retried at the next start.
 const unreported = new Map<string, string>()
 const versions: Partial<Record<BackendId, string>> = {}
+// Whether this session already said that the project is no git repository.
+let isNoGitNoticed = false
+// The project folder as the filesystem resolves it.
+let projectRoot: string | undefined
 // How owns compares paths on this project's filesystem.
 let pathCase: PathCase = {}
 // Set in a worker session: the paths it may write (empty: unrestricted).
@@ -203,6 +211,13 @@ async function readQueue($: EngineInterface) {
   return { ...loaded, text }
 }
 
+// Takes a queue as read: only a main file that parsed may become the backup
+// of the next write, never an empty or broken one over a good .bak.
+function adopt(loaded: Awaited<ReturnType<typeof readQueue>>) {
+  queue = loaded.queue
+  lastQueueText = loaded.isBroken || loaded.isFromBackup ? undefined : loaded.text
+}
+
 async function writeQueueText($: EngineInterface) {
   await ensureGitignore($)
   const text = serializeQueue(queue)
@@ -242,14 +257,31 @@ async function writeQueue($: EngineInterface) {
   })
 }
 
-// Claims the queue: writes this module's token, waits, reads the file back.
-// $.fs has no exclusive create (V3), so a claim holds only when nobody else
-// wrote theirs meanwhile; every later write is fenced against the file.
+// Claims the queue: reads the file again right before writing (a fresh claim
+// of another session is respected, its jobs kept), writes this module's
+// token, waits, reads it back. $.fs has no exclusive create (V3): between
+// that last read and the write a few milliseconds stay open, where two
+// claims can still cross; every later write is fenced against the file
+// (contract 0001, N5, N16).
 async function claimQueue($: EngineInterface) {
   try {
     ownerToken = newToken()
-    queue.owner = { session, heartbeatAt: await iso($), token: ownerToken }
-    await serialized(() => writeQueueText($))
+    let holder: string | undefined
+    await serialized(async () => {
+      const fresh = await readQueue($)
+      const owner = fresh.queue.owner
+      adopt(fresh)
+      if (owner && owner.token !== ownerToken && owner.session !== session && isFresh(owner, await $.clock.now())) {
+        holder = owner.session
+        return
+      }
+      queue.owner = { session, heartbeatAt: await iso($), token: ownerToken }
+      await writeQueueText($)
+    })
+    if (holder) {
+      notices.push(`Session ${holder} works this project's relay queue; this session only reads it.`)
+      return
+    }
     await $.clock.sleep(CLAIM_SETTLE_MS)
     const disk = parseQueue(await readText($, relayPath('queue.json')))
     if (disk?.owner?.token !== ownerToken) {
@@ -271,16 +303,27 @@ async function claimQueue($: EngineInterface) {
 async function beat($: EngineInterface) {
   if (!isOwner) return
   queue.owner = { session, heartbeatAt: await iso($), token: ownerToken }
-  await writeQueue($).catch(err => {
-    if (!(err instanceof NotOwnerError)) notices.push(`relay could not renew its claim on the queue (${message(err)}).`)
-  })
+  const isWritten = await writeQueue($).then(
+    () => true,
+    err => {
+      if (!(err instanceof NotOwnerError)) notices.push(`relay could not renew its claim on the queue (${message(err)}).`)
+      return false
+    },
+  )
+  if (!isWritten) return
+  // The queue can be written again: retry what waits on it (N15, N28).
+  await retryDeliveries($)
+  if (queued().length) await pump($)
 }
 
 // Runs the last module left behind: report the dead ones, start the rest.
 async function recover($: EngineInterface) {
   const dead = queue.jobs.filter(j => j.state === 'running')
   for (const job of dead) {
-    const why = await reportInterrupted($, job).catch(err => `reporting failed (${message(err)})`)
+    // An opencode task file the dead run left behind is cleared first.
+    const attachment = relayPath(`tmp/${job.role}-${job.run ?? 0}.md`)
+    if (await $.fs.exists(attachment).catch(() => false)) await $.fs.write(attachment, '').catch(() => undefined)
+    const why = await (job.delivery === 'stored' ? deliverStored($, job) : reportInterrupted($, job)).catch(err => `reporting failed (${message(err)})`)
     // A reported job left the queue in deliver; the rest stay and are shown.
     if (why) unreported.set(job.id, why)
   }
@@ -399,15 +442,44 @@ async function git($: EngineInterface, dir: string, args: string[], stdin?: stri
   }
 }
 
-async function isGitRepo($: EngineInterface, dir: string) {
+// Whether `dir` is in a git work tree: yes, a confirmed no ("not a git
+// repository"), or an error (git missing, refused, broken repository), which
+// the write check reports as a gap instead of a quiet skip.
+type GitState = { state: 'yes' | 'no' | 'error'; detail?: string }
+
+async function gitStateOf($: EngineInterface, dir: string): Promise<GitState> {
   const r = await git($, dir, ['rev-parse', '--is-inside-work-tree'])
-  return r.exitCode === 0 && r.stdout.trim() === 'true'
+  if (r.exitCode === 0 && r.stdout.trim() === 'true') return { state: 'yes' }
+  if ((r.exitCode === 0 && r.stdout.trim() === 'false') || /not a git repository/i.test(r.stderr)) return { state: 'no' }
+  return { state: 'error', detail: redact(r.stderr.trim()).slice(0, 200) || `exit code ${r.exitCode}` }
 }
 
-type Workdir = { dir: string; isGit: boolean; worktree?: { path: string; branch: string }; error?: string }
+type Workdir = { dir: string; isGit: boolean; git: GitState; worktree?: { path: string; branch: string }; error?: string }
 
 async function realOf($: EngineInterface, path: string) {
   return (await $.fs.stat(path, { resolve: true }).catch(() => undefined))?.realPath
+}
+
+// Why writing under the project-relative `rel` could land outside the
+// project, or undefined: every part of it that exists must be no link and
+// resolve to its own place in the project. Checked before the first write
+// to relay's folders and before `git worktree add` (contract 0001, N17).
+async function storageProblem($: EngineInterface, rel: string): Promise<string | undefined> {
+  projectRoot ??= await realOf($, cwd)
+  if (!projectRoot) return 'the project folder could not be resolved'
+  const root = projectRoot.replace(/[\\/]+$/, '')
+  const parts = rel.replace(/\\/g, '/').split('/').filter(Boolean)
+  for (let i = 1; i <= parts.length; i++) {
+    const p = parts.slice(0, i).join('/')
+    if (!(await $.fs.exists(p).catch(() => false))) return undefined
+    const st = await $.fs.stat(p, { resolve: true }).catch(() => undefined)
+    if (!st?.realPath) return `${p} could not be resolved`
+    // Each part is spelled as on disk, so case does not decide here.
+    if (st.isLink || !isSamePath(st.realPath, `${root}/${p}`, { caseInsensitive: true })) {
+      return `${p} resolves to ${st.realPath}, outside the project; relay writes nothing there`
+    }
+  }
+  return undefined
 }
 
 // Why the folder at `rel` is not the role's own worktree, or undefined: it
@@ -436,28 +508,25 @@ async function worktreeProblem($: EngineInterface, rel: string, branch: string):
 // worktree that was asked for and cannot be had fails the run before it
 // starts (contract 0001, Nachtrag 1).
 async function workdirOf($: EngineInterface, role: string, isolation: Isolation): Promise<Workdir> {
-  const isGit = await isGitRepo($, cwd)
-  if (isolation !== 'worktree') return { dir: cwd, isGit }
-  if (!isGit) return { dir: cwd, isGit, error: 'it needs a git repository, and the project is none' }
+  const g = await gitStateOf($, cwd)
+  const isGit = g.state === 'yes'
+  if (isolation !== 'worktree') return { dir: cwd, isGit, git: g }
+  if (g.state === 'no') return { dir: cwd, isGit, git: g, error: 'it needs a git repository, and the project is none' }
+  if (g.state === 'error') return { dir: cwd, isGit, git: g, error: `git could not tell whether the project is a repository (${g.detail})` }
   const rel = relayPath(`worktrees/${role}`)
   const branch = `relay/${role}`
-  if (await $.fs.exists(config.relayDir)) {
-    const root = await realOf($, cwd)
-    const real = await realOf($, config.relayDir)
-    if (!root || !real || !isSamePath(real, `${root.replace(/[\\/]+$/, '')}/${config.relayDir}`, pathCase)) {
-      return { dir: cwd, isGit, error: `${config.relayDir} resolves to ${real ?? 'nowhere'}, outside the project` }
-    }
-  }
+  const escape = await storageProblem($, rel)
+  if (escape) return { dir: cwd, isGit, git: g, error: escape }
   if (!(await $.fs.exists(rel))) {
     await ensureGitignore($)
     const hasBranch = (await git($, cwd, ['rev-parse', '--verify', '--quiet', `refs/heads/${branch}`])).exitCode === 0
     const path = absolute(rel)
     const r = await git($, cwd, hasBranch ? ['worktree', 'add', path, branch] : ['worktree', 'add', '-b', branch, path])
-    if (r.exitCode !== 0) return { dir: cwd, isGit, error: `git worktree add failed (${r.stderr.trim().slice(0, 300)})` }
+    if (r.exitCode !== 0) return { dir: cwd, isGit, git: g, error: `git worktree add failed (${r.stderr.trim().slice(0, 300)})` }
   }
   const problem = await worktreeProblem($, rel, branch)
-  if (problem) return { dir: cwd, isGit, error: problem }
-  return { dir: absolute(rel), isGit: true, worktree: { path: rel, branch } }
+  if (problem) return { dir: cwd, isGit, git: g, error: problem }
+  return { dir: absolute(rel), isGit: true, git: g, worktree: { path: rel, branch } }
 }
 
 const isHash = (h: string | undefined): h is string => !!h && /^[0-9A-Za-z]+$/.test(h)
@@ -483,28 +552,40 @@ async function hashPaths($: EngineInterface, dir: string, paths: string[]): Prom
   return out
 }
 
+// git names paths from the repository's top; the project may be a folder
+// inside it. Snapshot keys are project-relative (contract 0001, N24).
+async function repoOf($: EngineInterface, dir: string) {
+  const top = await git($, dir, ['rev-parse', '--show-toplevel'])
+  const pre = await git($, dir, ['rev-parse', '--show-prefix'])
+  return { top: top.exitCode === 0 && top.stdout.trim() ? top.stdout.trim() : dir, prefix: pre.exitCode === 0 ? pre.stdout.trim() : '' }
+}
+
 async function takeSnapshot($: EngineInterface, dir: string): Promise<Snapshot | undefined> {
   const head = await git($, dir, ['rev-parse', 'HEAD'])
   const status = await git($, dir, ['status', '--porcelain=v1', '-z', '--untracked-files=all'])
   if (status.exitCode !== 0) return undefined
-  const prefix = `${config.relayDir}/`
-  const isMine = (p: string) => !p.startsWith(prefix)
+  const repo = await repoOf($, dir)
+  const mine = (repoPath: string) => toProjectPath(repoPath, repo.prefix)
+  const relayPrefix = `${config.relayDir}/`
+  const isMine = (p: string) => !p.startsWith(relayPrefix)
   const dirty: Record<string, string> = {}
-  const present: { path: string; code: string }[] = []
+  const present: { repoPath: string; path: string; code: string }[] = []
   for (const e of parsePorcelain(status.stdout)) {
+    const path = mine(e.path)
     // A rename moves its source away: that is a deletion there.
-    if (e.orig && e.code.includes('R') && isMine(e.orig)) dirty[e.orig] = 'deleted'
-    if (!isMine(e.path)) continue
-    if (e.code.includes('D')) dirty[e.path] = 'deleted'
-    else present.push(e)
+    if (e.orig && e.code.includes('R') && isMine(mine(e.orig))) dirty[mine(e.orig)] = 'deleted'
+    if (!isMine(path)) continue
+    if (e.code.includes('D')) dirty[path] = 'deleted'
+    else present.push({ repoPath: e.path, path, code: e.code })
   }
-  const hashes = await hashPaths($, dir, present.map(e => e.path))
+  // Hashed from the top, where git's paths start.
+  const hashes = await hashPaths($, repo.top, present.map(e => e.repoPath))
   for (const e of present) {
-    const h = hashes.get(e.path)
+    const h = hashes.get(e.repoPath)
     const isNew = e.code === '??' || /^[ARC]/.test(e.code)
     dirty[e.path] = h === undefined ? UNHASHED : isNew ? `new:${h}` : h
   }
-  return { head: head.exitCode === 0 ? head.stdout.trim() : '', dirty }
+  return { head: head.exitCode === 0 ? head.stdout.trim() : '', dirty, ...(repo.prefix ? { prefix: repo.prefix } : {}) }
 }
 
 const EMPTY_TREE = '4b825dc642cb6eb9a060e54bf8d69288fbee4904'
@@ -516,7 +597,30 @@ async function emptyTree($: EngineInterface, dir: string) {
   return r.exitCode === 0 && isHash(h) ? h : EMPTY_TREE
 }
 
-async function writeCheckOf($: EngineInterface, role: string, owns: string[], dir: string, before: Snapshot | undefined, isGit: boolean): Promise<WriteCheck> {
+// The roles that ran in the same folder at some point since this run's
+// snapshot, finished ones included: for attributing changes (contract 0001,
+// N22). Kept until no running run started before they ended.
+type Activity = { role: string; owns: string[]; dir: string; from: number; to?: number }
+const activity: Activity[] = []
+let tick = 0
+
+function othersSince(mine: Activity | undefined) {
+  if (!mine) return []
+  return activity
+    .filter(a => a !== mine && a.role !== mine.role && a.dir === mine.dir && (a.to === undefined || a.to > mine.from))
+    .map(a => ({ role: a.role, owns: a.owns }))
+}
+
+function pruneActivity() {
+  const open = activity.filter(a => a.to === undefined).map(a => a.from)
+  const oldest = open.length ? Math.min(...open) : Infinity
+  for (let i = activity.length - 1; i >= 0; i--) {
+    const a = activity[i] as Activity
+    if (a.to !== undefined && a.to < oldest) activity.splice(i, 1)
+  }
+}
+
+async function writeCheckOf($: EngineInterface, owns: string[], dir: string, before: Snapshot | undefined, g: GitState, mine?: Activity): Promise<WriteCheck> {
   const none = (reason: string, isGap: boolean): WriteCheck => ({
     checked: false,
     reason,
@@ -526,7 +630,11 @@ async function writeCheckOf($: EngineInterface, role: string, owns: string[], di
     byOtherRole: [],
     ...(isGap ? { incomplete: [reason] } : {}),
   })
-  if (!before) return none(isGit ? 'git status failed before the run' : 'no snapshot before the run', isGit)
+  if (!before) {
+    if (g.state === 'no') return none('the project is no git repository', false)
+    if (g.state === 'error') return none(`git could not be run or found no repository (${g.detail})`, true)
+    return none('git status failed before the run, or no snapshot was taken', true)
+  }
   const after = await takeSnapshot($, dir)
   if (!after) return none('git status failed after the run', true)
   let committed: { path: string; change: Change }[] = []
@@ -535,21 +643,14 @@ async function writeCheckOf($: EngineInterface, role: string, owns: string[], di
     // A first commit has no parent: compare it with the empty tree.
     const empty = before.head && after.head ? '' : await emptyTree($, dir)
     const r = await git($, dir, ['diff', '--name-status', '-z', before.head || empty, after.head || empty])
-    if (r.exitCode === 0) committed = parseNameStatus(r.stdout)
+    if (r.exitCode === 0) committed = parseNameStatus(r.stdout).map(c => ({ ...c, path: toProjectPath(c.path, after.prefix ?? '') }))
     else gaps.push(`git diff of the commits made during the run failed (${r.stderr.trim().slice(0, 200)}); what they changed is unknown`)
   }
   // Roles in their own worktree cannot have written here.
-  const others = Object.values(roles)
-    .filter(r => r.isBusy && r.name !== role && runningIn[r.name] === dir)
-    .map(r => ({ role: r.name, owns: ownsOf[r.name] ?? [] }))
-  const check = compareSnapshots(before, after, committed, owns, others, pathCase)
+  const check = compareSnapshots(before, after, committed, owns, othersSince(mine), pathCase)
   if (gaps.length) check.incomplete = [...(check.incomplete ?? []), ...gaps]
   return check
 }
-
-// Where each busy role runs and what it owns, for attributing changes.
-const runningIn: Record<string, string> = {}
-const ownsOf: Record<string, string[]> = {}
 
 // ── runs ────────────────────────────────────────────────────────────────
 
@@ -607,7 +708,6 @@ async function start($: EngineInterface, job: QueuedJob, role: Role, run: number
   try {
     eff = effective(role, (await loadRoleDefs($))[role.name])
     job.startedAt = await iso($)
-    ownsOf[role.name] = eff.owns
     await save($)
     await writeQueue($)
   } catch (err) {
@@ -617,7 +717,6 @@ async function start($: EngineInterface, job: QueuedJob, role: Role, run: number
     job.state = 'queued'
     delete job.run
     delete job.startedAt
-    delete ownsOf[role.name]
     await save($).catch(() => undefined)
     dispatchError = err instanceof NotOwnerError ? 'another session took over the queue' : message(err)
     if (!(err instanceof NotOwnerError)) {
@@ -640,26 +739,43 @@ async function start($: EngineInterface, job: QueuedJob, role: Role, run: number
     let check: WriteCheck | undefined
     let inv: Invocation | undefined
     let notStarted: string | undefined
+    let mine: Activity | undefined
     const notes: string[] = []
-    const live = liveLog($, role.name, run, id)
-    let work: Workdir = { dir: cwd, isGit: false }
+    // Nothing is written where it could leave the project (N17).
+    const escape = (await storageProblem($, relayPath('tmp'))) ?? (await storageProblem($, relayPath(`runs/${role.name}`)))
+    const live = liveLog($, role.name, run, id, !escape)
+    let work: Workdir = { dir: cwd, isGit: false, git: { state: 'no' } }
     try {
-      work = await workdirOf($, role.name, eff.isolation)
-      if (work.error) {
+      if (escape) {
+        notStarted = escape
+        outcome = { answer: '', usage: {}, error: { kind: 'cli', message: escape } }
+      } else work = await workdirOf($, role.name, eff.isolation)
+      if (notStarted) {
+        // already decided
+      } else if (work.error) {
         notStarted = `isolation "worktree" could not be set up: ${work.error}`
         outcome = { answer: '', usage: {}, error: { kind: 'cli', message: notStarted } }
       } else {
-        runningIn[role.name] = work.dir
+        mine = { role: role.name, owns: eff.owns, dir: work.dir, from: ++tick }
+        activity.push(mine)
         await checkVersion($, id)
         const before = config.writeCheck === 'report' && work.isGit ? await takeSnapshot($, work.dir) : undefined
         if (before) await $.fs.write(snapshotPath(role.name, run), JSON.stringify(before))
 
-        const isNew = role.sessionId === undefined || sessionBackendOf(role) !== id
+        // A session lives in one folder: a run elsewhere starts a fresh one (N23).
+        const sessionDir = role.sessionDir ?? cwd
+        const isMoved = role.sessionId !== undefined && !isSamePath(sessionDir, work.dir, pathCase)
+        if (isMoved) notes.push(`The working folder changed (${sessionDir} → ${work.dir}); ${role.name} started a fresh ${id} session.`)
+        const isNew = role.sessionId === undefined || sessionBackendOf(role) !== id || isMoved
+        // A brief that holds credentials stays out of argv (N20): the system
+        // prompt gets it redacted, the task (stdin or file) carries it whole.
+        const safeBrief = redact(eff.brief)
+        const isBriefPrivate = safeBrief !== eff.brief
         const spec: LaunchSpec = {
           role: role.name,
           run,
-          task: job.task,
-          protocol: protocolPrompt(role.name, eff.brief, eff.owns),
+          task: isBriefPrivate ? `Your role brief, in full (kept off the command line):\n${eff.brief}\n\n---\n\n${job.task}` : job.task,
+          protocol: protocolPrompt(role.name, isBriefPrivate ? `${safeBrief} (the full brief comes with the task)` : eff.brief, eff.owns),
           isNew,
           ...(isNew ? {} : { sessionId: role.sessionId }),
           ...(model ? { model } : {}),
@@ -687,39 +803,45 @@ async function start($: EngineInterface, job: QueuedJob, role: Role, run: number
           if (inv.presetSessionId) {
             role.sessionId = inv.presetSessionId
             role.sessionBackend = id
+            role.sessionDir = work.dir
             await save($)
           }
-          for (const f of inv.tempFiles ?? []) await $.fs.write(f.path, f.content)
-          await spawnRun($, role.name, eff.owns, work.dir, inv, backend.onLine?.bind(backend), proc, live)
-          for (const f of inv.tempFiles ?? []) await $.fs.write(f.path, '').catch(() => undefined)
+          try {
+            for (const f of inv.tempFiles ?? []) await $.fs.write(f.path, f.content)
+            await spawnRun($, role.name, eff.owns, work.dir, inv, backend.onLine?.bind(backend), proc, live)
+          } finally {
+            // The task file never outlives its run, whatever ended it (N25).
+            for (const f of inv.tempFiles ?? []) await $.fs.write(f.path, '').catch(() => undefined)
+          }
           outcome = backend.parse(proc)
           if (!outcome.answer.trim() && !proc.stdout.trim() && proc.exitCode === undefined && outcome.error?.kind === 'cli') {
             outcome.error.message += ` · could not start ${inv.argv[0]}; set ${id}Bin to the full path of the executable`
           }
         }
-        check = config.writeCheck === 'report' ? await writeCheckOf($, role.name, eff.owns, work.dir, before, work.isGit) : undefined
+        check = config.writeCheck === 'report' ? await writeCheckOf($, eff.owns, work.dir, before, work.git, mine) : undefined
       }
     } catch (err) {
       proc.stderr += `\n${String(err)}`
       outcome.error ??= { kind: 'unknown', message: redact(String(err)).slice(0, 500) }
     }
-    delete runningIn[role.name]
+    if (mine) mine.to = ++tick
+    pruneActivity()
     running--
     try {
       await finish($, { role, run, job, id, model: model || outcome.usage.model || '', outcome, proc, check, work, notes, notStarted, presetSessionId: inv?.presetSessionId })
       await live.close(outcome, proc)
     } catch (err) {
-      // The report itself failed: free the role, drop the job, say so.
+      // The report itself failed: free the role, keep the job, which the
+      // next start reports as interrupted.
       role.isBusy = false
-      queue.jobs = queue.jobs.filter(j => j.id !== job.id)
-      await writeQueue($).catch(() => undefined)
-      notices.push(redact(`relay could not store or deliver ${role.name} run ${run} (${message(err)}).`))
+      notices.push(redact(`relay could not report ${role.name} run ${run} (${message(err)}); the job stays in the queue and is reported at the next start.`))
     } finally {
       await pump($)
     }
   })()
   return true
 }
+
 
 // Starts the child and reads it to its end; stops it at the timeout or the
 // token limit.
@@ -782,12 +904,13 @@ async function spawnRun(
 
 // <relayDir>/runs/<role>/live.log: one readable line per event, written in
 // batches (the plugin API cannot append). Every line is redacted first.
-function liveLog($: EngineInterface, role: string, run: number, id: BackendId) {
+function liveLog($: EngineInterface, role: string, run: number, id: BackendId, isEnabled = true) {
   const path = relayPath(`runs/${role}/live.log`)
   const lines = [`# ${role} · run ${run} · ${id} · started ${new Date().toISOString()}`]
   let flushedAt = 0
   const flush = async () => {
     flushedAt = Date.now()
+    if (!isEnabled) return
     await $.fs.write(path, `${lines.join('\n')}\n`).catch(() => undefined)
   }
   void flush()
@@ -902,9 +1025,11 @@ async function finish($: EngineInterface, r: RunResult) {
   const answer = outcome.answer
   let packet = parsePacket(answer)
   let compressedBy: string | undefined
+  let compressError: string | undefined
   if (packet) packet.compressed_by = 'worker'
   else if (answer.trim()) {
-    const c = await compress($, role.name, answer)
+    // A failing compressor is a missing packet, never a lost answer (N15).
+    const c = await compress($, role.name, answer).catch(err => ((compressError = message(err)), {} as { packet?: Packet; by?: string }))
     packet = c.packet
     if (packet) {
       packet.compressed_by = 'fallback'
@@ -922,25 +1047,39 @@ async function finish($: EngineInterface, r: RunResult) {
           : proc.isStoppedByLimit
             ? `Worker was stopped at the token limit (${config.maxTokensPerRun}) without a packet.`
             : answer.trim()
-              ? 'Worker answered without a relay packet (fallback compression is off or failed); read the full text.'
+              ? `Worker answered without a relay packet (fallback compression is off or failed${compressError ? `: ${compressError}` : ''}); read the full text.`
               : outcome.error
                 ? `Worker failed (${outcome.error.kind}): ${outcome.error.message}`
                 : `Worker produced no usable answer.${proc.stderr.trim() ? ` stderr: ${redact(proc.stderr.trim()).slice(0, 500)}` : ''}`,
   )
   if ((proc.isTimedOut || proc.isStoppedByLimit || outcome.error?.kind === 'budget') && packet.status === 'done') packet.status = 'partial'
+  // A backend that failed after the packet: never done, and the error is named (N26).
+  if (outcome.error && !isGone && !r.notStarted && packet.compressed_by !== 'none') {
+    if (packet.status === 'done') packet.status = 'partial'
+    packet.risks.push(`${r.id} reported an error after the answer (${outcome.error.kind}): ${outcome.error.message}`)
+  }
 
   // The role's session for its next run; a run that never started keeps it.
   if (isGone) {
     role.sessionId = undefined
     role.sessionBackend = undefined
+    role.sessionDir = undefined
   } else if (!r.notStarted) {
     const next = outcome.sessionId ?? r.presetSessionId ?? (sessionBackendOf(role) === r.id ? role.sessionId : undefined)
     role.sessionId = next
     role.sessionBackend = next ? r.id : undefined
+    role.sessionDir = next ? r.work.dir : undefined
     if (!next && r.id !== 'claude') packet.risks.push(`No ${r.id} session id was reported; the next task for ${role.name} starts a fresh session.`)
   }
 
   if (r.check) applyWriteCheck(packet, r.check)
+  // Without git the check is skipped; that is said once per session (N27).
+  if (r.check && !r.check.checked && !r.check.incomplete?.length && r.work.git.state === 'no' && !isNoGitNoticed) {
+    isNoGitNoticed = true
+    const note = 'write check skipped: the project is no git repository, so relay cannot see what workers write (said once per session).'
+    packet.risks.push(note)
+    notices.push(note)
+  }
   if (r.work.worktree && (!r.check || r.check.changed.length)) {
     packet.needs_from_main.push(`The changes are on branch ${r.work.worktree.branch} (worktree ${r.work.worktree.path}); relay does not merge them.`)
   }
@@ -955,8 +1094,14 @@ async function finish($: EngineInterface, r: RunResult) {
   await deliver($, role, run, r.job, answer, packet, head, { backend: r.id, usage: outcome.usage })
 }
 
-// Stores the run's files, updates the role, drops the job and reports. All
-// that leaves relay here is redacted (contract 0001, Nachtrag 1).
+// A run's report on its way: its files, then its notification. The job
+// leaves the queue only when both went through (N15).
+type Delivery = { role: Role; run: number; job: QueuedJob; files: [string, string][]; text: string; status: Packet['status']; isStored: boolean }
+const pendingDeliveries: Delivery[] = []
+
+// Stores the run's files, updates the role and reports; true once the job
+// could leave the queue. All that leaves relay here is redacted, the
+// packet.json envelope included (N2, N19).
 async function deliver(
   $: EngineInterface,
   role: Role,
@@ -966,39 +1111,92 @@ async function deliver(
   raw: Packet,
   rawHead: string,
   extra: { backend: BackendId; usage: Usage },
-) {
+): Promise<boolean> {
   const packet = redactDeep(raw)
   const head = redact(rawHead)
-  await ensureGitignore($)
   const fullPath = runPath(role.name, run, 'full.md')
-  await $.fs.write(fullPath, `# ${role.name} · run ${run}\n\n## Task\n\n${redact(job.task)}\n\n## Answer\n\n${redact(stripPacket(answer))}\n`)
-  await $.fs.write(runPath(role.name, run, 'packet.json'), JSON.stringify({ run, backend: extra.backend, usage: extra.usage, ...packet }, null, 2))
-
+  const files: [string, string][] = [
+    [fullPath, `# ${role.name} · run ${run}\n\n## Task\n\n${redact(job.task)}\n\n## Answer\n\n${redact(stripPacket(answer))}\n`],
+    [runPath(role.name, run, 'packet.json'), JSON.stringify(redactDeep({ run, backend: extra.backend, usage: extra.usage, ...packet }), null, 2)],
+  ]
   role.isBusy = false
   role.lastStatus = packet.status
   role.lastSummary = packet.summary
   roles[role.name] = role
-  await save($)
-  queue.jobs = queue.jobs.filter(j => j.id !== job.id)
-  await writeQueue($).catch(err => {
-    if (!(err instanceof NotOwnerError)) notices.push(`relay could not write the queue after ${role.name} run ${run} (${message(err)}).`)
-  })
+  await save($).catch(() => undefined)
+  return attemptDelivery($, { role, run, job, files, text: renderPacket(head, packet, fullPath, config.packetDetail), status: packet.status, isStored: false })
+}
 
-  const text = renderPacket(head, packet, fullPath, config.packetDetail)
+async function notify($: EngineInterface, d: Delivery) {
   if (config.notifyMode === 'note') {
-    await $.session.append({ message: { type: 'user', content: [{ type: 'text', text }] } })
-    $.ui.toast(`relay: ${role.name} run ${run} ${packet.status}`)
+    // A refused append or a dropped prompt is no delivery: it is retried.
+    const r = await $.session.append({ message: { type: 'user', content: [{ type: 'text', text: d.text }] } })
+    if (r?.deny) throw new Error(`the packet could not be appended (${r.deny})`)
+    $.ui.toast(`relay: ${d.role.name} run ${d.run} ${d.status}`)
   } else if (config.notifyMode === 'toast') {
-    unread.push(text)
-    $.ui.toast(`relay: ${role.name} run ${run} ${packet.status} – worker_status shows it`)
+    unread.push(d.text)
+    $.ui.toast(`relay: ${d.role.name} run ${d.run} ${d.status} – worker_status shows it`)
   } else {
-    await $.prompt.submit({ text })
+    const r = await $.prompt.submit({ text: d.text })
+    if (r?.drop) throw new Error(`the packet prompt was dropped (${r.drop})`)
   }
+}
+
+async function attemptDelivery($: EngineInterface, d: Delivery): Promise<boolean> {
+  try {
+    if (!d.isStored) {
+      await ensureGitignore($)
+      const escape = await storageProblem($, relayPath(`runs/${d.role.name}`))
+      if (escape) {
+        // Never written there; the notification still goes out.
+        d.text += `\nNot stored: ${escape}.`
+      } else {
+        for (const [path, text] of d.files) await $.fs.write(path, text)
+      }
+      d.isStored = true
+      // Durable: a restart now delivers the stored packet, not "interrupted".
+      d.job.delivery = 'stored'
+      await writeQueue($).catch(() => undefined)
+    }
+    await notify($, d)
+  } catch (err) {
+    if (!pendingDeliveries.includes(d)) {
+      pendingDeliveries.push(d)
+      notices.push(
+        redact(`relay could not ${d.isStored ? 'deliver' : 'store'} ${d.role.name} run ${d.run} (${message(err)}); its job stays in the queue and relay tries again with the next heartbeat.`),
+      )
+    }
+    return false
+  }
+  const i = pendingDeliveries.indexOf(d)
+  if (i >= 0) pendingDeliveries.splice(i, 1)
+  unreported.delete(d.job.id)
+  queue.jobs = queue.jobs.filter(j => j.id !== d.job.id)
+  await writeQueue($).catch(err => {
+    if (!(err instanceof NotOwnerError)) notices.push(`relay could not write the queue after ${d.role.name} run ${d.run} (${message(err)}).`)
+  })
+  return true
+}
+
+async function retryDeliveries($: EngineInterface) {
+  for (const d of [...pendingDeliveries]) await attemptDelivery($, d)
+}
+
+// A job whose files were stored but whose packet never arrived: deliver the
+// stored packet; when it is gone, report the run as interrupted.
+async function deliverStored($: EngineInterface, job: QueuedJob): Promise<string | undefined> {
+  const role = roles[job.role]
+  const run = job.run ?? 0
+  const stored = role ? parsePacket(await $.fs.read(runPath(job.role, run, 'packet.json')).catch(() => '')) : undefined
+  if (!role || !stored) return reportInterrupted($, job)
+  const head = `[relay] ${role.name} · run ${run} finished (${job.backend}, delivered after a restart)`
+  const d: Delivery = { role, run, job, files: [], text: renderPacket(head, stored, runPath(role.name, run, 'full.md'), config.packetDetail), status: stored.status, isStored: true }
+  return (await attemptDelivery($, d)) ? undefined : 'reporting failed (the stored packet could not be delivered)'
 }
 
 // A job the file still marks running died with the last module: report it
 // as failed, with the write check against its snapshot, and never restart it.
-// Returns why it could not be reported, or undefined once it was (the job
+// Returns why it could not be reported yet, or undefined once it was (the job
 // then left the queue).
 async function reportInterrupted($: EngineInterface, job: QueuedJob): Promise<string | undefined> {
   const defs = await loadRoleDefs($)
@@ -1017,11 +1215,12 @@ async function reportInterrupted($: EngineInterface, job: QueuedJob): Promise<st
       before = undefined
     }
     const dir = eff.isolation === 'worktree' ? absolute(relayPath(`worktrees/${role.name}`)) : cwd
-    applyWriteCheck(packet, await writeCheckOf($, role.name, eff.owns, dir, before, false))
+    applyWriteCheck(packet, await writeCheckOf($, eff.owns, dir, before, await gitStateOf($, dir)))
   }
-  await deliver($, role, run, job, '', packet, `[relay] ${role.name} · run ${run} interrupted (${job.backend})`, { backend: job.backend, usage: {} })
-  return undefined
+  const isDone = await deliver($, role, run, job, '', packet, `[relay] ${role.name} · run ${run} interrupted (${job.backend})`, { backend: job.backend, usage: {} })
+  return isDone ? undefined : 'reporting failed (relay retries with the next heartbeat)'
 }
+
 
 // A worker may only write what it owns, when the main agent asked for that.
 function denyUnowned(path: string | undefined) {
@@ -1114,18 +1313,31 @@ export const register: Register = (on, options) => {
     queueError = undefined
     dispatchError = undefined
     unreported.clear()
-    pathCase = await probeCase($)
+    pendingDeliveries.length = 0
+    isNoGitNoticed = false
+    projectRoot = undefined
+    // Nothing is written before the relay folder is known to stay inside the
+    // project (N17): not the case probe, not the queue claim.
+    const escape = await storageProblem($, config.relayDir)
+    if (escape) {
+      queueError = escape
+      notices.push(`${escape}; this session writes no relay files and does not work the queue.`)
+    } else pathCase = await probeCase($)
 
     let loaded: Awaited<ReturnType<typeof readQueue>> | undefined
     try {
-      loaded = await readQueue($)
+      if (!escape) loaded = await readQueue($)
     } catch (err) {
       queueError = `${relayPath('queue.json')} could not be read (${message(err)})`
       notices.push(`${queueError}; this session does not work the queue, so nothing in it is lost or overwritten.`)
     }
     if (loaded?.isBroken) notices.push(loaded.isFromBackup ? 'queue.json was broken; relay read queue.json.bak instead.' : 'queue.json was broken and had no usable backup; the queue starts empty.')
-    queue = loaded?.queue ?? emptyQueue()
-    lastQueueText = loaded && !loaded.isBroken ? loaded.text : undefined
+    else if (loaded?.isFromBackup) notices.push('queue.json was empty or missing; relay read queue.json.bak instead.')
+    if (loaded) adopt(loaded)
+    else {
+      queue = emptyQueue()
+      lastQueueText = undefined
+    }
     await save($)
 
     await $.tool.register({
@@ -1293,7 +1505,8 @@ export const register: Register = (on, options) => {
     const role: Role = roles[name] ?? { name, runs: 0, isBusy: false }
     const inFlight = role.isBusy || queue.jobs.some(j => j.role === name && j.state === 'queued')
     const def = (await loadRoleDefs($))[name]
-    const backendBefore = effective(role, def).backend
+    const prior = effective(role, def)
+    const backendBefore = prior.backend
     if (input.brief !== undefined) role.brief = input.brief
     if (input.owns !== undefined) role.owns = toList(input.owns)
     if (input.model !== undefined) role.model = input.model
@@ -1313,6 +1526,13 @@ export const register: Register = (on, options) => {
       role.sessionId = undefined
       role.sessionBackend = undefined
       notes.push(`backend changed from ${backendBefore} to ${eff.backend}: the old session was dropped`)
+    }
+    // A session belongs to its folder (N23).
+    if (eff.isolation !== prior.isolation && role.sessionId) {
+      role.sessionId = undefined
+      role.sessionBackend = undefined
+      role.sessionDir = undefined
+      notes.push(`isolation changed from ${prior.isolation} to ${eff.isolation}: the old session was dropped`)
     }
     const ignored = ignoredRules(eff.backend, eff)
     if (ignored.length) notes.push(`${eff.backend} ignores: ${ignored.join(', ')}`)

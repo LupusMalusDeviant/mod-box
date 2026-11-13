@@ -20,6 +20,10 @@ export type Scenario =
   | 'leak'
   // fails with credentials in the error message and on stderr
   | 'leak-error'
+  // a done packet, then an error event and exit 1 (codex, opencode)
+  | 'done-then-error'
+  // a done packet, no error event, but exit 1
+  | 'answer-exit1'
 
 export type Call = { argv: string[]; cwd?: string; env: Record<string, string>; input?: string; attachment?: string }
 
@@ -100,6 +104,11 @@ export function fakeWorld(
     // registered worktrees: absolute path → branch ref
     worktrees: new Map<string, string>(),
     worktreeAddError: '',
+    // the project inside its repository: git's top and the project's prefix
+    toplevel: '/w',
+    prefix: '',
+    // git itself fails (not 'not a git repository')
+    isBroken: false,
   }
   // Paths that are links: rel path → where they resolve.
   const links = new Map<string, string>()
@@ -108,6 +117,12 @@ export function fakeWorld(
     failWrite: (_path: string) => false,
     // clock ms a write waits before it lands
     writeDelay: (_path: string) => 0,
+    // a session.append (notifyMode note) that is refused
+    failAppend: () => false,
+    // $.model.complete (the Haiku fallback) rejects
+    failModel: false,
+    // runs after a tool registered (between the start's queue read and the claim)
+    afterRegister: (_name: string) => {},
   }
   const ollama = { answer: JSON.stringify({ status: 'done', summary: 'Built by ollama.' }), exitCode: 0 }
   let threads = 0
@@ -122,12 +137,13 @@ export function fakeWorld(
   on('session.start', (_$: any, e: any) => ({ sessionId: 's1', cwd: e.cwd }))
   on('env.get', (_$: any, e: any) => (envAsked.push(String(e.name)), { value: init.env?.[String(e.name)] }))
   const tools: string[] = []
-  on('tool.register', (_$: any, e: any) => (tools.push(String(e.name)), { value: {} }))
+  on('tool.register', (_$: any, e: any) => (tools.push(String(e.name)), io.afterRegister(String(e.name)), { value: {} }))
   on('ui.status', () => ({ value: undefined }))
   on('ui.toast', (_$: any, e: any) => (toasts.push(String(e.text ?? e.message ?? '')), { value: undefined }))
   on('prompt.submit', (_$: any, e: any) => (submitted.push(e.text), { text: e.text }))
-  on('session.append', () => ({ value: undefined }))
-  on('model.complete', () => ({
+  // notifyMode note: an appended packet counts as submitted
+  on('session.append', (_$: any, e: any, next: any) => (io.failAppend() ? { deny: 'the session could not be appended to' } : (submitted.push(String(e.message?.content?.[0]?.text ?? '')), next(e))))
+  on('model.complete', () => io.failModel ? { deny: 'model unavailable' } : ({
     value: { isAnswered: true, text: JSON.stringify({ status: 'done', summary: 'Built by haiku.' }), usage: { input_tokens: 1, output_tokens: 1, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 } },
   }))
   on('fs.exists', (_$: any, e: any) => {
@@ -166,10 +182,13 @@ export function fakeWorld(
     if (args[0] === '--version') return ok(`${bin} 0.0.0-test`)
     if (bin === 'ollama') return ok(ollama.answer, ollama.exitCode)
     if (bin !== 'git') return ok('', 1)
-    if (!git.isRepo) return ok('', 128, 'not a git repository')
+    if (git.isBroken) return ok('', 1, 'fatal: detected dubious ownership in repository')
+    if (!git.isRepo) return ok('', 128, 'fatal: not a git repository (or any of the parent directories): .git')
     const sub = args[0]
     if (sub === 'rev-parse' && args[1] === '--is-inside-work-tree') return ok('true\n')
     if (sub === 'rev-parse' && args[1] === 'HEAD') return git.head ? ok(`${git.head}\n`) : ok('HEAD\n', 128, "fatal: ambiguous argument 'HEAD': unknown revision")
+    if (sub === 'rev-parse' && args[1] === '--show-toplevel') return ok(`${git.toplevel}\n`)
+    if (sub === 'rev-parse' && args[1] === '--show-prefix') return ok(`${git.prefix}\n`)
     if (sub === 'rev-parse') return ok('', 1)
     if (sub === 'status') return ok(git.status.map(s => `${s.code} ${s.path}\0${s.orig ? `${s.orig}\0` : ''}`).join(''))
     if (sub === 'hash-object') {
@@ -270,8 +289,9 @@ export function fakeWorld(
         jsonl(
           { type: 'item.completed', item: { id: 'i1', type: 'agent_message', text: answer } },
           { type: 'turn.completed', usage: { input_tokens: 48200, cached_input_tokens: 31000, output_tokens: 3100, reasoning_output_tokens: 500 } },
+          ...(scenario === 'done-then-error' ? [{ type: 'error', message: 'stream disconnected before completion' }] : []),
         ),
-        0,
+        scenario === 'done-then-error' || scenario === 'answer-exit1' ? 1 : 0,
         scenario === 'leak' ? leakStderr : '',
       )
     }
@@ -282,12 +302,13 @@ export function fakeWorld(
       if (scenario === 'leak-error') return yield* out(jsonl({ type: 'error', sessionID: sid, error: { message: leakErr } }), 1, leakStderr)
       return yield* out(
         jsonl(
-          { type: 'step_start', sessionID: sid, part: { type: 'step-start' } },
+          { type: 'step_start', sessionID: sid, part: { type: 'step-start', ...(scenario === 'leak' ? { model: `ollama/m access_token=${SECRETS.token}` } : {}) } },
           ...(scenario === 'leak' ? [{ type: 'tool_use', sessionID: sid, part: { tool: 'bash', state: { input: { command: `echo password=${SECRETS.password}` } } } }] : []),
           { type: 'text', sessionID: sid, part: { type: 'text', text: answer } },
           { type: 'step_finish', sessionID: sid, part: { type: 'step-finish', reason: 'stop', cost: 0, tokens: { input: 12400, output: 1800, reasoning: 0, cache: { read: 0, write: 0 } } } },
+          ...(scenario === 'done-then-error' ? [{ type: 'error', sessionID: sid, error: { message: 'provider connection reset' } }] : []),
         ),
-        0,
+        scenario === 'done-then-error' || scenario === 'answer-exit1' ? 1 : 0,
       )
     }
     return { value: { code: 127, signal: null } }
@@ -345,6 +366,8 @@ export function fakeWorld(
     // worker would).
     during: (fn: (call: Call) => void) => during.push(fn),
     releaseHeld: () => held.splice(0).forEach(r => r()),
+    // releases the worker that waits longest
+    releaseOne: () => held.shift()?.(),
     heldCount: () => held.length,
     queueFile: () =>
       JSON.parse(files.get('.relay/queue.json') ?? '{"jobs":[]}') as {

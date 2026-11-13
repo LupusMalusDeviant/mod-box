@@ -26,6 +26,17 @@ export type Packet = {
 export type Snapshot = {
   head: string
   dirty: Record<string, string>
+  // where the project lies inside its repository (git rev-parse --show-prefix)
+  prefix?: string
+}
+
+// A path git names from the repository's top, relative to the project: inside
+// it without the prefix, outside it with one ../ per level.
+export function toProjectPath(repoPath: string, prefix: string): string {
+  const pre = prefix.replace(/\\/g, '/').replace(/^\/+/, '')
+  if (!pre) return repoPath
+  if (repoPath.startsWith(pre)) return repoPath.slice(pre.length)
+  return `${'../'.repeat(pre.split('/').filter(Boolean).length)}${repoPath}`
 }
 
 export type Change = 'created' | 'modified' | 'deleted'
@@ -341,22 +352,35 @@ export function safeRelayDir(value: string): { dir: string; note?: string } {
 
 const SECRET = '[redacted]'
 
+// A field name that counts tokens rather than holding one (max_tokens,
+// input tokens, maxTokensPerRun): its numeric value stays readable.
+const isCounterName = (name: string) => /tokens|token[_-]?(?:count|limit|budget|usage|used)|max[_-]?tokens?/i.test(name)
+const isCount = (value: string) => /^[\d.,]+[kKmMbB]?$/.test(value)
+
+// key=value / key: value / "key": "value" for names that hold credentials.
+// The value is taken whole: double, single or escaped quotes with spaces and
+// escapes inside, else up to the next separator. Numbers are redacted too,
+// except the count of a counter name (contract 0001, Nachtrag 1, N18).
+const KEY_VALUE =
+  /\b([A-Za-z0-9_.-]*(?:api[_-]?key|apikey|secret|token|passwd|password|access[_-]?key|private[_-]?key|credential|session[_-]?key)[A-Za-z0-9_.-]*)(\\?["']?\s*[:=]\s*)(\\"(?:[^"\\]|\\[^"])*\\"|"(?:[^"\\\r\n]|\\.)*"|'(?:[^'\\\r\n]|\\.)*'|[^\s"'&,;\\]+)/gi
+
+function redactKeyValue(match: string, name: string, sep: string, value: string): string {
+  if (isCounterName(name) && isCount(value)) return match
+  const quote = value.startsWith('\\"') ? '\\"' : value.startsWith('"') ? '"' : value.startsWith("'") ? "'" : ''
+  return `${name}${sep}${quote}${SECRET}${quote}`
+}
+
 // Credentials in text relay persists or delivers (live.log, run files,
 // packets, notices): replaced before they leave relay (contract 0001,
 // Nachtrag 1). Best effort by shape; it never makes text longer to read.
-const SECRET_PATTERNS: [RegExp, string][] = [
+const SECRET_PATTERNS: [RegExp, string | ((...args: string[]) => string)][] = [
   [/-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----[\s\S]*?(?:-----END [A-Z0-9 ]*PRIVATE KEY-----|$)/g, `${SECRET} private key`],
   // `Authorization: Bearer x`, `Proxy-Authorization: Basic x`
   [/\b((?:proxy-)?authorization)(\s*[:=]\s*)(?:(bearer|basic|token|digest)\s+)?[^\s"'\\,;]+/gi, `$1$2$3 ${SECRET}`],
   [/\b(bearer|basic)\s+[A-Za-z0-9._~+/=-]{8,}/gi, `$1 ${SECRET}`],
   // scheme://user:password@host
   [/\b([a-z][a-z0-9+.-]*:\/\/[^\s:@/]+):[^\s@/]+@/gi, `$1:${SECRET}@`],
-  // key=value / key: value / "key": "value" for names that hold credentials;
-  // the value must hold a letter and be no count (max_tokens: 2000, tokens: 48.2k).
-  [
-    /\b([A-Za-z0-9_.-]*(?:api[_-]?key|apikey|secret|token|passwd|password|access[_-]?key|private[_-]?key|credential|session[_-]?key)[A-Za-z0-9_.-]*)(["']?\s*[:=]\s*["']?)(?![\d.,]+[kKmMbB]?(?![^\s"'&,;]))(?=[^\s"'&,;]*[A-Za-z])[^\s"'&,;]{4,}/gi,
-    `$1$2${SECRET}`,
-  ],
+  [KEY_VALUE, redactKeyValue as (...args: string[]) => string],
   // well-known token shapes
   [/\bsk-(?:ant-|proj-|live-|test-)?[A-Za-z0-9_-]{16,}/g, SECRET],
   [/\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{20,}/g, SECRET],
@@ -371,7 +395,7 @@ const SECRET_PATTERNS: [RegExp, string][] = [
 
 export function redact(text: string): string {
   let out = text
-  for (const [re, by] of SECRET_PATTERNS) out = out.replace(re, by)
+  for (const [re, by] of SECRET_PATTERNS) out = typeof by === 'string' ? out.replace(re, by) : out.replace(re, by)
   return out
 }
 
