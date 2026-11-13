@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.8.0
 
 - **Relay 0.4.0** (contract `docs/contracts/0001-relay-backends.md`): each role picks its backend, `claude`, `codex` (in its OS sandbox) or `opencode` (Ollama, OpenRouter). After every run a git write check reports writes outside `owns` for every backend; a role may work in its own worktree (`isolation: "worktree"`, branch `relay/<role>`, never merged by relay). Packets name backend and usage (tokens, cost), roles keep totals, `maxTokensPerRun` stops codex and opencode runs. The queue lives in `.relay/queue.json`, survives a reload, and one session per project works it. A missing packet can be built by an ollama model (`fallbackBackend`). `live.log` per role shows what a run does.
 - **Relay** ships in this marketplace: `/plugin install relay@mod-box`. Its source lives in `plugins/relay/`; `build` keeps plugins listed in `SHIPPED` (`tools/box.mjs`) as they are and only adds them to the marketplace and the README.
