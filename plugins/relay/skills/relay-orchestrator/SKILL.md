@@ -1,11 +1,11 @@
 ---
 name: relay-orchestrator
-description: How to run persistent worker sessions with the relay plugin (tools mcp__relay__worker_send, worker_status, worker_expand): separate Claude Code sessions started via CLI that keep their own context per role and report back as compact relay packets. Use when the user wants long-running parallel roles (e.g. ingester, architect/system engineer, researcher) on one knowledge base or codebase, says "relay", "Worker-Sessions", "Multi-Session", "Rollen parallel arbeiten lassen", "Main-Agent steuert Sessions", "an den Ingester geben", or when work needs roles that remember earlier tasks. Also use when a "[relay] <role> · run <n> finished" message arrives. Do NOT use for one-shot parallel lookups or short searches (use ordinary subagents), for a single task that fits in this session, or inside a worker session (workers have no relay tools).
+description: How to run persistent worker sessions with the relay plugin (tools mcp__relay__worker_send, worker_status, worker_expand): separate Claude Code, Codex or OpenCode sessions started via CLI that keep their own context per role and report back as compact relay packets. Use when the user wants long-running parallel roles (e.g. ingester, architect/system engineer, researcher) on one knowledge base or codebase, says "relay", "Worker-Sessions", "Multi-Session", "Rollen parallel arbeiten lassen", "Main-Agent steuert Sessions", "an den Ingester geben", or when work needs roles that remember earlier tasks. Also use when a "[relay] <role> · run <n> finished" message arrives. Do NOT use for one-shot parallel lookups or short searches (use ordinary subagents), for a single task that fits in this session, or inside a worker session (workers have no relay tools).
 ---
 
 # Relay orchestrator
 
-The relay lets you, the **main agent**, hand work to **workers**: separate Claude Code sessions, one per **role**, started in the background via the `claude` CLI. A role keeps its session, and with it its context, across tasks. Workers never talk to the user or to each other; everything flows through you as **relay packets**, compact summaries that keep every essential (decisions, file changes, blockers, exact identifiers) and leave the details on disk.
+The relay lets you, the **main agent**, hand work to **workers**: separate sessions, one per **role**, started in the background via a CLI. Each role picks its **backend**: `claude` (Claude Code, the default), `codex` (Codex CLI) or `opencode` (OpenCode, which also reaches Ollama and OpenRouter models). A role keeps its session, and with it its context, across tasks. Workers never talk to the user or to each other; everything flows through you as **relay packets**, compact summaries that keep every essential (decisions, file changes, blockers, exact identifiers) and leave the details on disk.
 
 Your two duties: **keep your own context small**, and **still know every input and every essential output**.
 
@@ -23,16 +23,21 @@ Each worker run is a full Claude Code session with its own cost. Do not spin up 
 ## The tools
 
 ### `mcp__relay__worker_send`
-`{ role, task, brief?, owns?, model?, effort?, allowedTools?, disallowedTools?, fresh? }`
+`{ role, task, brief?, owns?, model?, effort?, allowedTools?, disallowedTools?, backend?, isolation?, fresh? }`
 
 Starts the role's next run, or queues it, and returns at once. It never waits for the result.
 - `role`: lowercase name (`a-z 0-9 - _`). The first send creates the role.
 - `task`: the complete instruction for this run (see *Writing a task*).
-- `brief`, `owns`, `model`, `effort`, `allowedTools`, `disallowedTools`: stored for the role and reused by later sends. Give them once, when creating a role, or put them in the roles file.
+- `brief`, `owns`, `model`, `effort`, `allowedTools`, `disallowedTools`, `backend`, `isolation`: stored for the role and reused by later sends. Give them once, when creating a role, or put them in the roles file.
+- `backend`: `claude`, `codex` or `opencode`. Changing it drops the role's session (the answer says so).
+- `model`: in the backend's format. opencode needs `provider/model`, e.g. `ollama/kimi-k3:cloud` or `openrouter/<vendor>/<model>`.
+- `isolation: "worktree"`: the role works in its own git worktree `.relay/worktrees/<role>` on branch `relay/<role>`. relay never merges it; the packet names the branch under *Needs from main*.
 - `fresh: true`: the next run starts a new session, so the role forgets everything. Only possible while the role is idle and has nothing queued.
 
+The send's answer lists rules the backend cannot apply (`codex ignores: allowedTools`). Do not rely on those.
+
 ### `mcp__relay__worker_status`
-Lists every role (stored and from the roles file): `working`, `queued`, `idle` or `defined, never run`, the number of runs, the last status and summary, owned paths, model. It also shows running/queued counts and, when the user picked toast delivery, the packets that arrived unread.
+Lists every role (stored and from the roles file): `working`, `queued`, `idle` or `defined, never run`, the number of runs, the last status and summary, backend and its version, model, owned paths, total usage and ignored rules. It also shows running/queued counts, the waiting jobs, notes (a broken queue file, an unchecked CLI version) and, when the user picked toast delivery, the packets that arrived unread.
 
 ### `mcp__relay__worker_expand`
 `{ role, run?, section?, maxChars? }`: details behind a packet.
@@ -41,13 +46,14 @@ Lists every role (stored and from the roles file): `working`, `queued`, `idle` o
 - no section: the whole answer, cut at `maxChars` (default 12000). Use rarely.
 - `run` defaults to the latest finished run. Old runs rotate out after the user's `keepRuns`.
 
-Everything is also on disk: `<relayDir>/runs/<role>/<slot>.full.md` (task + full answer) and `.packet.json`.
+Everything is also on disk: `<relayDir>/runs/<role>/<slot>.full.md` (task + full answer), `.packet.json` (with `backend`, `usage` and `write_check`) and `live.log` (what the current or last run did, event by event for codex and opencode).
 
 ## Setting up roles
 
 A role is defined by:
 - **brief**: what the role is for and what it must never do. One or two sentences.
-- **owns**: the paths it may write (folders end with `/`). Enforced in the worker for Edit, Write and NotebookEdit when the user keeps `enforceOwns` on; shell writes are not caught, so also forbid risky shell use via `disallowedTools`.
+- **owns**: the paths it may write (folders end with `/`). In claude workers it is enforced for Edit, Write and NotebookEdit when the user keeps `enforceOwns` on. For every backend, relay also compares git before and after each run (the write check): a write outside `owns` turns `done` into `partial`, lands under *Risks* and marks the head line `⚠ wrote outside owns (n)`. The check reports, it does not undo.
+- **backend**: `claude` for most work; `codex` runs in its OS sandbox (`workspace-write`, no network, so no push); `opencode` for Ollama or OpenRouter models. Prefer `isolation: "worktree"` for codex and opencode roles that write while other roles write too.
 - **model / effort**: cheap and low for mechanical roles (ingesting), stronger for design or research.
 - **allowedTools / disallowedTools**: tool rules in Claude Code syntax, e.g. `Read`, `WebFetch`, `Bash(git status:*)`.
 
@@ -101,14 +107,14 @@ The worker already knows the relay protocol; you do not need to explain packets 
 
 ## Handling a packet
 
-A packet arrives as a message headed `[relay] <role> · run <n> finished (<turns>, <cost>)`. Depending on the user's settings it starts a turn by itself (`prompt`), appears at your next turn (`note`), or waits in `worker_status` (`toast`).
+A packet arrives as a message headed `[relay] <role> · run <n> finished (<backend> · …)`, e.g. `(claude · 6 turns, $0.42)` or `(codex · gpt-5.5-codex · 48.2k in / 3.1k out tokens)`. Depending on the user's settings it starts a turn by itself (`prompt`), appears at your next turn (`note`), or waits in `worker_status` (`toast`).
 
 Work through it in this order:
 1. **Status**: `done`, `partial`, `blocked` or `failed`. On `failed`, or `(packet built by fallback compressor)`, look once with `worker_expand`.
 2. **Needs from main / open questions**: decide yourself, ask the user, or route to the owning role. Never leave them dangling.
 3. **Decisions**: carry them into later tasks of roles that depend on them.
 4. **Artifacts**: what changed on disk. `refused` means a write was blocked by ownership. Route the change to the owner or adjust `owns`.
-5. **Risks**: resolve conflicts between roles before sending more work.
+5. **Risks**: resolve conflicts between roles before sending more work. `wrote outside owns` means the role broke its ownership: check the file, route or revert it. `probably by <role>` and `not attributable` come from roles running in the same folder at once.
 6. **Facts / next suggested**: use them for the next tasks.
 
 Do **not** expand by reflex. Most packets are enough as they are; the point of the relay is that your context stays small.
@@ -130,13 +136,19 @@ Only one task per role runs at a time; a second send for a busy role waits in th
 
 | What you see | What to do |
 |---|---|
-| `failed` with stderr mentioning the executable | The `claude` CLI was not found; the user must set the plugin's `claudeBin` |
+| `failed` with "could not start …" | The CLI was not found; the user must set `claudeBin`, `codexBin` or `opencodeBin` to the full path of the executable |
+| `failed (auth)` | The CLI is not logged in; the user logs in to codex or opencode themselves |
+| `failed (model)` | Unknown model, or an opencode model without `provider/` |
+| "session is gone" | The backend lost the session; the next send starts fresh, so repeat the context the role needs |
 | `stopped after N min` | The task was too big for the timeout; split it and resend |
+| `stopped at N tokens` | The user's `maxTokensPerRun` hit (codex, opencode); split the task |
+| `interrupted` | The plugin reloaded or the session ended while it ran; it is not restarted. Check its write check, then resend if needed |
+| "worked by another Claude Code session" | Another session owns this project's queue; use that one |
 | a cost close to the budget, status `partial` | Budget per run hit; split the task, or ask the user to raise `maxBudgetUsd` |
 | `refused` artifacts | Route the change to the owning role, or ask the user to widen `owns` |
 | answers drifting, role confused | `fresh: true` on the next send (the role forgets everything) |
 | "has work in flight" on `fresh` | Wait for the packet, then send with `fresh` |
-| packets stop arriving after the plugin reloaded or the session restarted | Running workers were stopped and queued tasks lost; check `worker_status` and resend. Sessions are kept, so roles resume with their context |
+| packets stop arriving after the plugin reloaded or the session restarted | Queued tasks are kept in `.relay/queue.json` and start again; running ones come back as `interrupted`. Sessions are kept, so roles resume with their context |
 
 ## Rules
 

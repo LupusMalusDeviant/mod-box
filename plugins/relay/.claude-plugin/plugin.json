@@ -1,17 +1,56 @@
 {
   "name": "relay",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "author": {
     "name": "E. Lenk"
   },
   "license": "MIT",
-  "description": "Main agent dispatches tasks to persistent Claude Code worker sessions via CLI; workers report back as compact, lossless-on-essentials relay packets.",
+  "description": "Main agent dispatches tasks to persistent worker sessions via CLI (Claude Code, Codex or OpenCode per role); workers report back as compact, lossless-on-essentials relay packets.",
   "userConfig": {
+    "defaultBackend": {
+      "type": "string",
+      "title": "Default backend",
+      "description": "Worker CLI for roles that name none: claude, codex or opencode.",
+      "options": [
+        "claude",
+        "codex",
+        "opencode"
+      ],
+      "default": "claude"
+    },
     "claudeBin": {
       "type": "string",
       "title": "Claude executable",
-      "description": "Executable used to start worker sessions (no shell).",
+      "description": "Executable used to start claude workers (no shell): a name, a full path, or a JSON list of program and leading arguments.",
       "default": "claude"
+    },
+    "codexBin": {
+      "type": "string",
+      "title": "Codex executable",
+      "description": "Executable used to start codex workers (no shell). On Windows the npm 'codex' is a .cmd starter: give the full path to codex.exe.",
+      "default": "codex"
+    },
+    "codexSandbox": {
+      "type": "string",
+      "title": "Codex sandbox",
+      "description": "OS sandbox for codex workers. workspace-write: writes only in its folder, no network. read-only: no writes.",
+      "options": [
+        "workspace-write",
+        "read-only"
+      ],
+      "default": "workspace-write"
+    },
+    "opencodeBin": {
+      "type": "string",
+      "title": "OpenCode executable",
+      "description": "Executable used to start opencode workers (no shell); a full path to opencode.exe on Windows.",
+      "default": "opencode"
+    },
+    "opencodeStandalone": {
+      "type": "boolean",
+      "title": "OpenCode standalone",
+      "description": "Run each opencode worker with its own server (--standalone), so stopping it at the timeout also stops its work.",
+      "default": true
     },
     "permissionMode": {
       "type": "string",
@@ -63,6 +102,12 @@
       "description": "A worker still running after this is stopped and reported as failed or partial; 0 means no timeout.",
       "default": 30
     },
+    "maxTokensPerRun": {
+      "type": "number",
+      "title": "Token limit per run",
+      "description": "codex and opencode only: stop a run once its input plus output tokens pass this (may overshoot by one turn); 0 means no limit.",
+      "default": 0
+    },
     "allowedTools": {
       "type": "string",
       "title": "Allowed tools",
@@ -78,8 +123,28 @@
     "enforceOwns": {
       "type": "boolean",
       "title": "Enforce ownership",
-      "description": "Block Edit, Write and NotebookEdit in a worker outside the paths its role owns (shell writes are not covered).",
+      "description": "Block Edit, Write and NotebookEdit in a claude worker outside the paths its role owns (shell writes are not covered).",
       "default": true
+    },
+    "writeCheck": {
+      "type": "string",
+      "title": "Write check",
+      "description": "report: compare git before and after each run, for every backend, and report writes outside owns. off: no check.",
+      "options": [
+        "report",
+        "off"
+      ],
+      "default": "report"
+    },
+    "isolation": {
+      "type": "string",
+      "title": "Default isolation",
+      "description": "shared: roles work in the project folder. worktree: each role in its own git worktree on branch relay/<role>, never merged by relay.",
+      "options": [
+        "shared",
+        "worktree"
+      ],
+      "default": "shared"
     },
     "notifyMode": {
       "type": "string",
@@ -111,8 +176,31 @@
     "fallbackModel": {
       "type": "string",
       "title": "Fallback compressor model",
-      "description": "Model that builds a relay packet when a worker forgot to emit one.",
+      "description": "Claude model that builds a relay packet when a worker forgot to emit one (fallback backend claude).",
       "default": "claude-haiku-5-5"
+    },
+    "fallbackBackend": {
+      "type": "string",
+      "title": "Fallback compressor backend",
+      "description": "Who builds a missing packet: claude (the fallback model), ollama (the ollama model, as a local process) or off.",
+      "options": [
+        "claude",
+        "ollama",
+        "off"
+      ],
+      "default": "claude"
+    },
+    "ollamaModel": {
+      "type": "string",
+      "title": "Ollama model",
+      "description": "Model for the ollama fallback compressor, e.g. qwen3:8b. Empty works like off. Cloud models (…:cloud) send the answer off the machine.",
+      "default": ""
+    },
+    "ollamaBin": {
+      "type": "string",
+      "title": "Ollama executable",
+      "description": "Executable for the ollama fallback compressor (no shell).",
+      "default": "ollama"
     },
     "relayDir": {
       "type": "string",
@@ -123,13 +211,13 @@
     "rolesFile": {
       "type": "string",
       "title": "Roles file",
-      "description": "JSON file with predefined roles (brief, owns, model, effort, allowedTools, disallowedTools).",
+      "description": "JSON file with predefined roles (brief, owns, model, effort, allowedTools, disallowedTools, backend, isolation).",
       "default": ".relay/roles.json"
     },
     "gitignore": {
       "type": "boolean",
       "title": "Ignore run files in git",
-      "description": "Add <relay folder>/runs/ to .gitignore in git projects; the roles file stays versioned.",
+      "description": "Add <relay folder>/runs/, queue.json, tmp/ and worktrees/ to .gitignore in git projects; the roles file stays versioned.",
       "default": true
     },
     "keepRuns": {
