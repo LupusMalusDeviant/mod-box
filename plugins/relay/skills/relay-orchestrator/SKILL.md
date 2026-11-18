@@ -5,7 +5,7 @@ description: How to run persistent worker sessions with the relay plugin (tools 
 
 # Relay orchestrator
 
-The relay lets you, the **main agent**, hand work to **workers**: separate sessions, one per **role**, started in the background via a CLI. Each role picks its **backend**: `claude` (Claude Code, the default), `codex` (Codex CLI) or `opencode` (OpenCode, which also reaches Ollama and OpenRouter models). A role keeps its session, and with it its context, across tasks. Workers never talk to the user or to each other; everything flows through you as **relay packets**, compact summaries that keep every essential (decisions, file changes, blockers, exact identifiers) and leave the details on disk.
+The relay lets you, the **main agent**, hand work to **workers**: separate sessions, one per **role**, started in the background via a CLI. Each role picks its **backend**: `claude` (Claude Code, the default), `codex` (Codex CLI) or `opencode` (OpenCode, which also reaches Ollama and OpenRouter models) or `werkbank` (a Claude session on the user's Werkbank servers). A role keeps its session, and with it its context, across tasks. Workers never talk to the user or to each other; everything flows through you as **relay packets**, compact summaries that keep every essential (decisions, file changes, blockers, exact identifiers) and leave the details on disk.
 
 Your two duties: **keep your own context small**, and **still know every input and every essential output**.
 
@@ -29,7 +29,8 @@ Starts the role's next run, or queues it, and returns at once. It never waits fo
 - `role`: lowercase name (`a-z 0-9 - _`). The first send creates the role.
 - `task`: the complete instruction for this run (see *Writing a task*).
 - `brief`, `owns`, `model`, `effort`, `allowedTools`, `disallowedTools`, `backend`, `isolation`: stored for the role and reused by later sends. Give them once, when creating a role, or put them in the roles file.
-- `backend`: `claude`, `codex` or `opencode`. Changing it drops the role's session (the answer says so).
+- `backend`: `claude`, `codex`, `opencode` or `werkbank`. Changing it drops the role's session (the answer says so).
+- `werkbank`: the role runs as a Claude session on the user's Werkbank servers, not on this PC. It works on the pushed state of the project's repo, on one branch `agent/relay/<role>`, and pushes there; the packet names the branch under *Needs from main* and the verify command's result under *Facts*. Use it for longer, self-contained coding tasks in repos the Werkbank knows; the task must fit in 16 KiB and the user has a day budget (jobs and minutes), so do not use it for quick lookups. The role remembers earlier runs; if the packet says "the werkbank session moved", repeat the context it needs.
 - `model`: in the backend's format. opencode needs `provider/model`, e.g. `ollama/kimi-k3:cloud` or `openrouter/<vendor>/<model>`.
 - `isolation: "worktree"`: the role works in its own git worktree `.relay/worktrees/<role>` on branch `relay/<role>`. relay never merges it; the packet names the branch under *Needs from main*.
 - `fresh: true`: the next run starts a new session, so the role forgets everything. Only possible while the role is idle and has nothing queued.
@@ -142,6 +143,8 @@ Only one task per role runs at a time; a second send for a busy role waits in th
 | "session is gone" | The backend lost the session; the next send starts fresh, so repeat the context the role needs |
 | `stopped after N min` | The task was too big for the timeout; split it and resend |
 | `stopped at N tokens` | The user's `maxTokensPerRun` hit (codex, opencode); split the task |
+| `werkbank job … ended red / needs-approval / timed-out / limit` (status `partial`) | The job ran on the server but did not finish clean; its commits are on the named branch. Read the reason under *Risks*; `limit` and `error (budget)` mean no more werkbank jobs today |
+| `error (network)`, `error (auth)`, `error (repo)` on werkbank | Leitstand not reachable over Tailscale, relay token missing or wrong, or the repo is not in the Werkbank's list; the user fixes it, nothing ran |
 | `interrupted` | The plugin reloaded or the session ended while it ran; it is not restarted. Check its write check, then resend if needed |
 | "worked by another Claude Code session" | Another session owns this project's queue; use that one |
 | a cost close to the budget, status `partial` | Budget per run hit; split the task, or ask the user to raise `maxBudgetUsd` |

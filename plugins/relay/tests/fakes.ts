@@ -24,8 +24,28 @@ export type Scenario =
   | 'done-then-error'
   // a done packet, no error event, but exit 1
   | 'answer-exit1'
+  // werkbank-relay: the job's end states (contract 0002, section 1)
+  | 'red'
+  | 'needs-approval'
+  | 'timed-out'
+  | 'limit'
+  | 'failed'
+  | 'cancelled'
+  // werkbank-relay: the job ran fresh on another worker (new sessionId)
+  | 'session-moved'
+  // werkbank-relay: the program itself could not work (exit 2, error only)
+  | 'error-auth'
+  | 'error-network'
+  | 'error-repo'
+  | 'error-budget'
+  // werkbank-relay: text instead of JSON on stdout
+  | 'not-json'
 
-export type Call = { argv: string[]; cwd?: string; env: Record<string, string>; input?: string; attachment?: string }
+export type Call = { argv: string[]; cwd?: string; env: Record<string, string>; input?: string; attachment?: string; protocolFile?: string }
+
+// What the fake werkbank-relay reports, so tests can change it per world.
+export const WERKBANK_JOB = 'wb-20261118-7'
+export const WERKBANK_COMMIT = 'abc1234def5678'
 
 // Placeholder credentials (no real ones) the leak scenarios put into every
 // output channel, in the forms relay redacts: Authorization header,
@@ -237,6 +257,12 @@ export function fakeWorld(
       const p = /^([A-Za-z]:)?[\\/]/.test(raw) ? rel(raw) : rel(`${e.cwd}/${raw}`)
       call.attachment = has(p) ? files.get(keyOf(p)) : undefined
     }
+    // What werkbank-relay would read through --protocol-file.
+    const pi = argv.indexOf('--protocol-file')
+    if (pi >= 0) {
+      const p = rel(String(argv[pi + 1]))
+      call.protocolFile = has(p) ? files.get(keyOf(p)) : undefined
+    }
     spawns.push(call)
     for (const fn of during.splice(0)) fn(call)
     const scenario = scenarios.shift() ?? fallback
@@ -248,9 +274,11 @@ export function fakeWorld(
     }
     if (scenario === 'crash') return { value: { code: 2, signal: null } }
     if (scenario === 'hang') {
+      // werkbank waits for an hour: one progress line a minute keeps the test fast
+      const step = cli === 'werkbank-relay' ? 60_000 : 1000
       for (;;) {
-        await clock.sleep(1000)
-        yield { stream: 'stderr', text: '.' }
+        await clock.sleep(step)
+        yield { stream: 'stderr', text: cli === 'werkbank-relay' ? 'running auf fsn1-5\n' : '.' }
       }
     }
     if (scenario === 'held') await new Promise<void>(r => held.push(r))
@@ -310,6 +338,46 @@ export function fakeWorld(
         ),
         scenario === 'done-then-error' || scenario === 'answer-exit1' ? 1 : 0,
       )
+    }
+    if (cli === 'werkbank-relay') {
+      const arg = (flag: string) => {
+        const i = argv.indexOf(flag)
+        return i >= 0 ? argv[i + 1] : undefined
+      }
+      const role = arg('--role') ?? 'x'
+      const progress = 'queued\nrunning auf fsn1-5\nverifying\n'
+      const fail = (kind: string, message: string) => out(JSON.stringify({ error: { kind, message } }), 2, `${progress}error: ${message}\n`)
+      if (scenario === 'error-auth') return yield* fail('auth', '401: relay token rejected')
+      if (scenario === 'error-network') return yield* fail('network', 'Leitstand http://100.73.150.87:5080 not reachable')
+      if (scenario === 'error-repo') return yield* fail('repo', 'git@github.com:o/n.git is not in the repo list')
+      if (scenario === 'error-budget') return yield* fail('budget', 'relay day budget used up (8 jobs)')
+      if (scenario === 'not-json') return yield* out('Unhandled exception. System.Exception: boom\n', 1, 'boom\n')
+      const state =
+        scenario === 'red' || scenario === 'needs-approval' || scenario === 'timed-out' || scenario === 'limit' || scenario === 'failed' || scenario === 'cancelled'
+          ? scenario
+          : 'done'
+      const error =
+        scenario === 'needs-approval'
+          ? { kind: 'cli', message: 'the push needs the user\'s approval' }
+          : scenario === 'limit'
+            ? { kind: 'limit', message: 'Claude usage limit reached' }
+            : scenario === 'failed'
+              ? { kind: 'cli', message: 'claude exited 1' }
+              : undefined
+      const isRed = scenario === 'red'
+      const json = {
+        jobId: WERKBANK_JOB,
+        state,
+        answer: scenario === 'timed-out' || scenario === 'failed' ? '' : answer,
+        sessionId: scenario === 'session-moved' ? 'fsn1-4:fresh2' : (arg('--session') ?? 'fsn1-5:9b1f'),
+        usage: { costUsd: 0.42, turns: 6, inputTokens: 12000, outputTokens: 3100, model: 'claude-opus-5-5' },
+        branch: `agent/relay/${role}`,
+        commits: scenario === 'failed' ? [] : [WERKBANK_COMMIT],
+        changedFiles: scenario === 'failed' ? [] : scenario === 'write-outside' ? ['src/a.ts', 'other/x.md'] : ['src/a.ts'],
+        verify: { command: 'npm test', exitCode: isRed ? 1 : 0, tests: { total: 147, passed: isRed ? 145 : 147, failed: isRed ? 2 : 0 } },
+        ...(error ? { error } : {}),
+      }
+      return yield* out(JSON.stringify(json), 0, progress)
     }
     return { value: { code: 127, signal: null } }
   })

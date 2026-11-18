@@ -315,6 +315,21 @@ export function compareSnapshots(
   return check
 }
 
+// The write check of a run on the Werkbank servers (contract 0001, N39): the
+// files its job changed, named from the repository's top, against `owns`.
+// Case-sensitive, the servers run Linux; every path counts as modified (the
+// Leitstand reports no kind); no other roles share that branch.
+export function remoteWriteCheck(changedFiles: readonly string[] | undefined, owns: readonly string[], prefix: string): WriteCheck {
+  if (!changedFiles) {
+    const reason = 'the werkbank job reported no list of changed files'
+    return { checked: false, reason, changed: [], outside: [], unattributed: [], byOtherRole: [], incomplete: [reason] }
+  }
+  const paths = [...new Set(changedFiles.map(p => toProjectPath(p.replace(/\\/g, '/'), prefix)))].sort()
+  const changed = paths.map(path => ({ path, change: 'modified' as Change }))
+  const outside = owns.length ? paths.filter(p => !isOwnedPath(p, owns)) : []
+  return { checked: true, changed, outside, unattributed: [], byOtherRole: [] }
+}
+
 // Folds a write check into the packet: writes outside `owns` turn done into
 // partial and land under risks; files the worker did not list are added; what
 // could not be checked is named.

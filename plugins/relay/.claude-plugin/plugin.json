@@ -1,20 +1,21 @@
 {
   "name": "relay",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "author": {
     "name": "E. Lenk"
   },
   "license": "MIT",
-  "description": "Main agent dispatches tasks to persistent worker sessions via CLI (Claude Code, Codex or OpenCode per role); workers report back as compact, lossless-on-essentials relay packets.",
+  "description": "Main agent dispatches tasks to persistent worker sessions via CLI (Claude Code, Codex, OpenCode or the Werkbank servers per role); workers report back as compact, lossless-on-essentials relay packets.",
   "userConfig": {
     "defaultBackend": {
       "type": "string",
       "title": "Default backend",
-      "description": "Worker CLI for roles that name none: claude, codex or opencode.",
+      "description": "Worker CLI for roles that name none: claude, codex, opencode or werkbank.",
       "options": [
         "claude",
         "codex",
-        "opencode"
+        "opencode",
+        "werkbank"
       ],
       "default": "claude"
     },
@@ -201,6 +202,30 @@
       "title": "Ollama executable",
       "description": "Executable for the ollama fallback compressor (no shell).",
       "default": "ollama"
+    },
+    "werkbankBin": {
+      "type": "string",
+      "title": "werkbank-relay executable",
+      "description": "Program that runs a role on the Werkbank servers (no shell): a name, a full path to werkbank-relay.exe, or a JSON list.",
+      "default": "werkbank-relay"
+    },
+    "werkbankLeitstand": {
+      "type": "string",
+      "title": "Werkbank Leitstand URL",
+      "description": "http(s) address of the Werkbank Leitstand, reachable over Tailscale.",
+      "default": "http://100.73.150.87:5080"
+    },
+    "werkbankTokenFile": {
+      "type": "string",
+      "title": "Werkbank relay token file",
+      "description": "File holding the relay token for the Leitstand; a leading ~ is your home folder. relay never reads it, werkbank-relay does.",
+      "default": "~/.werkbank/relay.token"
+    },
+    "werkbankTimeoutMin": {
+      "type": "number",
+      "title": "Timeout per werkbank run (minutes)",
+      "description": "relay stops a werkbank run after this (wait in the Leitstand plus the run; replaces the run timeout for this backend); 0 means no timeout.",
+      "default": 60
     },
     "relayDir": {
       "type": "string",

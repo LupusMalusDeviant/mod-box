@@ -1,6 +1,11 @@
 import type { Register, EngineInterface } from 'claude-code'
 import {
   BACKEND_IDS,
+  BuildError,
+  isRemoteFailed,
+  liveStream,
+  remoteEndLine,
+  remoteVerifyLine,
   BACKENDS,
   CHECKED_VERSIONS,
   ignoredRules,
@@ -31,6 +36,7 @@ import {
   parsePacket,
   parsePorcelain,
   parseWorktreeList,
+  remoteWriteCheck,
   toProjectPath,
   protocolPrompt,
   redact,
@@ -123,6 +129,21 @@ const config = {
   fallbackBackend: 'claude' as 'claude' | 'ollama' | 'off',
   ollamaModel: '',
   ollamaBin: 'ollama',
+  werkbankBin: 'werkbank-relay',
+  werkbankLeitstand: 'http://100.73.150.87:5080',
+  werkbankTokenFile: '~/.werkbank/relay.token',
+  // relay's own timeout for a werkbank run: wait in the Leitstand plus the run
+  werkbankTimeoutMin: 60,
+}
+
+// The timeout relay applies to a run of this backend (contract 0001, N44).
+const timeoutOf = (id: BackendId) => (id === 'werkbank' ? config.werkbankTimeoutMin : config.runTimeoutMin)
+
+// `~/x` → <home>/x: children start without a shell, nothing else expands it.
+async function expandHome($: EngineInterface, path: string) {
+  if (!/^~(?=$|[\\/])/.test(path)) return path
+  const home = (await $.env.get('USERPROFILE')) || (await $.env.get('HOME'))
+  return home ? `${home.replace(/[\\/]+$/, '')}${path.slice(1)}` : path
 }
 
 let cwd = ''
@@ -396,6 +417,7 @@ function effective(role: Role, def: RoleDef | undefined) {
 }
 
 function binOf(id: BackendId) {
+  if (id === 'werkbank') return parseBin(config.werkbankBin, 'werkbank-relay')
   return parseBin(id === 'codex' ? config.codexBin : id === 'opencode' ? config.opencodeBin : config.claudeBin, id)
 }
 
@@ -740,6 +762,8 @@ async function start($: EngineInterface, job: QueuedJob, role: Role, run: number
     let inv: Invocation | undefined
     let notStarted: string | undefined
     let mine: Activity | undefined
+    let passedSessionId: string | undefined
+    const isRemote = id === 'werkbank'
     const notes: string[] = []
     // Nothing is written where it could leave the project (N17).
     const escape = (await storageProblem($, relayPath('tmp'))) ?? (await storageProblem($, relayPath(`runs/${role.name}`)))
@@ -749,17 +773,22 @@ async function start($: EngineInterface, job: QueuedJob, role: Role, run: number
       if (escape) {
         notStarted = escape
         outcome = { answer: '', usage: {}, error: { kind: 'cli', message: escape } }
-      } else work = await workdirOf($, role.name, eff.isolation)
+        // A werkbank worker has its own worktree on the server (N33).
+      } else work = await workdirOf($, role.name, isRemote ? 'shared' : eff.isolation)
       if (notStarted) {
         // already decided
       } else if (work.error) {
         notStarted = `isolation "worktree" could not be set up: ${work.error}`
         outcome = { answer: '', usage: {}, error: { kind: 'cli', message: notStarted } }
       } else {
-        mine = { role: role.name, owns: eff.owns, dir: work.dir, from: ++tick }
-        activity.push(mine)
+        // A werkbank run writes nothing here: no snapshot, and it takes no part
+        // in attributing what parallel runs wrote (N39).
+        if (!isRemote) {
+          mine = { role: role.name, owns: eff.owns, dir: work.dir, from: ++tick }
+          activity.push(mine)
+        }
         await checkVersion($, id)
-        const before = config.writeCheck === 'report' && work.isGit ? await takeSnapshot($, work.dir) : undefined
+        const before = config.writeCheck === 'report' && work.isGit && !isRemote ? await takeSnapshot($, work.dir) : undefined
         if (before) await $.fs.write(snapshotPath(role.name, run), JSON.stringify(before))
 
         // A session lives in one folder: a run elsewhere starts a fresh one (N23).
@@ -792,12 +821,22 @@ async function start($: EngineInterface, job: QueuedJob, role: Role, run: number
             codexSandbox: config.codexSandbox,
             opencodeStandalone: config.opencodeStandalone,
             tmpDir: absolute(relayPath('tmp')),
+            ...(isRemote
+              ? {
+                  werkbankLeitstand: config.werkbankLeitstand,
+                  werkbankTokenFile: await expandHome($, config.werkbankTokenFile.trim()),
+                  runTimeoutMin: config.runTimeoutMin,
+                }
+              : {}),
           },
         }
+        passedSessionId = spec.sessionId
         try {
           inv = backend.build(spec)
         } catch (err) {
-          outcome = { answer: '', usage: {}, error: { kind: 'model', message: message(err) } }
+          // A refused werkbank call never starts and keeps the session (N32).
+          if (err instanceof BuildError) notStarted = message(err).replace(/\.$/, '')
+          outcome = { answer: '', usage: {}, error: { kind: err instanceof BuildError ? err.kind : 'model', message: message(err) } }
         }
         if (inv) {
           if (inv.presetSessionId) {
@@ -808,7 +847,7 @@ async function start($: EngineInterface, job: QueuedJob, role: Role, run: number
           }
           try {
             for (const f of inv.tempFiles ?? []) await $.fs.write(f.path, f.content)
-            await spawnRun($, role.name, eff.owns, work.dir, inv, backend.onLine?.bind(backend), proc, live)
+            await spawnRun($, id, eff.owns, work.dir, inv, backend.onLine?.bind(backend), proc, live)
           } finally {
             // The task file never outlives its run, whatever ended it (N25).
             for (const f of inv.tempFiles ?? []) await $.fs.write(f.path, '').catch(() => undefined)
@@ -818,7 +857,10 @@ async function start($: EngineInterface, job: QueuedJob, role: Role, run: number
             outcome.error.message += ` · could not start ${inv.argv[0]}; set ${id}Bin to the full path of the executable`
           }
         }
-        check = config.writeCheck === 'report' ? await writeCheckOf($, eff.owns, work.dir, before, work.git, mine) : undefined
+        if (config.writeCheck !== 'report') check = undefined
+        else if (!isRemote) check = await writeCheckOf($, eff.owns, work.dir, before, work.git, mine)
+        // The files the job changed on its branch, against owns (N39).
+        else if (outcome.remote) check = remoteWriteCheck(outcome.remote.changedFiles, eff.owns, work.isGit ? (await repoOf($, work.dir)).prefix : '')
       }
     } catch (err) {
       proc.stderr += `\n${String(err)}`
@@ -828,7 +870,7 @@ async function start($: EngineInterface, job: QueuedJob, role: Role, run: number
     pruneActivity()
     running--
     try {
-      await finish($, { role, run, job, id, model: model || outcome.usage.model || '', outcome, proc, check, work, notes, notStarted, presetSessionId: inv?.presetSessionId })
+      await finish($, { role, run, job, id, model: model || outcome.usage.model || '', outcome, proc, check, work, notes, notStarted, presetSessionId: inv?.presetSessionId, passedSessionId })
       await live.close(outcome, proc)
     } catch (err) {
       // The report itself failed: free the role, keep the job, which the
@@ -847,7 +889,7 @@ async function start($: EngineInterface, job: QueuedJob, role: Role, run: number
 // token limit.
 async function spawnRun(
   $: EngineInterface,
-  role: string,
+  id: BackendId,
   owns: string[],
   dir: string,
   inv: Invocation,
@@ -862,15 +904,19 @@ async function spawnRun(
   }
   const child = $.process.spawn({ argv: inv.argv, cwd: dir, ...(inv.input !== undefined ? { input: inv.input } : {}), env: { ...env, ...inv.env } })
   const stop = () => void child.return(undefined as never)
+  const timeoutMin = timeoutOf(id)
   const timer =
-    config.runTimeoutMin > 0
-      ? $.clock.after(config.runTimeoutMin * 60_000, () => {
+    timeoutMin > 0
+      ? $.clock.after(timeoutMin * 60_000, () => {
           proc.isTimedOut = true
           stop()
         })
       : undefined
+  // werkbank reports its progress on stderr; the others on stdout (N43).
+  const isLiveErr = liveStream(id) === 'stderr'
   let usage: Usage = {}
   let rest = ''
+  let errRest = ''
   try {
     for (;;) {
       const step = await child.next()
@@ -881,13 +927,18 @@ async function spawnRun(
       const chunk = step.value
       if (chunk.stream === 'stderr') {
         proc.stderr += chunk.text
+        if (isLiveErr) {
+          const errLines = (errRest + chunk.text).split('\n')
+          errRest = errLines.pop() ?? ''
+          for (const line of errLines) live.line(line)
+        }
         continue
       }
       proc.stdout += chunk.text
       const lines = (rest + chunk.text).split('\n')
       rest = lines.pop() ?? ''
       for (const line of lines) {
-        live.line(line)
+        if (!isLiveErr) live.line(line)
         if (onLine) usage = onLine(line, usage)
       }
       if (config.maxTokensPerRun > 0 && onLine && totalTokens(usage) > config.maxTokensPerRun && !proc.isStoppedByLimit) {
@@ -898,7 +949,7 @@ async function spawnRun(
   } catch (err) {
     if (!proc.isTimedOut && !proc.isStoppedByLimit) proc.stderr += `\n${String(err)}`
   }
-  if (rest) live.line(rest)
+  if (isLiveErr ? errRest : rest) live.line(isLiveErr ? errRest : rest)
   timer?.cancel()
 }
 
@@ -960,6 +1011,8 @@ type RunResult = {
   // Why the worker never started (its working folder could not be had).
   notStarted?: string
   presetSessionId?: string
+  // the session the run was asked to continue (werkbank reports a move, N41)
+  passedSessionId?: string
 }
 
 function failedPacket(summary: string): Packet {
@@ -1014,7 +1067,7 @@ function headMeta(r: RunResult): string {
   }
   const tail = [
     r.notStarted ? 'not started' : r.outcome.error ? (r.id === 'claude' ? r.outcome.error.message : `error (${r.outcome.error.kind})`) : '',
-    r.proc.isTimedOut ? `stopped after ${config.runTimeoutMin} min` : '',
+    r.proc.isTimedOut ? `stopped after ${timeoutOf(r.id)} min` : '',
     r.proc.isStoppedByLimit ? `stopped at ${tokens(totalTokens(u))} tokens` : '',
   ].filter(Boolean)
   return [parts.join(' · '), ...tail].join(', ')
@@ -1037,13 +1090,21 @@ async function finish($: EngineInterface, r: RunResult) {
     }
   }
   const isGone = outcome.error?.kind === 'session-not-found'
+  const remote = r.notStarted ? undefined : outcome.remote
+  // A werkbank job that did not end done and left no packet: partial, since
+  // commits may be on its branch; failed only when the job failed (N37).
+  if (!packet && remote && remote.state !== 'done') {
+    const why = remote.reason ? `: ${remote.reason}` : ''
+    packet = failedPacket(`werkbank job ${remote.jobId} ended ${remote.state} without a relay packet${why}.`)
+    if (!isRemoteFailed(remote)) packet.status = 'partial'
+  }
   packet ??= failedPacket(
     r.notStarted
       ? `Worker was not started: ${r.notStarted}.`
       : isGone
         ? `The worker's ${r.id} session is gone; the next task for this role starts fresh. (${outcome.error?.message ?? ''})`
         : proc.isTimedOut
-          ? `Worker was stopped after ${config.runTimeoutMin} minutes without a packet.`
+          ? `Worker was stopped after ${timeoutOf(r.id)} minutes without a packet.`
           : proc.isStoppedByLimit
             ? `Worker was stopped at the token limit (${config.maxTokensPerRun}) without a packet.`
             : answer.trim()
@@ -1054,9 +1115,25 @@ async function finish($: EngineInterface, r: RunResult) {
   )
   if ((proc.isTimedOut || proc.isStoppedByLimit || outcome.error?.kind === 'budget') && packet.status === 'done') packet.status = 'partial'
   // A backend that failed after the packet: never done, and the error is named (N26).
-  if (outcome.error && !isGone && !r.notStarted && packet.compressed_by !== 'none') {
+  // A werkbank job's end is reported below instead.
+  if (outcome.error && !isGone && !r.notStarted && !remote && packet.compressed_by !== 'none') {
     if (packet.status === 'done') packet.status = 'partial'
     packet.risks.push(`${r.id} reported an error after the answer (${outcome.error.kind}): ${outcome.error.message}`)
+  }
+  if (remote) {
+    // N37: why the job did not end done; N38: its verify command; N40: its branch.
+    const end = remoteEndLine(remote)
+    if (end && packet.compressed_by !== 'none') packet.risks.push(end)
+    if (isRemoteFailed(remote)) packet.status = 'failed'
+    else if (remote.state !== 'done' && packet.status === 'done') packet.status = 'partial'
+    if (remote.verify) packet.facts.push({ id: `F${packet.facts.length + 1}`, text: remoteVerifyLine(remote.verify) })
+    const shas = remote.commits.map(c => c.slice(0, 7))
+    for (const sha of shas) packet.artifacts.push({ path: `commit ${sha}`, change: 'created', note: `on ${remote.branch || 'the werkbank branch'}` })
+    if (remote.commits.length || remote.changedFiles?.length) {
+      packet.needs_from_main.push(
+        `The changes are on branch ${remote.branch || '(not reported)'} (werkbank job ${remote.jobId}${shas.length ? `, commits ${shas.join(', ')}` : ''}); relay does not merge them.`,
+      )
+    }
   }
 
   // The role's session for its next run; a run that never started keeps it.
@@ -1070,6 +1147,10 @@ async function finish($: EngineInterface, r: RunResult) {
     role.sessionBackend = next ? r.id : undefined
     role.sessionDir = next ? r.work.dir : undefined
     if (!next && r.id !== 'claude') packet.risks.push(`No ${r.id} session id was reported; the next task for ${role.name} starts a fresh session.`)
+    // The role's worker was gone: the job ran fresh elsewhere (N41).
+    if (r.id === 'werkbank' && r.passedSessionId && outcome.sessionId && outcome.sessionId !== r.passedSessionId) {
+      packet.risks.push(`the werkbank session moved (${r.passedSessionId} → ${outcome.sessionId}); the worker started fresh, repeat the context it needs.`)
+    }
   }
 
   if (r.check) applyWriteCheck(packet, r.check)
@@ -1284,6 +1365,15 @@ export const register: Register = (on, options) => {
   config.fallbackBackend = fb === 'ollama' || fb === 'off' ? fb : 'claude'
   config.ollamaModel = str('ollamaModel', config.ollamaModel)
   config.ollamaBin = str('ollamaBin', config.ollamaBin)
+  config.werkbankBin = str('werkbankBin', config.werkbankBin)
+  config.werkbankLeitstand = str('werkbankLeitstand', config.werkbankLeitstand).trim()
+  config.werkbankTokenFile = str('werkbankTokenFile', config.werkbankTokenFile)
+  config.werkbankTimeoutMin = num('werkbankTimeoutMin', config.werkbankTimeoutMin)
+  if (config.werkbankTimeoutMin > 0 && config.runTimeoutMin > 0 && config.werkbankTimeoutMin <= config.runTimeoutMin) {
+    configNotes.push(
+      `werkbankTimeoutMin (${config.werkbankTimeoutMin}) is not above runTimeoutMin (${config.runTimeoutMin}): relay may stop a werkbank run before the worker on the server ends it.`,
+    )
+  }
 
   on('session.start', async ($, e, next) => {
     const started = await next(e)
@@ -1344,7 +1434,7 @@ export const register: Register = (on, options) => {
       name: 'worker_send',
       isDeferred: false,
       description:
-        'Send a task to a persistent worker session (its own Claude Code, Codex or OpenCode session, started via CLI). ' +
+        'Send a task to a persistent worker session (its own Claude Code, Codex or OpenCode session, started via CLI, or a Claude session on the Werkbank servers with backend werkbank). ' +
         'Returns immediately; the worker runs in the background (or waits in the queue) and its compact relay packet arrives later. ' +
         'The same role keeps its context across tasks unless fresh is true. Roles may be predefined in the roles file; ' +
         'brief/owns/model/effort/tools/backend/isolation given here are stored for the role and win over the file.',

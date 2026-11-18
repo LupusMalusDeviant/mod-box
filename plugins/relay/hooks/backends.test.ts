@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'claude-code/testing'
 import {
   BACKENDS,
+  BuildError,
   classifyError,
   ignoredRules,
   majorOf,
@@ -22,6 +23,7 @@ import {
   parseWorktreeList,
   redact,
   redactDeep,
+  remoteWriteCheck,
   safeRelayDir,
   toProjectPath,
   UNHASHED,
@@ -341,5 +343,165 @@ describe('queue file', () => {
     expect(isFresh(q.owner, 60_000)).toBe(true)
     expect(isFresh(q.owner, 4 * 60_000)).toBe(false)
     expect(isFresh({ heartbeatAt: 'nonsense' }, 0)).toBe(false)
+  })
+})
+
+// ── werkbank (contract 0001, Nachtrag 2) ───────────────────────────────
+
+const wbSettings = { ...spec().settings, werkbankLeitstand: 'http://100.73.150.87:5080', werkbankTokenFile: '/h/.werkbank/relay.token', runTimeoutMin: 30 }
+const wb = (over: Partial<LaunchSpec> = {}) => spec({ bin: ['werkbank-relay'], settings: wbSettings, ...over })
+const refused = (s: LaunchSpec) => {
+  try {
+    BACKENDS.werkbank.build(s)
+  } catch (err) {
+    return err instanceof BuildError ? `${err.kind}: ${err.message}` : `other: ${String(err)}`
+  }
+  return 'built'
+}
+const job = (over: Record<string, unknown> = {}) => ({
+  jobId: 'wb-1',
+  state: 'done',
+  answer: 'A',
+  sessionId: 'fsn1-5:9b1f',
+  usage: { costUsd: 0.42, turns: 6, inputTokens: 10, outputTokens: 20, model: 'claude-opus-5-5' },
+  branch: 'agent/relay/r',
+  commits: ['abc'],
+  changedFiles: ['src/a.ts'],
+  verify: { command: 'npm test', exitCode: 0, tests: { total: 3, passed: 3, failed: 0 } },
+  ...over,
+})
+
+describe('werkbank: building', () => {
+  test('a new run: fixed order, everything given, task on stdin, protocol only in the file', () => {
+    const inv = BACKENDS.werkbank.build(
+      wb({ model: 'claude-opus-5-5', allowedTools: ['Read', 'Bash(npm test:*)'], disallowedTools: ['Bash(git push:*)'], owns: ['src/', 'docs/'] }),
+    )
+    expect(inv.argv).toEqual([
+      'werkbank-relay', 'run', '--leitstand', 'http://100.73.150.87:5080', '--token-file', '/h/.werkbank/relay.token',
+      '--role', 'r', '--run', '1', '--cwd', '/w', '--model', 'claude-opus-5-5', '--timeout-min', '30',
+      '--allowed-tools', 'Read,Bash(npm test:*)', '--disallowed-tools', 'Bash(git push:*)', '--owns', 'src/,docs/',
+      '--protocol-file', '/w/.relay/tmp/r-1.protocol.md',
+    ])
+    expect(inv.input).toBe('do it')
+    expect(inv.tempFiles).toEqual([{ path: '/w/.relay/tmp/r-1.protocol.md', content: 'PROTO' }])
+    expect(inv.argv).not.toContain('PROTO')
+    expect(inv.presetSessionId).toBeUndefined()
+  })
+
+  test('resume passes a safe session; an unsafe one, a new run and timeout 0 leave flags out', () => {
+    const a = BACKENDS.werkbank.build(wb({ isNew: false, sessionId: 'fsn1-5:9b1f' })).argv
+    expect(a.slice(a.indexOf('--session'), a.indexOf('--session') + 2)).toEqual(['--session', 'fsn1-5:9b1f'])
+    expect(BACKENDS.werkbank.build(wb({ isNew: false, sessionId: '--evil' })).argv).not.toContain('--session')
+    expect(BACKENDS.werkbank.build(wb({ isNew: true, sessionId: 'fsn1-5:x' })).argv).not.toContain('--session')
+    const b = BACKENDS.werkbank.build(wb({ settings: { ...wbSettings, runTimeoutMin: 0 } })).argv
+    expect(b).not.toContain('--timeout-min')
+    expect(b).not.toContain('--model')
+    expect(b).not.toContain('--allowed-tools')
+    expect(b).not.toContain('--owns')
+  })
+
+  test('refused before the start: big task, option-like or comma values, a bad Leitstand, a relative tmp folder', () => {
+    expect(refused(wb({ task: 'x'.repeat(16 * 1024) }))).toBe('built')
+    expect(refused(wb({ task: 'x'.repeat(16 * 1024 + 1) }))).toContain('cli: werkbank: the task has 16385 bytes')
+    expect(refused(wb({ task: 'ü'.repeat(8193) }))).toContain('16386 bytes')
+    expect(refused(wb({ model: '--help' }))).toContain('cli: werkbank: model "--help" starts with "-"')
+    expect(refused(wb({ owns: ['src/', '-x'] }))).toContain('owned path "-x"')
+    expect(refused(wb({ allowedTools: ['Bash(a,b)'] }))).toContain('contains ","')
+    expect(refused(wb({ settings: { ...wbSettings, werkbankLeitstand: 'fsn1-4:5080' } }))).toContain('werkbankLeitstand must be an http')
+    expect(refused(wb({ settings: { ...wbSettings, tmpDir: '.relay/tmp' } }))).toContain('absolute folder')
+  })
+})
+
+describe('werkbank: parsing', () => {
+  const parse = (o: unknown, exitCode = 0, stderr = '') => BACKENDS.werkbank.parse(done(typeof o === 'string' ? o : JSON.stringify(o), exitCode, stderr))
+
+  test('done: answer, session, usage and the remote job', () => {
+    const o = parse(job())
+    expect(o.answer).toBe('A')
+    expect(o.sessionId).toBe('fsn1-5:9b1f')
+    expect(o.usage).toEqual({ costUsd: 0.42, turns: 6, inputTokens: 10, outputTokens: 20, model: 'claude-opus-5-5' })
+    expect(o.error).toBeUndefined()
+    expect(o.remote).toEqual({
+      jobId: 'wb-1',
+      state: 'done',
+      branch: 'agent/relay/r',
+      commits: ['abc'],
+      changedFiles: ['src/a.ts'],
+      verify: { command: 'npm test', exitCode: 0, tests: { total: 3, passed: 3, failed: 0 } },
+    })
+  })
+
+  test('partial states carry their reason in remote, not as an error', () => {
+    for (const state of ['red', 'needs-approval', 'timed-out', 'limit']) {
+      const o = parse(job({ state, error: { kind: state === 'limit' ? 'limit' : 'cli', message: `why ${state}` } }))
+      expect(o.error).toBeUndefined()
+      expect(o.remote?.state).toBe(state)
+      expect(o.remote?.reason).toBe(`why ${state}`)
+    }
+  })
+
+  test('failed and cancelled jobs are errors', () => {
+    expect(parse(job({ state: 'failed', error: { kind: 'cli', message: 'claude exited 1' } })).error).toEqual({ kind: 'cli', message: 'claude exited 1' })
+    const c = parse(job({ state: 'cancelled' }))
+    expect(c.error).toBeUndefined()
+    expect(c.remote?.state).toBe('cancelled')
+  })
+
+  test('the program failed: every error kind maps onto a RunError', () => {
+    const kinds: [string, string][] = [['auth', 'auth'], ['network', 'network'], ['repo', 'repo'], ['budget', 'budget'], ['limit', 'budget'], ['cli', 'cli'], ['odd', 'unknown']]
+    for (const [kind, want] of kinds) {
+      const o = parse({ error: { kind, message: `m ${kind}` } }, 2)
+      expect(o.error).toEqual({ kind: want, message: `m ${kind}` })
+      expect(o.remote).toBeUndefined()
+      expect(o.answer).toBe('')
+    }
+  })
+
+  test('no JSON, a nonzero exit without error, an unsafe session, no file list', () => {
+    expect(parse('boom', 1, 'Unhandled exception')).toEqual({ answer: '', usage: {}, error: { kind: 'cli', message: 'Unhandled exception' } })
+    expect(parse('', 0).error?.message).toBe('werkbank-relay printed no JSON')
+    expect(parse('[1,2]', 0).error?.kind).toBe('cli')
+    expect(BACKENDS.werkbank.parse({ stdout: '', stderr: '', isTimedOut: true, isStoppedByLimit: false }).error).toBeUndefined()
+    expect(parse({ answer: 'x' }, 3, 'died').error).toEqual({ kind: 'cli', message: 'died' })
+    expect(parse(job({ sessionId: '-x' })).sessionId).toBeUndefined()
+    const { changedFiles: _c, ...noList } = job()
+    expect(parse(noList).remote?.changedFiles).toBeUndefined()
+  })
+
+  test('error messages are redacted', () => {
+    const o = parse({ error: { kind: 'auth', message: 'Authorization: Bearer abcdef0123456789abcdef' } }, 2)
+    expect(o.error?.message).not.toContain('abcdef0123456789abcdef')
+  })
+})
+
+describe('werkbank: write check and rules', () => {
+  test('changedFiles against owns, case-sensitive, mapped from the repo top', () => {
+    const c = remoteWriteCheck(['src/a.ts', 'SRC/b.ts', 'docs/x.md', 'src/a.ts'], ['src/'], '')
+    expect(c.checked).toBe(true)
+    expect(c.changed).toEqual([
+      { path: 'SRC/b.ts', change: 'modified' },
+      { path: 'docs/x.md', change: 'modified' },
+      { path: 'src/a.ts', change: 'modified' },
+    ])
+    expect(c.outside).toEqual(['SRC/b.ts', 'docs/x.md'])
+    expect(remoteWriteCheck(['app/src/a.ts', 'lib/x.ts'], ['src/'], 'app/').outside).toEqual(['../lib/x.ts'])
+    expect(remoteWriteCheck(['x'], [], '').outside).toEqual([])
+    const none = remoteWriteCheck(undefined, ['src/'], '')
+    expect(none.checked).toBe(false)
+    expect(none.incomplete).toEqual(['the werkbank job reported no list of changed files'])
+  })
+
+  test('the outside write turns done into partial', () => {
+    const p: Packet = { status: 'done', summary: '', decisions: [], facts: [], artifacts: [], open_questions: [], needs_from_main: [], risks: [], next_suggested: [], sections: [] }
+    applyWriteCheck(p, remoteWriteCheck(['docs/x.md'], ['src/'], ''))
+    expect(p.status).toBe('partial')
+    expect(p.risks).toContain('wrote outside owns: docs/x.md (modified)')
+  })
+
+  test('werkbank ignores effort and isolation, nothing else', () => {
+    expect(ignoredRules('werkbank', { effort: 'high', allowedTools: ['Read'], disallowedTools: ['WebFetch'], isolation: 'worktree' })).toEqual(['effort', 'isolation'])
+    expect(ignoredRules('werkbank', { effort: '', allowedTools: ['Read'], disallowedTools: [], isolation: 'shared' })).toEqual([])
+    expect(BACKENDS.werkbank.capabilities).toEqual({ budgetUsd: false, presetSessionId: false, inProcessOwnsGuard: false, sandbox: false, usage: 'both', streamsEvents: true })
+    expect(BACKENDS.werkbank.onLine).toBeUndefined()
   })
 })
