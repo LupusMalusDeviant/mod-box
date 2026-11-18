@@ -368,7 +368,7 @@ const job = (over: Record<string, unknown> = {}) => ({
   sessionId: 'fsn1-5:9b1f',
   usage: { costUsd: 0.42, turns: 6, inputTokens: 10, outputTokens: 20, model: 'claude-opus-5-5' },
   branch: 'agent/relay/r',
-  commits: ['abc'],
+  commits: ['abc1234'],
   changedFiles: ['src/a.ts'],
   verify: { command: 'npm test', exitCode: 0, tests: { total: 3, passed: 3, failed: 0 } },
   ...over,
@@ -413,13 +413,29 @@ describe('werkbank: building', () => {
     expect(refused(wb({ settings: { ...wbSettings, werkbankLeitstand: 'fsn1-4:5080' } }))).toContain('werkbankLeitstand must be an http')
     // N50: no credentials in the URL, and the refusal does not echo them
     const withUser = refused(wb({ settings: { ...wbSettings, werkbankLeitstand: 'http://bot:s3cr3t-pass@100.73.150.87:5080' } }))
-    expect(withUser).toContain('without user or password')
+    expect(withUser).toContain('without user, password, query or fragment')
     expect(withUser).not.toContain('s3cr3t-pass')
     expect(refused(wb({ settings: { ...wbSettings, werkbankLeitstand: 'ftp://100.73.150.87' } }))).toContain('werkbankLeitstand')
     expect(refused(wb({ settings: { ...wbSettings, werkbankLeitstand: 'https://leitstand.tail1234.ts.net' } }))).toBe('built')
     expect(refused(wb({ settings: { ...wbSettings, werkbankTokenFile: '~/.werkbank/relay.token' } }))).toContain('werkbankTokenFile must be an absolute path')
     expect(refused(wb({ settings: { ...wbSettings, werkbankTokenFile: '--help' } }))).toContain('werkbankTokenFile')
-    expect(refused(wb({ settings: { ...wbSettings, werkbankTokenFile: 'C:\\Users\\u\\.werkbank\\relay.token' } }))).toBe('built')
+    expect(refused(wb({ settings: { ...wbSettings, werkbankTokenFile: 'C:\\Users\\u\\.werkbank\\relay.token' } }))).toContain('werkbankTokenFile')
+    // N64: Windows needs a drive or a UNC share, elsewhere a path from /
+    const win = { ...wbSettings, isWindows: true }
+    expect(refused(wb({ settings: { ...win, werkbankTokenFile: 'C:\\Users\\u\\.werkbank\\relay.token' } }))).toBe('built')
+    expect(refused(wb({ settings: { ...win, werkbankTokenFile: 'C:/Users/u/.werkbank/relay.token' } }))).toBe('built')
+    expect(refused(wb({ settings: { ...win, werkbankTokenFile: '\\\\nas\\share\\relay.token' } }))).toBe('built')
+    expect(refused(wb({ settings: { ...win, werkbankTokenFile: '\\Users\\u\\relay.token' } }))).toContain('with a drive or a UNC share')
+    expect(refused(wb({ settings: { ...win, werkbankTokenFile: '/h/.werkbank/relay.token' } }))).toContain('with a drive or a UNC share')
+    // N58: no query or fragment, and no credential in any passed value; never echoed
+    const query = refused(wb({ settings: { ...wbSettings, werkbankLeitstand: 'https://leitstand.example/?token=abcdef0123456789' } }))
+    expect(query).toContain('without user, password, query or fragment')
+    expect(query).not.toContain('abcdef0123456789')
+    expect(refused(wb({ settings: { ...wbSettings, werkbankLeitstand: 'https://leitstand.example/#k' } }))).toContain('query or fragment')
+    expect(refused(wb({ settings: { ...wbSettings, werkbankLeitstand: 'xhttps://leitstand.example' } }))).toContain('werkbankLeitstand')
+    const rule = refused(wb({ allowedTools: ['Bash(curl -H "Authorization: Bearer abcdef0123456789abcdef":*)'] }))
+    expect(rule).toBe('cli: werkbank: a value for --allowed-tools looks like a credential; it is not passed on.')
+    expect(refused(wb({ model: 'm api_key=abcdef0123456789' }))).toContain('a value for --model looks like a credential')
     expect(refused(wb({ settings: { ...wbSettings, tmpDir: '.relay/tmp' } }))).toContain('absolute folder')
   })
 })
@@ -437,7 +453,7 @@ describe('werkbank: parsing', () => {
       jobId: 'wb-1',
       state: 'done',
       branch: 'agent/relay/r',
-      commits: ['abc'],
+      commits: ['abc1234'],
       changedFiles: ['src/a.ts'],
       verify: { command: 'npm test', exitCode: 0, tests: { total: 3, passed: 3, failed: 0 } },
     })
@@ -474,7 +490,7 @@ describe('werkbank: parsing', () => {
     expect(parse('', 0).error?.message).toBe('werkbank-relay printed no JSON')
     expect(parse('[1,2]', 0).error?.kind).toBe('cli')
     expect(BACKENDS.werkbank.parse({ stdout: '', stderr: '', isTimedOut: true, isStoppedByLimit: false }).error).toBeUndefined()
-    expect(parse({ answer: 'x' }, 3, 'died').error).toEqual({ kind: 'cli', message: 'died' })
+    expect(parse({ answer: 'x' }, 3, 'died').error).toEqual({ kind: 'cli', message: 'died (werkbank-relay reported no jobId)' })
     expect(parse(job({ sessionId: '-x' })).sessionId).toBeUndefined()
     const { changedFiles: _c, ...noList } = job()
     expect(parse(noList).remote?.changedFiles).toBeUndefined()
@@ -491,9 +507,38 @@ describe('werkbank: parsing', () => {
     expect(parse(noJob).remote).toBeUndefined()
   })
 
+  test('N61: no done without a confirmed exit 0; a signal or a broken stream is an error', () => {
+    const base = { stdout: JSON.stringify(job()), stderr: '', isTimedOut: false, isStoppedByLimit: false }
+    expect(BACKENDS.werkbank.parse({ ...base, exitCode: 0 }).error).toBeUndefined()
+    expect(BACKENDS.werkbank.parse({ ...base, signal: 'SIGKILL' }).error).toEqual({ kind: 'cli', message: 'ended by signal SIGKILL' })
+    expect(BACKENDS.werkbank.parse({ ...base, streamError: 'EPIPE' }).error).toEqual({ kind: 'cli', message: 'reading the output failed: EPIPE' })
+    expect(BACKENDS.werkbank.parse(base).error).toEqual({ kind: 'cli', message: 'werkbank-relay ended without an exit code' })
+    // codex too; claude keeps 0.4.0 behaviour (3.1)
+    const cx = jsonl({ type: 'item.completed', item: { type: 'agent_message', text: 'A' } })
+    expect(BACKENDS.codex.parse({ stdout: cx, stderr: '', signal: 'SIGTERM', isTimedOut: false, isStoppedByLimit: false }).error?.message).toBe('ended by signal SIGTERM')
+    expect(BACKENDS.claude.parse({ stdout: '', stderr: '', signal: 'SIGTERM', isTimedOut: false, isStoppedByLimit: false }).error).toBeUndefined()
+    // a timeout is said by the timeout, not as a signal
+    expect(BACKENDS.codex.parse({ stdout: cx, stderr: '', signal: 'SIGTERM', isTimedOut: true, isStoppedByLimit: false }).error).toBeUndefined()
+  })
+
+  test('N65: no jobId with an answer keeps the error kind and says so; partial reasons keep their kind', () => {
+    const { jobId: _j, ...noJob } = job()
+    expect(parse({ ...noJob, error: { kind: 'network', message: 'lost it' } })).toMatchObject({ error: { kind: 'network', message: 'lost it (werkbank-relay reported no jobId)' } })
+    expect(parse({ error: { kind: 'auth', message: '401' } }, 2).error).toEqual({ kind: 'auth', message: '401' })
+    const lim = parse(job({ state: 'limit', error: { kind: 'limit', message: 'usage limit' } })).remote!
+    expect(remoteEndLine(lim)).toBe('werkbank job wb-1 ended limit (budget): usage limit')
+  })
+
+  test('N67: build reports the session it passed', () => {
+    expect(BACKENDS.werkbank.build(wb({ isNew: false, sessionId: 'fsn1-5:9b1f' })).sessionArg).toBe('fsn1-5:9b1f')
+    expect(BACKENDS.werkbank.build(wb({ isNew: false, sessionId: '-bad' })).sessionArg).toBeUndefined()
+    // a wrapper with its own --session in bin is not the session
+    expect(BACKENDS.werkbank.build(wb({ bin: ['wrap', '--session', 'w1', 'werkbank-relay'] })).sessionArg).toBeUndefined()
+  })
+
   test('N54: the red reason puts the verify line first', () => {
     const o = parse(job({ state: 'red', verify: { command: 'npm test', exitCode: 1 }, error: { kind: 'cli', message: 'tests failed' } }))
-    expect(remoteEndLine(o.remote!)).toBe('werkbank job wb-1 ended red: verify: npm test → exit 1; tests failed')
+    expect(remoteEndLine(o.remote!)).toBe('werkbank job wb-1 ended red (cli): verify: npm test → exit 1; tests failed')
     expect(remoteEndLine(parse(job({ state: 'timed-out' })).remote!)).toBe('werkbank job wb-1 ended timed-out')
     expect(remoteEndLine(parse(job()).remote!)).toBeUndefined()
   })
@@ -533,8 +578,21 @@ describe('werkbank: write check and rules', () => {
     // owns cannot cover a path that leaves the project or is absolute
     expect(remoteWriteCheck({ changedFiles: ['src/../etc/x', '/etc/passwd', 'src/ok.ts'] }, ['src/'], '').outside).toEqual(['/etc/passwd', 'src/../etc/x'])
     expect(remoteWriteCheck({ changedFiles: ['../x', 'y'] }, [], '').outside).toEqual(['../x'])
-    // owns written with backslashes on Windows still match
-    expect(remoteWriteCheck({ changedFiles: ['src/a.ts'] }, ['.\\src\\'], '').outside).toEqual([])
+    // N60: owns for werkbank are written with "/"; a backslash is a name character
+    expect(remoteWriteCheck({ changedFiles: ['src/a.ts'] }, ['./src/'], '').outside).toEqual([])
+    expect(remoteWriteCheck({ changedFiles: ['src/a.ts'] }, ['src\\'], '').outside).toEqual(['src/a.ts'])
+  })
+
+  test('N60: the prefix stays literal (backslash, leading space)', () => {
+    // a Linux folder named "team\app": the sibling team/app/src is not the project
+    expect(remoteWriteCheck({ changedFiles: ['team/app/src/x', 'team\\app/src/y'] }, ['src/'], 'team\\app/').outside).toEqual(['../team/app/src/x'])
+    expect(remoteWriteCheck({ changedFiles: [' app/src/a.ts', 'app/src/b.ts'] }, ['src/'], ' app/').outside).toEqual(['../app/src/b.ts'])
+  })
+
+  test('N66: only real commit ids are kept, the rest is counted', () => {
+    const r = BACKENDS.werkbank.parse(done(JSON.stringify(job({ commits: ['abc1234', 'ABCDEF0123', 'token=sk-live-123456', 'abc', 42] })))).remote!
+    expect(r.commits).toEqual(['abc1234', 'ABCDEF0123'])
+    expect(r.malformedCommits).toBe(3)
   })
 
   test('N49: parse marks a malformed file list, never a short one', () => {
@@ -566,6 +624,21 @@ describe('werkbank: write check and rules', () => {
     // no END: the rest of the run stays hidden
     const h = privateKeyFilter()
     expect(['-----BEGIN PRIVATE KEY-----', 'MIIE', 'more'].map(h)).toEqual([REDACTED_KEY_LINE, undefined, undefined])
+    // N62: a whole key and the start of a second one on one line
+    const k = privateKeyFilter()
+    expect(
+      ['x -----BEGIN RSA PRIVATE KEY-----a-----END RSA PRIVATE KEY----- y -----BEGIN EC PRIVATE KEY-----', 'secondKeyBody', '-----END EC PRIVATE KEY-----', 'after'].map(k),
+    ).toEqual([REDACTED_KEY_LINE, undefined, undefined, 'after'])
+    // the end of one key and the start of the next on one line
+    const m = privateKeyFilter()
+    expect(['-----BEGIN PRIVATE KEY-----', 'a', '-----END PRIVATE KEY----- -----BEGIN PRIVATE KEY-----', 'b', '-----END PRIVATE KEY-----', 'ok'].map(m)).toEqual([
+      REDACTED_KEY_LINE,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      'ok',
+    ])
   })
 
   test('werkbank ignores effort and isolation, nothing else', () => {

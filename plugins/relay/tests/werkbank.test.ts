@@ -4,7 +4,7 @@ import { protocolPrompt } from '../hooks/protocol.ts'
 import { fakeWorld, KEY_BODY, WERKBANK_JOB, type Scenario } from './fakes.ts'
 
 const WB = { defaultBackend: 'werkbank' }
-const HOME = { USERPROFILE: 'C:/Users/u' }
+const HOME = { USERPROFILE: 'C:/Users/u', OS: 'Windows_NT' }
 // The token file needs a home to resolve `~` (N50).
 const world = (on: any, init: Parameters<typeof fakeWorld>[1] = {}) => fakeWorld(on, { env: HOME, ...init })
 
@@ -75,10 +75,10 @@ describe('werkbank backend', () => {
     const w = world(on)
     const cases: [Scenario, string, string][] = [
       ['red', 'Status: partial', `werkbank job ${WERKBANK_JOB} ended red: verify: npm test → exit 1, tests 145/147 passed, 2 failed`],
-      ['needs-approval', 'Status: partial', "ended needs-approval: the push needs the user's approval"],
-      ['limit', 'Status: partial', 'ended limit: Claude usage limit reached'],
+      ['needs-approval', 'Status: partial', "ended needs-approval (cli): the push needs the user's approval"],
+      ['limit', 'Status: partial', 'ended limit (budget): Claude usage limit reached'],
       ['timed-out', 'Status: partial', `Summary: werkbank job ${WERKBANK_JOB} ended timed-out without a relay packet`],
-      ['failed', 'Status: failed', `werkbank job ${WERKBANK_JOB} ended failed: claude exited 1`],
+      ['failed', 'Status: failed', `werkbank job ${WERKBANK_JOB} ended failed (cli): claude exited 1`],
       ['cancelled', 'Status: failed', `werkbank job ${WERKBANK_JOB} ended cancelled`],
     ]
     w.play(...cases.map(c => c[0]))
@@ -315,7 +315,7 @@ describe('werkbank, Nachtrag 2a (Codex review of 8121e9e)', () => {
     await w.send($, { role: 'coder', task: 'long' })
     const r = await w.send($, { role: 'other', task: 'waits' })
     expect(String(r.result)).toContain('task queued')
-    await w.clock.advance(3000)
+    await w.clock.advance(5000)
     await w.until(() => (w.files.get('.relay/runs/coder/live.log') ?? '').includes('running auf fsn1-5'))
     const live = w.files.get('.relay/runs/coder/live.log')!
     expect(live).toContain('queued')
@@ -325,5 +325,62 @@ describe('werkbank, Nachtrag 2a (Codex review of 8121e9e)', () => {
     w.releaseHeld()
     await w.until(() => w.submitted.length === 2)
     expect(w.files.get('.relay/runs/coder/live.log')).toContain('verifying')
+  })
+})
+
+describe('werkbank, Nachtrag 2b (second Codex review)', () => {
+  test('N59: git failing already before the start leaves the write check incomplete', { options: WB }, async ($: any, on: any) => {
+    const w = world(on)
+    if (!(await w.start($))) return
+    w.git.isBroken = true
+    await w.send($, { role: 'coder', task: 't', owns: ['src/'] })
+    await w.until(() => w.submitted.length === 1)
+    expect(w.submitted[0]).toContain('⚠ write check incomplete')
+    expect(w.submitted[0]).toContain('project prefix unknown')
+  })
+
+  test('N61: a done object followed by a kill is not done', { options: WB }, async ($: any, on: any) => {
+    const w = world(on)
+    w.play('signal-after-done')
+    if (!(await w.start($))) return
+    await w.send($, { role: 'coder', task: 't' })
+    await w.until(() => w.submitted.length === 1)
+    expect(w.submitted[0]).toContain('Status: partial')
+    expect(w.submitted[0]).toContain('werkbank-relay reported an error (cli): ended by signal SIGKILL')
+  })
+
+  test('N63: progress that all came in the first 2 seconds still reaches live.log', { options: { ...WB, maxParallel: 1 } }, async ($: any, on: any) => {
+    const w = world(on)
+    w.play('progress-quiet')
+    if (!(await w.start($))) return
+    await w.send($, { role: 'coder', task: 'long' })
+    await w.until(() => w.heldCount() === 1)
+    await w.clock.advance(2000)
+    await w.until(() => (w.files.get('.relay/runs/coder/live.log') ?? '').includes('running auf fsn1-5'))
+    expect(w.files.get('.relay/runs/coder/live.log')).toContain('running auf fsn1-5')
+    expect(w.submitted).toHaveLength(0)
+    w.releaseHeld()
+    await w.until(() => w.submitted.length === 1)
+  })
+
+  test('N66: malformed commit ids are counted, never shown', { options: WB }, async ($: any, on: any) => {
+    const w = world(on)
+    w.play('bad-commits')
+    if (!(await w.start($))) return
+    await w.send($, { role: 'coder', task: 't' })
+    await w.until(() => w.submitted.length === 1)
+    expect(w.submitted[0]).toContain('werkbank reported 2 malformed commit id(s) (not shown)')
+    expect(w.submitted[0]).toContain('commits abc1234)')
+    expect(w.submitted[0]).not.toContain('token=')
+    expect(w.submitted[0]).not.toContain('nope')
+  })
+
+  test('N64: on Windows a token file without a drive is refused', { options: { ...WB, werkbankTokenFile: '\\Users\\u\\relay.token' } }, async ($: any, on: any) => {
+    const w = world(on)
+    if (!(await w.start($))) return
+    await w.send($, { role: 'coder', task: 't' })
+    await w.until(() => w.submitted.length === 1)
+    expect(w.spawns).toHaveLength(0)
+    expect(w.submitted[0]).toContain('with a drive or a UNC share')
   })
 })

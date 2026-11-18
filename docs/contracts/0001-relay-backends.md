@@ -1,6 +1,6 @@
 # Vertrag 0001: relay mit Backends je Rolle
 
-**Status:** abgenommen am 3. November 2026 (E1–E11 wie empfohlen, herdr gestrichen) · **Stand:** 13. November 2026, Nachtrag 1 (Abschnitt 14 und 14.1, N1–N28) abgenommen am 13. November 2026; Nachtrag 2 (Abschnitt 15, N29–N47, Backend `werkbank`) und Nachtrag 2a (15.4, N48–N57) abgenommen am 18. November 2026 · **Betrifft:** `plugins/relay` (heute 0.3.0)
+**Status:** abgenommen am 3. November 2026 (E1–E11 wie empfohlen, herdr gestrichen) · **Stand:** 13. November 2026, Nachtrag 1 (Abschnitt 14 und 14.1, N1–N28) abgenommen am 13. November 2026; Nachtrag 2 (Abschnitt 15, N29–N47, Backend `werkbank`) sowie Nachträge 2a (15.4, N48–N57) und 2b (15.5, N58–N67) abgenommen am 18. November 2026 · **Betrifft:** `plugins/relay` (heute 0.3.0)
 
 Heute startet relay jeden Worker als `claude -p`. Künftig wählt jede Rolle ihr **Backend**: `claude`, `codex` oder `opencode`. Über opencode erreicht relay auch Ollama und OpenRouter. Warteschlange, Timeout, `owns`, Relay-Pakete und die drei Werkzeuge bleiben gleich. Neu sind die Backend-Schnittstelle, eine Schreibprüfung nach jedem Lauf, die gleich für alle Backends greift, Token-Angaben im Paket, Ollama als Ersatz-Verdichter und eine Warteschlange, die auf der Platte liegt.
 
@@ -672,3 +672,24 @@ Ein zweites Codex-Review (Stand `63ba3bf`) fand 14 weitere Befunde (6 hoch, 8 mi
 **Tests:** je Zeile mindestens ein Fall, der mit `8121e9e` fehlschlägt (außer N56, nur Text); reine Fälle in `hooks/backends.test.ts`, die übrigen in `tests/werkbank.test.ts`; N51 und N52 zusätzlich für codex bzw. opencode. Fassung bleibt 0.5.0 (noch nicht veröffentlicht).
 
 **Stand 18. November 2026:** N48–N57 gebaut. `claude plugin test plugins/relay`: 146 bestanden, 0 fehlgeschlagen. Gegenprobe: die 11 neuen Fälle in `tests/werkbank.test.ts` schlagen mit `8121e9e` fehl. `live.log` wird jetzt nach der Uhr der Plugin-API gebündelt (statt `Date.now()`), damit N57 ohne echtes Warten prüfbar ist; die Regel „höchstens alle 2 Sekunden“ bleibt.
+
+### 15.5 Nachtrag 2b (18. November 2026): Befunde aus dem zweiten Codex-Review (`c270e77...61f3313`)
+
+**Status: abgenommen am 18. November 2026** (N58–N67 wie vorgeschlagen). Das zweite Codex-Review (gpt-6.2-sol) fand 10 Befunde (5 hoch, 4 mittel, 1 niedrig).
+
+| Nr. | Änderung | Ersetzt / ergänzt | Befund |
+|---|---|---|---|
+| N58 | **Keine Zugangsdaten in werkbank-`argv`.** `werkbankLeitstand` muss wörtlich mit `http://` oder `https://` beginnen und darf weder Benutzer/Passwort noch Query (`?…`) noch Fragment (`#…`) haben. Jeder Wert für `--model`, `--allowed-tools`, `--disallowed-tools` und `--owns`, den die Bereinigung (N2, N18) verändern würde, wird abgelehnt; der Lauf startet nicht (N32). Die Meldung nennt nur die Option, nie den Wert. | N32, N50 | H1 |
+| N59 | **Prefix immer frisch.** Für die Schreibprüfung eines werkbank-Laufs fragt relay `git rev-parse --show-prefix` im Projektordner **immer** ab, unabhängig von der git-Probe vor dem Start. Scheitert die Abfrage, ist die Prüfung `incomplete` (N49). | N49 | H2 |
+| N60 | **Wörtliche Pfade beim Vergleich mit dem Server.** Vom git-Prefix wird nur das Zeilenende entfernt (kein `trim`). Prefix, `changedFiles` und `owns` werden nicht umgeschrieben (kein `\` → `/`); von `owns` fallen nur ein führendes `./` und abschließende `/` weg. `owns` einer werkbank-Rolle schreibt man daher mit `/`. | N49 | H3 |
+| N61 | **Kein Erfolg ohne bestätigten Exit-Code.** `ProcessResult` bekommt `signal?: string` und `streamError?: string`. Endet der Prozess durch ein Signal oder scheitert das Lesen seiner Ausgabe (nicht durch Timeout oder Token-Grenze), ist das bei codex, opencode und werkbank ein Fehler (`cli`, „ended by signal …“ bzw. „reading the output failed: …“). werkbank verlangt für ein unbeschränktes `done` zusätzlich Exit-Code `0`; ohne Exit-Code wird `done` zu `partial` (N48). claude bleibt unverändert (3.1). | 2.1 `ProcessResult`, N26, N48 | H4 |
+| N62 | **Schlüsselfilter liest jede Zeile ganz.** Der Filter aus N51 geht alle `BEGIN`/`END`-Marken einer Zeile der Reihe nach durch. Bleibt am Zeilenende ein Schlüssel offen, wird die Zeile durch `[redacted private key]` ersetzt und alles bis zum passenden `END` ausgeblendet. Vollständige Blöcke innerhalb einer Zeile bleiben Sache der Bereinigung (N2). | N51 | H5 |
+| N63 | **`live.log` ohne hängende Zeilen.** Kommt eine Zeile innerhalb der 2 Sekunden nach dem letzten Schreiben, plant relay genau ein Nachschreiben zum Ende dieser 2 Sekunden (Uhr der Plugin-API). Schreibvorgänge laufen nacheinander. | 9, N57 | M1 |
+| N64 | **Token-Datei mit eindeutigem Pfad.** Auf Windows (`OS = Windows_NT`) muss der Pfad ein Laufwerk (`C:\…`, `C:/…`) oder eine UNC-Freigabe (`\\server\freigabe\…`) haben; sonst ein POSIX-Pfad ab `/`. Ein Pfad ohne Laufwerk wie `\Users\…` wird unter Windows abgelehnt. | N50 | M2 |
+| N65 | **Fehlerart und Hinweis bleiben beide.** Fehlt bei einer Antwort die `jobId`, nennt die Meldung das immer (`… (werkbank-relay reported no jobId)`); die Art kommt aus `error.kind`, falls vorhanden, sonst `cli`. Bei Endzuständen mit Grund steht die Art aus N35 in der Endzeile: `werkbank job <id> ended limit (budget): <grund>`. | N35, N48, N54 | M3 |
+| N66 | **Nur echte Commit-IDs.** Aus `commits` nimmt relay nur Einträge der Form `^[0-9a-f]{7,64}$` (ohne Rücksicht auf Groß-/Kleinschreibung). Andere zählt es und meldet unter `risks` `werkbank reported <n> malformed commit id(s) (not shown)`, ohne sie zu zeigen. | N40 | M4 |
+| N67 | **Die mitgegebene Session meldet das Backend.** `Invocation` bekommt `sessionArg?: string`: die Session-ID, die `build` dem Programm wirklich übergeben hat. „Session moved“ (N55) vergleicht damit statt `argv` zu durchsuchen. | 2.1 `Invocation`, N55 | L1 |
+
+**Tests:** je Zeile mindestens ein Fall, der mit `61f3313` fehlschlägt; N59 mit einem git, das schon **vor** dem Start scheitert; N61 für werkbank und codex; N62 mit zwei Schlüsseln in einer Zeile; N63 mit einem Lauf, dessen ganzer Fortschritt in den ersten 2 Sekunden kommt. Fassung bleibt 0.5.0.
+
+**Stand 18. November 2026:** N58–N67 gebaut. `claude plugin test plugins/relay`: 156 bestanden, 0 fehlgeschlagen; `claude plugin test .`: 314 bestanden. Gegenprobe mit `61f3313`: die neuen Integrationsfälle (N59, N61, N63, N64, N66) schlagen fehl; N58, N60, N62, N65, N67 sind reine Fälle in `hooks/backends.test.ts`, die neue Schnittstellen nutzen. N61 für codex ist ein reiner Fall (`parse` mit `signal`).

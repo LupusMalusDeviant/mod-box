@@ -48,6 +48,12 @@ export type Scenario =
   // werkbank-relay: two progress lines a clock tick apart, then waits for
   // releaseHeld() before it answers like ok
   | 'progress-held'
+  // werkbank-relay: all progress at once, then silent until releaseHeld()
+  | 'progress-quiet'
+  // werkbank-relay: a done object, then the process is killed (no exit code)
+  | 'signal-after-done'
+  // werkbank-relay: commits with entries that are no commit ids
+  | 'bad-commits'
 
 export type Call = { argv: string[]; cwd?: string; env: Record<string, string>; input?: string; attachment?: string; protocolFile?: string }
 
@@ -371,6 +377,10 @@ export function fakeWorld(
       if (scenario === 'error-budget') return yield* fail('budget', 'relay day budget used up (8 jobs)')
       if (scenario === 'not-json') return yield* out('Unhandled exception. System.Exception: boom\n', 1, 'boom\n')
       if (scenario === 'key-lines') yield { stream: 'stderr', text: `verifying\n${KEY_LINES[0]}\n${KEY_BODY}\n${KEY_LINES[1]}\nverify done\n` }
+      if (scenario === 'progress-quiet') {
+        yield { stream: 'stderr', text: 'queued\nrunning auf fsn1-5\n' }
+        await new Promise<void>(r => held.push(r))
+      }
       if (scenario === 'progress-held') {
         yield { stream: 'stderr', text: 'queued\n' }
         await clock.sleep(3000)
@@ -399,12 +409,16 @@ export function fakeWorld(
         sessionId: scenario === 'session-moved' ? 'fsn1-4:fresh2' : (arg('--session') ?? 'fsn1-5:9b1f'),
         usage: { costUsd: 0.42, turns: 6, inputTokens: 12000, outputTokens: 3100, model: 'claude-opus-5-5' },
         branch: `agent/relay/${role}`,
-        commits: scenario === 'failed' ? [] : [WERKBANK_COMMIT],
+        commits: scenario === 'failed' ? [] : scenario === 'bad-commits' ? [WERKBANK_COMMIT, `token=${SECRETS.token}`, 'nope'] : [WERKBANK_COMMIT],
         changedFiles: scenario === 'failed' ? [] : scenario === 'write-outside' ? ['src/a.ts', 'other/x.md'] : ['src/a.ts'],
         verify: { command: 'npm test', exitCode: isRed ? 1 : 0, tests: { total: 147, passed: isRed ? 145 : 147, failed: isRed ? 2 : 0 } },
         ...(error ? { error } : {}),
       }
-      return yield* out(JSON.stringify(json), scenario === 'answer-exit1' ? 1 : 0, scenario === 'progress-held' ? 'verifying\n' : progress)
+      if (scenario === 'signal-after-done') {
+        yield { stream: 'stdout', text: JSON.stringify(json) }
+        return { value: { code: null, signal: 'SIGKILL' } }
+      }
+      return yield* out(JSON.stringify(json), scenario === 'answer-exit1' ? 1 : 0, scenario === 'progress-held' || scenario === 'progress-quiet' ? 'verifying\n' : progress)
     }
     return { value: { code: 127, signal: null } }
   })

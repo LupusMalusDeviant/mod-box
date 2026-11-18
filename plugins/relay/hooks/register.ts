@@ -528,16 +528,12 @@ async function clearTempFile($: EngineInterface, path: string) {
   await $.fs.write(path, '').catch(() => undefined)
 }
 
-const argValue = (argv: readonly string[], flag: string) => {
-  const i = argv.indexOf(flag)
-  return i >= 0 ? argv[i + 1] : undefined
-}
-
 // The project's place in its repository, or undefined when git cannot say
 // (never silently the top, contract 0001, N49).
 async function prefixOf($: EngineInterface, dir: string): Promise<string | undefined> {
   const r = await git($, dir, ['rev-parse', '--show-prefix'])
-  return r.exitCode === 0 ? r.stdout.trim() : undefined
+  // only git's line ending goes; the prefix itself stays literal (N60)
+  return r.exitCode === 0 ? r.stdout.replace(/\r?\n$/, '') : undefined
 }
 
 // Why the folder at `rel` is not the role's own worktree, or undefined: it
@@ -862,6 +858,7 @@ async function start($: EngineInterface, job: QueuedJob, role: Role, run: number
                   werkbankLeitstand: config.werkbankLeitstand,
                   werkbankTokenFile: await expandHome($, config.werkbankTokenFile.trim()),
                   runTimeoutMin: config.runTimeoutMin,
+                  isWindows: (await $.env.get('OS')) === 'Windows_NT',
                 }
               : {}),
           },
@@ -874,7 +871,7 @@ async function start($: EngineInterface, job: QueuedJob, role: Role, run: number
           outcome = { answer: '', usage: {}, error: { kind: err instanceof BuildError ? err.kind : 'model', message: message(err) } }
         }
         // The session that really went along, for "session moved" (N55).
-        if (inv && isRemote) passedSessionId = argValue(inv.argv, '--session')
+        if (inv && isRemote) passedSessionId = inv.sessionArg
         // Each temp file itself must stay in the project, not only its folder (N52).
         const tempProblem = inv ? await tempFilesProblem($, inv) : undefined
         if (inv && tempProblem) {
@@ -905,7 +902,7 @@ async function start($: EngineInterface, job: QueuedJob, role: Role, run: number
         if (config.writeCheck !== 'report') check = undefined
         else if (!isRemote) check = await writeCheckOf($, eff.owns, work.dir, before, work.git, mine)
         // The files the job changed on its branch, against owns (N39).
-        else if (outcome.remote) check = remoteWriteCheck(outcome.remote, eff.owns, work.isGit ? await prefixOf($, work.dir) : '')
+        else if (outcome.remote) check = remoteWriteCheck(outcome.remote, eff.owns, await prefixOf($, work.dir))
       }
     } catch (err) {
       proc.stderr += `\n${String(err)}`
@@ -967,6 +964,8 @@ async function spawnRun(
       const step = await child.next()
       if (step.done) {
         proc.exitCode = step.value?.code ?? undefined
+        // no exit code: say why (N61)
+        if (step.value?.signal) proc.signal = String(step.value.signal)
         break
       }
       const chunk = step.value
@@ -992,7 +991,10 @@ async function spawnRun(
       }
     }
   } catch (err) {
-    if (!proc.isTimedOut && !proc.isStoppedByLimit) proc.stderr += `\n${String(err)}`
+    if (!proc.isTimedOut && !proc.isStoppedByLimit) {
+      proc.stderr += `\n${String(err)}`
+      proc.streamError = redact(String(err)).slice(0, 300)
+    }
   }
   if (isLiveErr ? errRest : rest) live.line(isLiveErr ? errRest : rest)
   timer?.cancel()
@@ -1008,9 +1010,33 @@ function liveLog($: EngineInterface, role: string, run: number, id: BackendId, i
   // Timed by the plugin's clock: at most every 2 seconds, and at the end.
   const now = () => $.clock.now().catch(() => Date.now())
   let flushedAt = 0
-  const write = async () => {
-    if (!isEnabled) return
-    await $.fs.write(path, `${lines.join('\n')}\n`).catch(() => undefined)
+  // Writes run one after another, each with the lines of its moment (N63).
+  let writing: Promise<void> = Promise.resolve()
+  const write = () => {
+    writing = writing.then(async () => {
+      if (!isEnabled) return
+      await $.fs.write(path, `${lines.join('\n')}\n`).catch(() => undefined)
+    })
+    return writing
+  }
+  // A line within the 2 seconds gets one write at their end, so progress
+  // never waits for the next line or the run's end (N63).
+  let isTrailing = false
+  const flushSoon = async () => {
+    const t = await now()
+    if (t - flushedAt >= 2000) {
+      flushedAt = t
+      return write()
+    }
+    if (isTrailing) return
+    isTrailing = true
+    $.clock.after(flushedAt + 2000 - t, () => {
+      isTrailing = false
+      void now().then(at => {
+        flushedAt = at
+        return write()
+      })
+    })
   }
   void now().then(t => {
     flushedAt = t
@@ -1024,11 +1050,7 @@ function liveLog($: EngineInterface, role: string, run: number, id: BackendId, i
       const text = kept === raw ? liveLine(id, raw) : kept
       if (!text) return
       lines.push(redact(text))
-      void now().then(t => {
-        if (t - flushedAt < 2000) return
-        flushedAt = t
-        return write()
-      })
+      void flushSoon()
     },
     async close(outcome: RunOutcome, proc: ProcessResult) {
       const state = proc.isTimedOut ? 'stopped (timeout)' : proc.isStoppedByLimit ? 'stopped (token limit)' : outcome.error ? `error: ${outcome.error.message}` : 'finished'
@@ -1190,6 +1212,8 @@ async function finish($: EngineInterface, r: RunResult) {
       packet.risks.push(`werkbank-relay reported an error (${outcome.error.kind}): ${outcome.error.message}`)
     }
     if (remote.verify) packet.facts.push({ id: `F${packet.facts.length + 1}`, text: remoteVerifyLine(remote.verify) })
+    // N66: only real commit ids are shown; the rest is counted
+    if (remote.malformedCommits) packet.risks.push(`werkbank reported ${remote.malformedCommits} malformed commit id(s) (not shown)`)
     const shas = remote.commits.map(c => c.slice(0, 7))
     for (const sha of shas) packet.artifacts.push({ path: `commit ${sha}`, change: 'created', note: `on ${remote.branch || 'the werkbank branch'}` })
     if (remote.commits.length || remote.changedFiles?.length) {

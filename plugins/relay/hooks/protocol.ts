@@ -339,10 +339,14 @@ export function remoteWriteCheck(
   if (job.isFileListMalformed) return notChecked('the werkbank job reported a malformed file list')
   if (!job.changedFiles) return notChecked('the werkbank job reported no list of changed files')
   if (prefix === undefined) return notChecked('project prefix unknown (git rev-parse --show-prefix failed); the files the werkbank job changed cannot be placed')
-  const paths = [...new Set(job.changedFiles.map(p => toProjectPath(p, prefix)))].sort()
+  // Literal characters throughout: a backslash is part of a Linux name, and
+  // nothing is trimmed or rewritten (N60).
+  const depth = prefix.split('/').filter(Boolean).length
+  const toProject = (p: string) => (!prefix ? p : p.startsWith(prefix) ? p.slice(prefix.length) : `${'../'.repeat(depth)}${p}`)
+  const paths = [...new Set(job.changedFiles.map(toProject))].sort()
   const changed = paths.map(path => ({ path, change: 'modified' as Change }))
-  const own = owns.map(o => o.replace(/\\/g, '/').replace(/^\.\//, '').replace(/\/+$/, '')).filter(Boolean)
-  const isEscape = (p: string) => /^(\/|[A-Za-z]:)/.test(p) || p.split('/').includes('..')
+  const own = owns.map(o => o.replace(/^\.\//, '').replace(/\/+$/, '')).filter(Boolean)
+  const isEscape = (p: string) => p.startsWith('/') || p.split('/').includes('..')
   const isOwned = (p: string) => !isEscape(p) && own.some(o => p === o || p.startsWith(`${o}/`))
   const outside = owns.length ? paths.filter(p => !isOwned(p)) : paths.filter(isEscape)
   return { checked: true, changed, outside, unattributed: [], byOtherRole: [] }
@@ -352,22 +356,20 @@ export function remoteWriteCheck(
 // slip past `redact` one line at a time. This filter drops every line from a
 // BEGIN … PRIVATE KEY line through its END line and marks the block once;
 // without an END it drops the rest of the run (contract 0001, N51).
-const KEY_BEGIN = /-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----/
-const KEY_END = /-----END [A-Z0-9 ]*PRIVATE KEY-----/
+const KEY_MARKER = /-----(BEGIN|END) [A-Z0-9 ]*PRIVATE KEY-----/g
 export const REDACTED_KEY_LINE = '[redacted private key]'
 export function privateKeyFilter(): (line: string) => string | undefined {
   let isInKey = false
   return line => {
-    if (isInKey) {
-      if (KEY_END.test(line)) isInKey = false
-      return undefined
-    }
-    const begin = line.match(KEY_BEGIN)
-    if (!begin) return line
-    // a whole key on one line is left to redact()
-    if (KEY_END.test(line.slice((begin.index ?? 0) + begin[0].length))) return line
-    isInKey = true
-    return REDACTED_KEY_LINE
+    const wasInKey = isInKey
+    // every marker of the line, in order (N62)
+    for (const m of line.matchAll(KEY_MARKER)) isInKey = m[1] === 'BEGIN'
+    // a line inside a key is dropped, whatever it ends with
+    if (wasInKey) return undefined
+    // a key opens and stays open: the line is marked, the rest dropped
+    if (isInKey) return REDACTED_KEY_LINE
+    // whole keys on one line are left to redact()
+    return line
   }
 }
 
