@@ -7,6 +7,7 @@ import {
   majorOf,
   opencodeBashDenials,
   parseBin,
+  remoteEndLine,
   usageText,
   versionOf,
   type LaunchSpec,
@@ -23,6 +24,8 @@ import {
   parseWorktreeList,
   redact,
   redactDeep,
+  privateKeyFilter,
+  REDACTED_KEY_LINE,
   remoteWriteCheck,
   safeRelayDir,
   toProjectPath,
@@ -408,6 +411,15 @@ describe('werkbank: building', () => {
     expect(refused(wb({ owns: ['src/', '-x'] }))).toContain('owned path "-x"')
     expect(refused(wb({ allowedTools: ['Bash(a,b)'] }))).toContain('contains ","')
     expect(refused(wb({ settings: { ...wbSettings, werkbankLeitstand: 'fsn1-4:5080' } }))).toContain('werkbankLeitstand must be an http')
+    // N50: no credentials in the URL, and the refusal does not echo them
+    const withUser = refused(wb({ settings: { ...wbSettings, werkbankLeitstand: 'http://bot:s3cr3t-pass@100.73.150.87:5080' } }))
+    expect(withUser).toContain('without user or password')
+    expect(withUser).not.toContain('s3cr3t-pass')
+    expect(refused(wb({ settings: { ...wbSettings, werkbankLeitstand: 'ftp://100.73.150.87' } }))).toContain('werkbankLeitstand')
+    expect(refused(wb({ settings: { ...wbSettings, werkbankLeitstand: 'https://leitstand.tail1234.ts.net' } }))).toBe('built')
+    expect(refused(wb({ settings: { ...wbSettings, werkbankTokenFile: '~/.werkbank/relay.token' } }))).toContain('werkbankTokenFile must be an absolute path')
+    expect(refused(wb({ settings: { ...wbSettings, werkbankTokenFile: '--help' } }))).toContain('werkbankTokenFile')
+    expect(refused(wb({ settings: { ...wbSettings, werkbankTokenFile: 'C:\\Users\\u\\.werkbank\\relay.token' } }))).toBe('built')
     expect(refused(wb({ settings: { ...wbSettings, tmpDir: '.relay/tmp' } }))).toContain('absolute folder')
   })
 })
@@ -468,6 +480,24 @@ describe('werkbank: parsing', () => {
     expect(parse(noList).remote?.changedFiles).toBeUndefined()
   })
 
+  test('N48: a done job keeps a CLI error; no jobId is always an error', () => {
+    expect(parse(job(), 1, 'crashed after the job').error).toEqual({ kind: 'cli', message: 'crashed after the job' })
+    expect(parse(job({ error: { kind: 'network', message: 'lost the Leitstand' } })).error).toEqual({ kind: 'network', message: 'lost the Leitstand' })
+    // a partial state keeps the JSON error as its reason, but a nonzero exit is still an error
+    expect(parse(job({ state: 'red' }), 1, 'x').error).toEqual({ kind: 'cli', message: 'x' })
+    const { jobId: _j, ...noJob } = job()
+    expect(parse(noJob).error).toEqual({ kind: 'cli', message: 'werkbank-relay reported no jobId' })
+    expect(parse(noJob).answer).toBe('A')
+    expect(parse(noJob).remote).toBeUndefined()
+  })
+
+  test('N54: the red reason puts the verify line first', () => {
+    const o = parse(job({ state: 'red', verify: { command: 'npm test', exitCode: 1 }, error: { kind: 'cli', message: 'tests failed' } }))
+    expect(remoteEndLine(o.remote!)).toBe('werkbank job wb-1 ended red: verify: npm test → exit 1; tests failed')
+    expect(remoteEndLine(parse(job({ state: 'timed-out' })).remote!)).toBe('werkbank job wb-1 ended timed-out')
+    expect(remoteEndLine(parse(job()).remote!)).toBeUndefined()
+  })
+
   test('error messages are redacted', () => {
     const o = parse({ error: { kind: 'auth', message: 'Authorization: Bearer abcdef0123456789abcdef' } }, 2)
     expect(o.error?.message).not.toContain('abcdef0123456789abcdef')
@@ -476,7 +506,7 @@ describe('werkbank: parsing', () => {
 
 describe('werkbank: write check and rules', () => {
   test('changedFiles against owns, case-sensitive, mapped from the repo top', () => {
-    const c = remoteWriteCheck(['src/a.ts', 'SRC/b.ts', 'docs/x.md', 'src/a.ts'], ['src/'], '')
+    const c = remoteWriteCheck({ changedFiles: ['src/a.ts', 'SRC/b.ts', 'docs/x.md', 'src/a.ts'] }, ['src/'], '')
     expect(c.checked).toBe(true)
     expect(c.changed).toEqual([
       { path: 'SRC/b.ts', change: 'modified' },
@@ -484,18 +514,58 @@ describe('werkbank: write check and rules', () => {
       { path: 'src/a.ts', change: 'modified' },
     ])
     expect(c.outside).toEqual(['SRC/b.ts', 'docs/x.md'])
-    expect(remoteWriteCheck(['app/src/a.ts', 'lib/x.ts'], ['src/'], 'app/').outside).toEqual(['../lib/x.ts'])
-    expect(remoteWriteCheck(['x'], [], '').outside).toEqual([])
-    const none = remoteWriteCheck(undefined, ['src/'], '')
+    expect(remoteWriteCheck({ changedFiles: ['app/src/a.ts', 'lib/x.ts'] }, ['src/'], 'app/').outside).toEqual(['../lib/x.ts'])
+    expect(remoteWriteCheck({ changedFiles: ['x'] }, [], '').outside).toEqual([])
+    const none = remoteWriteCheck({}, ['src/'], '')
     expect(none.checked).toBe(false)
     expect(none.incomplete).toEqual(['the werkbank job reported no list of changed files'])
   })
 
+  test('N49: no sure footing, nothing checked; POSIX paths; escapes are always outside', () => {
+    const unknown = remoteWriteCheck({ changedFiles: ['src/a.ts'] }, ['src/'], undefined)
+    expect(unknown.checked).toBe(false)
+    expect(unknown.incomplete?.[0]).toContain('project prefix unknown')
+    const bad = remoteWriteCheck({ isFileListMalformed: true }, ['src/'], '')
+    expect(bad.checked).toBe(false)
+    expect(bad.incomplete).toEqual(['the werkbank job reported a malformed file list'])
+    // a backslash is part of a Linux file name, not a folder separator
+    expect(remoteWriteCheck({ changedFiles: ['src\\a.ts'] }, ['src/'], '').outside).toEqual(['src\\a.ts'])
+    // owns cannot cover a path that leaves the project or is absolute
+    expect(remoteWriteCheck({ changedFiles: ['src/../etc/x', '/etc/passwd', 'src/ok.ts'] }, ['src/'], '').outside).toEqual(['/etc/passwd', 'src/../etc/x'])
+    expect(remoteWriteCheck({ changedFiles: ['../x', 'y'] }, [], '').outside).toEqual(['../x'])
+    // owns written with backslashes on Windows still match
+    expect(remoteWriteCheck({ changedFiles: ['src/a.ts'] }, ['.\\src\\'], '').outside).toEqual([])
+  })
+
+  test('N49: parse marks a malformed file list, never a short one', () => {
+    const p = (changedFiles: unknown) => BACKENDS.werkbank.parse(done(JSON.stringify(job({ changedFiles })))).remote
+    expect(p([null])?.isFileListMalformed).toBe(true)
+    expect(p(['a', ''])?.isFileListMalformed).toBe(true)
+    expect(p('src/a.ts')?.isFileListMalformed).toBe(true)
+    expect(p(['a', 'b'])?.changedFiles).toEqual(['a', 'b'])
+    expect(p(['a', 'b'])?.isFileListMalformed).toBeUndefined()
+  })
+
   test('the outside write turns done into partial', () => {
     const p: Packet = { status: 'done', summary: '', decisions: [], facts: [], artifacts: [], open_questions: [], needs_from_main: [], risks: [], next_suggested: [], sections: [] }
-    applyWriteCheck(p, remoteWriteCheck(['docs/x.md'], ['src/'], ''))
+    applyWriteCheck(p, remoteWriteCheck({ changedFiles: ['docs/x.md'] }, ['src/'], ''))
     expect(p.status).toBe('partial')
     expect(p.risks).toContain('wrote outside owns: docs/x.md (modified)')
+  })
+
+  test('N51: a private key over several lines is dropped from the log, marked once', () => {
+    const f = privateKeyFilter()
+    const out = ['before', '-----BEGIN OPENSSH PRIVATE KEY-----', 'b3BlbnNzaC1rZXktdjEAAAAA', 'QyNTUxOQAAACDx', '-----END OPENSSH PRIVATE KEY-----', 'after']
+      .map(f)
+      .filter(x => x !== undefined)
+    expect(out).toEqual(['before', REDACTED_KEY_LINE, 'after'])
+    // a whole key on one line is redact()'s job, the filter leaves it
+    const g = privateKeyFilter()
+    expect(g('k=-----BEGIN RSA PRIVATE KEY-----abc-----END RSA PRIVATE KEY-----')).toContain('BEGIN')
+    expect(g('next')).toBe('next')
+    // no END: the rest of the run stays hidden
+    const h = privateKeyFilter()
+    expect(['-----BEGIN PRIVATE KEY-----', 'MIIE', 'more'].map(h)).toEqual([REDACTED_KEY_LINE, undefined, undefined])
   })
 
   test('werkbank ignores effort and isolation, nothing else', () => {

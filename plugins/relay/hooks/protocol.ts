@@ -315,19 +315,60 @@ export function compareSnapshots(
   return check
 }
 
-// The write check of a run on the Werkbank servers (contract 0001, N39): the
-// files its job changed, named from the repository's top, against `owns`.
-// Case-sensitive, the servers run Linux; every path counts as modified (the
-// Leitstand reports no kind); no other roles share that branch.
-export function remoteWriteCheck(changedFiles: readonly string[] | undefined, owns: readonly string[], prefix: string): WriteCheck {
-  if (!changedFiles) {
-    const reason = 'the werkbank job reported no list of changed files'
-    return { checked: false, reason, changed: [], outside: [], unattributed: [], byOtherRole: [], incomplete: [reason] }
-  }
-  const paths = [...new Set(changedFiles.map(p => toProjectPath(p.replace(/\\/g, '/'), prefix)))].sort()
+export const notChecked = (reason: string): WriteCheck => ({
+  checked: false,
+  reason,
+  changed: [],
+  outside: [],
+  unattributed: [],
+  byOtherRole: [],
+  incomplete: [reason],
+})
+
+// The write check of a run on the Werkbank servers (contract 0001, N39, N49):
+// the files its job changed, named from the repository's top, against `owns`.
+// POSIX paths, case-sensitive (the servers run Linux), a backslash is part of
+// a name; every path counts as modified (the Leitstand reports no kind); no
+// other roles share that branch. Without a known prefix or a sound file list
+// nothing counts as checked.
+export function remoteWriteCheck(
+  job: { changedFiles?: readonly string[]; isFileListMalformed?: boolean },
+  owns: readonly string[],
+  prefix: string | undefined,
+): WriteCheck {
+  if (job.isFileListMalformed) return notChecked('the werkbank job reported a malformed file list')
+  if (!job.changedFiles) return notChecked('the werkbank job reported no list of changed files')
+  if (prefix === undefined) return notChecked('project prefix unknown (git rev-parse --show-prefix failed); the files the werkbank job changed cannot be placed')
+  const paths = [...new Set(job.changedFiles.map(p => toProjectPath(p, prefix)))].sort()
   const changed = paths.map(path => ({ path, change: 'modified' as Change }))
-  const outside = owns.length ? paths.filter(p => !isOwnedPath(p, owns)) : []
+  const own = owns.map(o => o.replace(/\\/g, '/').replace(/^\.\//, '').replace(/\/+$/, '')).filter(Boolean)
+  const isEscape = (p: string) => /^(\/|[A-Za-z]:)/.test(p) || p.split('/').includes('..')
+  const isOwned = (p: string) => !isEscape(p) && own.some(o => p === o || p.startsWith(`${o}/`))
+  const outside = owns.length ? paths.filter(p => !isOwned(p)) : paths.filter(isEscape)
   return { checked: true, changed, outside, unattributed: [], byOtherRole: [] }
+}
+
+// live.log is written line by line, so a private key spanning lines would
+// slip past `redact` one line at a time. This filter drops every line from a
+// BEGIN … PRIVATE KEY line through its END line and marks the block once;
+// without an END it drops the rest of the run (contract 0001, N51).
+const KEY_BEGIN = /-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----/
+const KEY_END = /-----END [A-Z0-9 ]*PRIVATE KEY-----/
+export const REDACTED_KEY_LINE = '[redacted private key]'
+export function privateKeyFilter(): (line: string) => string | undefined {
+  let isInKey = false
+  return line => {
+    if (isInKey) {
+      if (KEY_END.test(line)) isInKey = false
+      return undefined
+    }
+    const begin = line.match(KEY_BEGIN)
+    if (!begin) return line
+    // a whole key on one line is left to redact()
+    if (KEY_END.test(line.slice((begin.index ?? 0) + begin[0].length))) return line
+    isInKey = true
+    return REDACTED_KEY_LINE
+  }
 }
 
 // Folds a write check into the packet: writes outside `owns` turn done into

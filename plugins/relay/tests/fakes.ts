@@ -40,8 +40,20 @@ export type Scenario =
   | 'error-budget'
   // werkbank-relay: text instead of JSON on stdout
   | 'not-json'
+  // werkbank-relay: a red job whose answer is prose without a packet
+  | 'red-prose'
+  // codex (stdout) and werkbank-relay (stderr): a private key printed over
+  // several lines, its body inside an event, then an ok answer
+  | 'key-lines'
+  // werkbank-relay: two progress lines a clock tick apart, then waits for
+  // releaseHeld() before it answers like ok
+  | 'progress-held'
 
 export type Call = { argv: string[]; cwd?: string; env: Record<string, string>; input?: string; attachment?: string; protocolFile?: string }
+
+// A made-up private key over several lines (no real key), for N51.
+export const KEY_LINES = ['-----BEGIN RSA PRIVATE KEY-----', '-----END RSA PRIVATE KEY-----'] as const
+export const KEY_BODY = 'MIIEexampleNotARealKeyBody0001'
 
 // What the fake werkbank-relay reports, so tests can change it per world.
 export const WERKBANK_JOB = 'wb-20261118-7'
@@ -304,6 +316,12 @@ export function fakeWorld(
           yield { stream: 'stdout', text: jsonl({ type: 'turn.completed', usage: { input_tokens: 9000, cached_input_tokens: 0, output_tokens: 1000, reasoning_output_tokens: 0 } }) }
         }
       }
+      if (scenario === 'key-lines') {
+        yield {
+          stream: 'stdout',
+          text: `${KEY_LINES[0]}\n${jsonl({ type: 'item.completed', item: { id: 'k1', type: 'command_execution', command: KEY_BODY } })}${KEY_LINES[1]}\n`,
+        }
+      }
       if (scenario === 'leak') {
         yield {
           stream: 'stdout',
@@ -352,8 +370,17 @@ export function fakeWorld(
       if (scenario === 'error-repo') return yield* fail('repo', 'git@github.com:o/n.git is not in the repo list')
       if (scenario === 'error-budget') return yield* fail('budget', 'relay day budget used up (8 jobs)')
       if (scenario === 'not-json') return yield* out('Unhandled exception. System.Exception: boom\n', 1, 'boom\n')
+      if (scenario === 'key-lines') yield { stream: 'stderr', text: `verifying\n${KEY_LINES[0]}\n${KEY_BODY}\n${KEY_LINES[1]}\nverify done\n` }
+      if (scenario === 'progress-held') {
+        yield { stream: 'stderr', text: 'queued\n' }
+        await clock.sleep(3000)
+        yield { stream: 'stderr', text: 'running auf fsn1-5\n' }
+        await new Promise<void>(r => held.push(r))
+      }
       const state =
-        scenario === 'red' || scenario === 'needs-approval' || scenario === 'timed-out' || scenario === 'limit' || scenario === 'failed' || scenario === 'cancelled'
+        scenario === 'red-prose'
+          ? 'red'
+          : scenario === 'red' || scenario === 'needs-approval' || scenario === 'timed-out' || scenario === 'limit' || scenario === 'failed' || scenario === 'cancelled'
           ? scenario
           : 'done'
       const error =
@@ -364,11 +391,11 @@ export function fakeWorld(
             : scenario === 'failed'
               ? { kind: 'cli', message: 'claude exited 1' }
               : undefined
-      const isRed = scenario === 'red'
+      const isRed = scenario === 'red' || scenario === 'red-prose'
       const json = {
         jobId: WERKBANK_JOB,
         state,
-        answer: scenario === 'timed-out' || scenario === 'failed' ? '' : answer,
+        answer: scenario === 'timed-out' || scenario === 'failed' ? '' : scenario === 'red-prose' ? 'Plain prose, no packet.' : answer,
         sessionId: scenario === 'session-moved' ? 'fsn1-4:fresh2' : (arg('--session') ?? 'fsn1-5:9b1f'),
         usage: { costUsd: 0.42, turns: 6, inputTokens: 12000, outputTokens: 3100, model: 'claude-opus-5-5' },
         branch: `agent/relay/${role}`,
@@ -377,7 +404,7 @@ export function fakeWorld(
         verify: { command: 'npm test', exitCode: isRed ? 1 : 0, tests: { total: 147, passed: isRed ? 145 : 147, failed: isRed ? 2 : 0 } },
         ...(error ? { error } : {}),
       }
-      return yield* out(JSON.stringify(json), 0, progress)
+      return yield* out(JSON.stringify(json), scenario === 'answer-exit1' ? 1 : 0, scenario === 'progress-held' ? 'verifying\n' : progress)
     }
     return { value: { code: 127, signal: null } }
   })

@@ -84,6 +84,8 @@ export type RemoteRun = {
   commits: string[]
   // absent: the job reported no list (the write check says so)
   changedFiles?: string[]
+  // the list held something other than non-empty strings (N49)
+  isFileListMalformed?: true
   verify?: RemoteVerify
   // why the job did not end done (error.message), redacted and cut
   reason?: string
@@ -451,6 +453,17 @@ const WERKBANK_ERRORS: Record<string, RunError['kind']> = {
   cli: 'cli',
 }
 
+// An http(s) URL without user or password (N50).
+export function isLeitstandUrl(value: string): boolean {
+  if (/\s/.test(value)) return false
+  try {
+    const u = new URL(value)
+    return (u.protocol === 'http:' || u.protocol === 'https:') && !u.username && !u.password && !!u.hostname
+  } catch {
+    return false
+  }
+}
+
 // A value werkbank-relay could read as an option, or a list entry the comma
 // join would split: refused before the start (N32).
 function werkbankValue(what: string, v: string, isList: boolean) {
@@ -468,7 +481,12 @@ const werkbank: Backend = {
   build(spec) {
     const s = spec.settings
     const leitstand = (s.werkbankLeitstand ?? '').trim()
-    if (!/^https?:\/\/\S+$/.test(leitstand)) throw new BuildError(`werkbank: werkbankLeitstand must be an http:// or https:// URL, got "${leitstand}".`, 'cli')
+    // The value is never echoed: it may hold credentials (N50).
+    if (!isLeitstandUrl(leitstand)) throw new BuildError('werkbank: werkbankLeitstand must be an http:// or https:// URL without user or password.', 'cli')
+    const tokenFile = (s.werkbankTokenFile ?? '').trim()
+    if (!isAbsolutePath(tokenFile) || tokenFile.startsWith('-')) {
+      throw new BuildError('werkbank: werkbankTokenFile must be an absolute path (a leading ~ needs USERPROFILE or HOME).', 'cli')
+    }
     if (!isAbsolutePath(s.tmpDir)) throw new BuildError(`werkbank needs an absolute folder for the protocol file, got "${s.tmpDir}".`, 'cli')
     const bytes = new TextEncoder().encode(spec.task).length
     if (bytes > WERKBANK_MAX_TASK_BYTES) {
@@ -484,7 +502,7 @@ const werkbank: Backend = {
       '--leitstand',
       leitstand,
       '--token-file',
-      s.werkbankTokenFile ?? '',
+      tokenFile,
       '--role',
       spec.role,
       '--run',
@@ -539,7 +557,12 @@ const werkbank: Backend = {
         state,
         branch: str(json.branch) ?? '',
         commits: strings(json.commits),
-        ...(Array.isArray(json.changedFiles) ? { changedFiles: strings(json.changedFiles) } : {}),
+        // A list with anything but non-empty strings is malformed, never a short list (N49).
+        ...(json.changedFiles === undefined
+          ? {}
+          : Array.isArray(json.changedFiles) && json.changedFiles.every(x => typeof x === 'string' && x !== '')
+            ? { changedFiles: json.changedFiles as string[] }
+            : { isFileListMalformed: true as const }),
         ...(v
           ? {
               verify: clean<RemoteVerify>({
@@ -552,11 +575,14 @@ const werkbank: Backend = {
         ...(errText ? { reason: errText } : {}),
       }
     }
-    // A job that ran and ended partial carries its reason in `remote`; an
-    // error is the program's own failure, or a job that failed.
-    const isJobFailure = !remote || WERKBANK_FAILED_STATES.includes(state)
+    // A job that ended partial carries the JSON error as its reason in
+    // `remote`. Everything else keeps it as an error: the program's own
+    // failure, no jobId, a failed job, a done job with an error. A nonzero
+    // exit is always an error (N48).
+    const isPartialState = !!remote && state !== 'done' && !WERKBANK_FAILED_STATES.includes(state)
+    const jsonError: RunError | undefined = kind && errText && !isPartialState ? { kind, message: errText } : undefined
     const error: RunError | undefined =
-      kind && errText && isJobFailure ? { kind, message: errText } : remote && !isJobFailure ? undefined : cliFailure(r)
+      jsonError ?? cliFailure(r) ?? (remote ? undefined : { kind: 'cli', message: 'werkbank-relay reported no jobId' })
     return {
       answer: str(json.answer) ?? '',
       ...(sid && isSafeId(sid) ? { sessionId: sid } : {}),
@@ -582,7 +608,8 @@ export function remoteVerifyLine(v: RemoteVerify): string {
 
 export function remoteEndLine(r: RemoteRun): string | undefined {
   if (r.state === 'done') return undefined
-  const why = r.reason ?? (r.state === 'red' && r.verify ? remoteVerifyLine(r.verify) : '')
+  // red: the verify line first, then the error message (N54)
+  const why = [r.state === 'red' && r.verify ? remoteVerifyLine(r.verify) : '', r.reason ?? ''].filter(Boolean).join('; ')
   return `werkbank job ${r.jobId} ended ${r.state}${why ? `: ${why}` : ''}`
 }
 

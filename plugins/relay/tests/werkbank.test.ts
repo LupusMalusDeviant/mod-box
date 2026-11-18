@@ -1,14 +1,16 @@
 // The werkbank backend with a fake werkbank-relay (contract 0001, Nachtrag 2).
 import { describe, expect, test } from 'claude-code/testing'
 import { protocolPrompt } from '../hooks/protocol.ts'
-import { fakeWorld, WERKBANK_JOB, type Scenario } from './fakes.ts'
+import { fakeWorld, KEY_BODY, WERKBANK_JOB, type Scenario } from './fakes.ts'
 
 const WB = { defaultBackend: 'werkbank' }
 const HOME = { USERPROFILE: 'C:/Users/u' }
+// The token file needs a home to resolve `~` (N50).
+const world = (on: any, init: Parameters<typeof fakeWorld>[1] = {}) => fakeWorld(on, { env: HOME, ...init })
 
 describe('werkbank backend', () => {
   test('argv, task on stdin, protocol in a file, token file under home; the next task resumes the session', { options: WB }, async ($: any, on: any) => {
-    const w = fakeWorld(on, { env: HOME })
+    const w = world(on)
     if (!(await w.start($))) return
     const r = await w.send($, { role: 'coder', task: 'Fix the parser', owns: ['src/'], model: 'claude-opus-5-5' })
     expect(String(r.result)).toContain('coder run 1 started on werkbank')
@@ -44,7 +46,7 @@ describe('werkbank backend', () => {
   })
 
   test('no local snapshot: the write check compares the files the job changed with owns', { options: WB }, async ($: any, on: any) => {
-    const w = fakeWorld(on)
+    const w = world(on)
     w.play('write-outside')
     if (!(await w.start($))) return
     await w.send($, { role: 'coder', task: 't', owns: ['src/'] })
@@ -60,7 +62,7 @@ describe('werkbank backend', () => {
   })
 
   test('a project inside the repo: repo paths are mapped onto the project', { options: WB }, async ($: any, on: any) => {
-    const w = fakeWorld(on)
+    const w = world(on)
     w.git.prefix = 'app/'
     if (!(await w.start($))) return
     await w.send($, { role: 'coder', task: 't', owns: ['src/'] })
@@ -70,13 +72,13 @@ describe('werkbank backend', () => {
   })
 
   test('the job state decides the packet status', { options: WB }, async ($: any, on: any) => {
-    const w = fakeWorld(on)
+    const w = world(on)
     const cases: [Scenario, string, string][] = [
       ['red', 'Status: partial', `werkbank job ${WERKBANK_JOB} ended red: verify: npm test → exit 1, tests 145/147 passed, 2 failed`],
       ['needs-approval', 'Status: partial', "ended needs-approval: the push needs the user's approval"],
       ['limit', 'Status: partial', 'ended limit: Claude usage limit reached'],
-      ['timed-out', 'Status: partial', `Summary: werkbank job ${WERKBANK_JOB} ended timed-out without a relay packet.`],
-      ['failed', 'Status: failed', `Summary: werkbank job ${WERKBANK_JOB} ended failed without a relay packet: claude exited 1.`],
+      ['timed-out', 'Status: partial', `Summary: werkbank job ${WERKBANK_JOB} ended timed-out without a relay packet`],
+      ['failed', 'Status: failed', `werkbank job ${WERKBANK_JOB} ended failed: claude exited 1`],
       ['cancelled', 'Status: failed', `werkbank job ${WERKBANK_JOB} ended cancelled`],
     ]
     w.play(...cases.map(c => c[0]))
@@ -94,7 +96,7 @@ describe('werkbank backend', () => {
   })
 
   test('the program could not work: its error kind is named, the run failed', { options: WB }, async ($: any, on: any) => {
-    const w = fakeWorld(on)
+    const w = world(on)
     const cases: [Scenario, string][] = [
       ['error-auth', 'error (auth)'],
       ['error-network', 'error (network)'],
@@ -115,7 +117,7 @@ describe('werkbank backend', () => {
   })
 
   test('a moved session is said and taken for the next run', { options: WB }, async ($: any, on: any) => {
-    const w = fakeWorld(on)
+    const w = world(on)
     if (!(await w.start($))) return
     await w.send($, { role: 'coder', task: 'one' })
     await w.until(() => w.submitted.length === 1)
@@ -132,7 +134,7 @@ describe('werkbank backend', () => {
   })
 
   test('a werkbank run stops after 60 minutes, not after runTimeoutMin', { options: { ...WB, runTimeoutMin: 1 } }, async ($: any, on: any) => {
-    const w = fakeWorld(on)
+    const w = world(on)
     w.play('hang')
     if (!(await w.start($))) return
     await w.send($, { role: 'coder', task: 'slow' })
@@ -149,7 +151,7 @@ describe('werkbank backend', () => {
   })
 
   test('a task over 16 KiB is refused before the start and keeps the session', { options: WB }, async ($: any, on: any) => {
-    const w = fakeWorld(on)
+    const w = world(on)
     if (!(await w.start($))) return
     await w.send($, { role: 'coder', task: 'one' })
     await w.until(() => w.submitted.length === 1)
@@ -165,7 +167,7 @@ describe('werkbank backend', () => {
   })
 
   test('worker_status names what werkbank ignores and a timeout below the run limit', { options: { ...WB, werkbankTimeoutMin: 20 } }, async ($: any, on: any) => {
-    const w = fakeWorld(on)
+    const w = world(on)
     if (!(await w.start($))) return
     const r = await w.send($, { role: 'coder', task: 't', effort: 'high', isolation: 'worktree' })
     expect(String(r.result)).toContain('werkbank ignores: effort, isolation')
@@ -176,5 +178,152 @@ describe('werkbank backend', () => {
     const status = await w.status($)
     expect(status).toContain('ignored: effort, isolation')
     expect(status).toContain('werkbankTimeoutMin (20) is not above runTimeoutMin (30)')
+  })
+})
+
+describe('werkbank, Nachtrag 2a (Codex review of 8121e9e)', () => {
+  test('N48: a done job with a failing exit is partial and names the error', { options: WB }, async ($: any, on: any) => {
+    const w = world(on)
+    w.play('answer-exit1')
+    if (!(await w.start($))) return
+    await w.send($, { role: 'coder', task: 't' })
+    await w.until(() => w.submitted.length === 1)
+    expect(w.submitted[0]).toContain('Status: partial')
+    expect(w.submitted[0]).toContain('werkbank-relay reported an error (cli)')
+    expect(w.submitted[0]).toContain('error (cli)')
+  })
+
+  test('N49: a failing git prefix leaves the write check incomplete, not passed', { options: WB }, async ($: any, on: any) => {
+    const w = world(on)
+    if (!(await w.start($))) return
+    w.during(() => {
+      w.git.isBroken = true
+    })
+    await w.send($, { role: 'coder', task: 't', owns: ['src/'] })
+    await w.until(() => w.submitted.length === 1)
+    expect(w.submitted[0]).toContain('⚠ write check incomplete')
+    expect(w.submitted[0]).toContain('project prefix unknown')
+    expect(JSON.parse(w.files.get('.relay/runs/coder/001.packet.json')!).write_check.checked).toBe(false)
+  })
+
+  test('N50: the token file needs a home to resolve ~', { options: WB }, async ($: any, on: any) => {
+    const w = fakeWorld(on)
+    if (!(await w.start($))) return
+    await w.send($, { role: 'coder', task: 't' })
+    await w.until(() => w.submitted.length === 1)
+    expect(w.spawns).toHaveLength(0)
+    expect(w.submitted[0]).toContain('Worker was not started: werkbank: werkbankTokenFile must be an absolute path')
+  })
+
+  test('N52: a protocol file that is a link out of the project stops the run', { options: WB }, async ($: any, on: any) => {
+    const w = world(on)
+    w.links.set('.relay/tmp/coder-1.protocol.md', '/etc/cron.d/x')
+    if (!(await w.start($))) return
+    await w.send($, { role: 'coder', task: 't' })
+    await w.until(() => w.submitted.length === 1)
+    expect(w.spawns).toHaveLength(0)
+    expect(w.submitted[0]).toContain('Worker was not started: .relay/tmp/coder-1.protocol.md resolves to /etc/cron.d/x')
+    expect(w.files.has('.relay/tmp/coder-1.protocol.md')).toBe(false)
+  })
+
+  test('N52: the same for an opencode task file', { options: { defaultBackend: 'opencode' } }, async ($: any, on: any) => {
+    const w = fakeWorld(on)
+    w.links.set('.relay/tmp/scout-1.md', '/home/u/.bashrc')
+    if (!(await w.start($))) return
+    await w.send($, { role: 'scout', task: 'Look', model: 'ollama/m' })
+    await w.until(() => w.submitted.length === 1)
+    expect(w.spawns).toHaveLength(0)
+    expect(w.submitted[0]).toContain('Worker was not started: .relay/tmp/scout-1.md resolves to /home/u/.bashrc')
+    expect(w.files.has('.relay/tmp/scout-1.md')).toBe(false)
+  })
+
+  test('N53: after a restart the protocol file is cleared and the write check names the server', { options: WB }, async ($: any, on: any) => {
+    const queue = {
+      version: 1,
+      owner: { session: 'old', heartbeatAt: '1970-01-01T00:00:00.000Z' },
+      jobs: [{ id: 'j_1', role: 'coder', task: 'was running', enqueuedAt: '1970-01-01T00:00:00.000Z', state: 'running', run: 3, backend: 'werkbank' }],
+    }
+    const w = world(on, {
+      files: { '.relay/queue.json': JSON.stringify(queue), '.relay/tmp/coder-3.protocol.md': 'PROTO with the brief' },
+      store: { 'roles:/w': { coder: { name: 'coder', runs: 3, isBusy: true } } },
+    })
+    await w.clock.set(10 * 60_000)
+    if (!(await w.start($))) return
+    await w.until(() => w.submitted.length === 1)
+    expect(w.files.get('.relay/tmp/coder-3.protocol.md')).toBe('')
+    expect(w.submitted[0]).toContain('[relay] coder · run 3 interrupted')
+    expect(w.submitted[0]).toContain('the werkbank job may still be running on the server; its changes would be on agent/relay/coder')
+  })
+
+  test('N54: a red job with prose gets no fallback compression and keeps its end line', { options: WB }, async ($: any, on: any) => {
+    const w = world(on)
+    w.play('red-prose', 'timed-out')
+    if (!(await w.start($))) return
+    await w.send($, { role: 'coder', task: 't' })
+    await w.until(() => w.submitted.length === 1)
+    expect(w.submitted[0]).toContain('Status: partial')
+    expect(w.submitted[0]).not.toContain('fallback compressor')
+    expect(w.submitted[0]).toContain(`werkbank job ${WERKBANK_JOB} ended red: verify: npm test → exit 1, tests 145/147 passed, 2 failed`)
+    expect(w.files.get('.relay/runs/coder/001.full.md')).toContain('Plain prose, no packet.')
+    await w.send($, { role: 'coder', task: 't2' })
+    await w.until(() => w.submitted.length === 2)
+    // the substitute packet carries the end line too
+    expect(w.submitted[1]).toContain(`- werkbank job ${WERKBANK_JOB} ended timed-out`)
+  })
+
+  test('N55: changing isolation keeps a werkbank session; no "moved" without a session sent', { options: WB }, async ($: any, on: any) => {
+    const w = world(on)
+    if (!(await w.start($))) return
+    await w.send($, { role: 'coder', task: 'one' })
+    await w.until(() => w.submitted.length === 1)
+    const r = await w.send($, { role: 'coder', task: 'two', isolation: 'worktree' })
+    expect(String(r.result)).not.toContain('old session was dropped')
+    await w.until(() => w.submitted.length === 2)
+    const b = w.spawns[1]!.argv
+    expect(b[b.indexOf('--session') + 1]).toBe('fsn1-5:9b1f')
+  })
+
+  test('N55: an unsafe stored session is not sent and not reported as moved', { options: WB }, async ($: any, on: any) => {
+    const w = world(on, { store: { 'roles:/w': { odd: { name: 'odd', runs: 1, isBusy: false, sessionId: '-bad', sessionBackend: 'werkbank', sessionDir: '/w' } } } })
+    if (!(await w.start($))) return
+    await w.send($, { role: 'odd', task: 't' })
+    await w.until(() => w.submitted.length === 1)
+    expect(w.spawns[0]!.argv).not.toContain('--session')
+    expect(w.submitted[0]).not.toContain('session moved')
+  })
+
+  test('N51: a private key over several lines never reaches live.log (werkbank stderr, codex stdout)', { options: WB }, async ($: any, on: any) => {
+    const w = world(on)
+    w.play('key-lines', 'key-lines')
+    if (!(await w.start($))) return
+    await w.send($, { role: 'coder', task: 't' })
+    await w.until(() => w.submitted.length === 1)
+    await w.send($, { role: 'cx', task: 't', backend: 'codex' })
+    await w.until(() => w.submitted.length === 2)
+    for (const role of ['coder', 'cx']) {
+      const live = w.files.get(`.relay/runs/${role}/live.log`)!
+      expect(live).toContain('[redacted private key]')
+      expect(live).not.toContain(KEY_BODY)
+    }
+    expect(w.files.get('.relay/runs/coder/live.log')).toContain('verify done')
+  })
+
+  test('N57: live.log shows progress while the run still holds its slot', { options: { ...WB, maxParallel: 1 } }, async ($: any, on: any) => {
+    const w = world(on)
+    w.play('progress-held')
+    if (!(await w.start($))) return
+    await w.send($, { role: 'coder', task: 'long' })
+    const r = await w.send($, { role: 'other', task: 'waits' })
+    expect(String(r.result)).toContain('task queued')
+    await w.clock.advance(3000)
+    await w.until(() => (w.files.get('.relay/runs/coder/live.log') ?? '').includes('running auf fsn1-5'))
+    const live = w.files.get('.relay/runs/coder/live.log')!
+    expect(live).toContain('queued')
+    expect(live).toContain('running auf fsn1-5')
+    expect(w.submitted).toHaveLength(0)
+    expect(w.spawns).toHaveLength(1)
+    w.releaseHeld()
+    await w.until(() => w.submitted.length === 2)
+    expect(w.files.get('.relay/runs/coder/live.log')).toContain('verifying')
   })
 })

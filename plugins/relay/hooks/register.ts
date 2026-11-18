@@ -36,6 +36,8 @@ import {
   parsePacket,
   parsePorcelain,
   parseWorktreeList,
+  notChecked,
+  privateKeyFilter,
   remoteWriteCheck,
   toProjectPath,
   protocolPrompt,
@@ -341,9 +343,12 @@ async function beat($: EngineInterface) {
 async function recover($: EngineInterface) {
   const dead = queue.jobs.filter(j => j.state === 'running')
   for (const job of dead) {
-    // An opencode task file the dead run left behind is cleared first.
-    const attachment = relayPath(`tmp/${job.role}-${job.run ?? 0}.md`)
-    if (await $.fs.exists(attachment).catch(() => false)) await $.fs.write(attachment, '').catch(() => undefined)
+    // An opencode task file or a werkbank protocol file the dead run left
+    // behind is cleared first, each checked like a live run's (N52, N53).
+    for (const name of [`${job.role}-${job.run ?? 0}.md`, `${job.role}-${job.run ?? 0}.protocol.md`]) {
+      const attachment = relayPath(`tmp/${name}`)
+      if (await $.fs.exists(attachment).catch(() => false)) await clearTempFile($, attachment)
+    }
     const why = await (job.delivery === 'stored' ? deliverStored($, job) : reportInterrupted($, job)).catch(err => `reporting failed (${message(err)})`)
     // A reported job left the queue in deliver; the rest stay and are shown.
     if (why) unreported.set(job.id, why)
@@ -502,6 +507,37 @@ async function storageProblem($: EngineInterface, rel: string): Promise<string |
     }
   }
   return undefined
+}
+
+// Temp files (opencode's task, werkbank's protocol) live in <relayDir>/tmp/;
+// the file itself is checked like its folder before relay writes it. $.fs
+// cannot create exclusively or refuse to follow a link (V3): a short window
+// between check and write remains (contract 0001, N52).
+const tempRel = (path: string) => relayPath(`tmp/${path.replace(/^.*[\\/]/, '')}`)
+
+async function tempFilesProblem($: EngineInterface, inv: Invocation): Promise<string | undefined> {
+  for (const f of inv.tempFiles ?? []) {
+    const problem = await storageProblem($, tempRel(f.path))
+    if (problem) return problem
+  }
+  return undefined
+}
+
+async function clearTempFile($: EngineInterface, path: string) {
+  if (await storageProblem($, tempRel(path))) return
+  await $.fs.write(path, '').catch(() => undefined)
+}
+
+const argValue = (argv: readonly string[], flag: string) => {
+  const i = argv.indexOf(flag)
+  return i >= 0 ? argv[i + 1] : undefined
+}
+
+// The project's place in its repository, or undefined when git cannot say
+// (never silently the top, contract 0001, N49).
+async function prefixOf($: EngineInterface, dir: string): Promise<string | undefined> {
+  const r = await git($, dir, ['rev-parse', '--show-prefix'])
+  return r.exitCode === 0 ? r.stdout.trim() : undefined
 }
 
 // Why the folder at `rel` is not the role's own worktree, or undefined: it
@@ -830,13 +866,21 @@ async function start($: EngineInterface, job: QueuedJob, role: Role, run: number
               : {}),
           },
         }
-        passedSessionId = spec.sessionId
         try {
           inv = backend.build(spec)
         } catch (err) {
           // A refused werkbank call never starts and keeps the session (N32).
           if (err instanceof BuildError) notStarted = message(err).replace(/\.$/, '')
           outcome = { answer: '', usage: {}, error: { kind: err instanceof BuildError ? err.kind : 'model', message: message(err) } }
+        }
+        // The session that really went along, for "session moved" (N55).
+        if (inv && isRemote) passedSessionId = argValue(inv.argv, '--session')
+        // Each temp file itself must stay in the project, not only its folder (N52).
+        const tempProblem = inv ? await tempFilesProblem($, inv) : undefined
+        if (inv && tempProblem) {
+          notStarted = tempProblem
+          outcome = { answer: '', usage: {}, error: { kind: 'cli', message: tempProblem } }
+          inv = undefined
         }
         if (inv) {
           if (inv.presetSessionId) {
@@ -849,8 +893,9 @@ async function start($: EngineInterface, job: QueuedJob, role: Role, run: number
             for (const f of inv.tempFiles ?? []) await $.fs.write(f.path, f.content)
             await spawnRun($, id, eff.owns, work.dir, inv, backend.onLine?.bind(backend), proc, live)
           } finally {
-            // The task file never outlives its run, whatever ended it (N25).
-            for (const f of inv.tempFiles ?? []) await $.fs.write(f.path, '').catch(() => undefined)
+            // The task file never outlives its run, whatever ended it (N25),
+            // and is checked again before it is cleared (N52).
+            for (const f of inv.tempFiles ?? []) await clearTempFile($, f.path)
           }
           outcome = backend.parse(proc)
           if (!outcome.answer.trim() && !proc.stdout.trim() && proc.exitCode === undefined && outcome.error?.kind === 'cli') {
@@ -860,7 +905,7 @@ async function start($: EngineInterface, job: QueuedJob, role: Role, run: number
         if (config.writeCheck !== 'report') check = undefined
         else if (!isRemote) check = await writeCheckOf($, eff.owns, work.dir, before, work.git, mine)
         // The files the job changed on its branch, against owns (N39).
-        else if (outcome.remote) check = remoteWriteCheck(outcome.remote.changedFiles, eff.owns, work.isGit ? (await repoOf($, work.dir)).prefix : '')
+        else if (outcome.remote) check = remoteWriteCheck(outcome.remote, eff.owns, work.isGit ? await prefixOf($, work.dir) : '')
       }
     } catch (err) {
       proc.stderr += `\n${String(err)}`
@@ -958,25 +1003,37 @@ async function spawnRun(
 function liveLog($: EngineInterface, role: string, run: number, id: BackendId, isEnabled = true) {
   const path = relayPath(`runs/${role}/live.log`)
   const lines = [`# ${role} · run ${run} · ${id} · started ${new Date().toISOString()}`]
+  // A private key over several lines never reaches the log (N51).
+  const keyFilter = privateKeyFilter()
+  // Timed by the plugin's clock: at most every 2 seconds, and at the end.
+  const now = () => $.clock.now().catch(() => Date.now())
   let flushedAt = 0
-  const flush = async () => {
-    flushedAt = Date.now()
+  const write = async () => {
     if (!isEnabled) return
     await $.fs.write(path, `${lines.join('\n')}\n`).catch(() => undefined)
   }
-  void flush()
+  void now().then(t => {
+    flushedAt = t
+    return write()
+  })
   return {
     line(raw: string) {
       if (id === 'claude') return
-      const text = liveLine(id, raw)
+      const kept = keyFilter(raw)
+      if (kept === undefined) return
+      const text = kept === raw ? liveLine(id, raw) : kept
       if (!text) return
       lines.push(redact(text))
-      if (Date.now() - flushedAt >= 2000) void flush()
+      void now().then(t => {
+        if (t - flushedAt < 2000) return
+        flushedAt = t
+        return write()
+      })
     },
     async close(outcome: RunOutcome, proc: ProcessResult) {
       const state = proc.isTimedOut ? 'stopped (timeout)' : proc.isStoppedByLimit ? 'stopped (token limit)' : outcome.error ? `error: ${outcome.error.message}` : 'finished'
       lines.push(redact(`# ${state} · ${new Date().toISOString()}`))
-      await flush()
+      await write()
     },
   }
 }
@@ -1079,8 +1136,11 @@ async function finish($: EngineInterface, r: RunResult) {
   let packet = parsePacket(answer)
   let compressedBy: string | undefined
   let compressError: string | undefined
+  const remote = r.notStarted ? undefined : outcome.remote
+  // A werkbank job that did not end done gets no fallback compression (N54).
+  const isRemoteEnd = !!remote && remote.state !== 'done'
   if (packet) packet.compressed_by = 'worker'
-  else if (answer.trim()) {
+  else if (answer.trim() && !isRemoteEnd) {
     // A failing compressor is a missing packet, never a lost answer (N15).
     const c = await compress($, role.name, answer).catch(err => ((compressError = message(err)), {} as { packet?: Packet; by?: string }))
     packet = c.packet
@@ -1090,12 +1150,10 @@ async function finish($: EngineInterface, r: RunResult) {
     }
   }
   const isGone = outcome.error?.kind === 'session-not-found'
-  const remote = r.notStarted ? undefined : outcome.remote
   // A werkbank job that did not end done and left no packet: partial, since
-  // commits may be on its branch; failed only when the job failed (N37).
-  if (!packet && remote && remote.state !== 'done') {
-    const why = remote.reason ? `: ${remote.reason}` : ''
-    packet = failedPacket(`werkbank job ${remote.jobId} ended ${remote.state} without a relay packet${why}.`)
+  // commits may be on its branch; failed only when the job failed (N37, N54).
+  if (!packet && remote && isRemoteEnd) {
+    packet = failedPacket(`werkbank job ${remote.jobId} ended ${remote.state} without a relay packet; the full answer is in full.md.`)
     if (!isRemoteFailed(remote)) packet.status = 'partial'
   }
   packet ??= failedPacket(
@@ -1123,9 +1181,14 @@ async function finish($: EngineInterface, r: RunResult) {
   if (remote) {
     // N37: why the job did not end done; N38: its verify command; N40: its branch.
     const end = remoteEndLine(remote)
-    if (end && packet.compressed_by !== 'none') packet.risks.push(end)
+    if (end) packet.risks.push(end)
     if (isRemoteFailed(remote)) packet.status = 'failed'
     else if (remote.state !== 'done' && packet.status === 'done') packet.status = 'partial'
+    // N48: a CLI error never leaves a job done, and is named
+    if (outcome.error && !isRemoteFailed(remote)) {
+      if (packet.status === 'done') packet.status = 'partial'
+      packet.risks.push(`werkbank-relay reported an error (${outcome.error.kind}): ${outcome.error.message}`)
+    }
     if (remote.verify) packet.facts.push({ id: `F${packet.facts.length + 1}`, text: remoteVerifyLine(remote.verify) })
     const shas = remote.commits.map(c => c.slice(0, 7))
     for (const sha of shas) packet.artifacts.push({ path: `commit ${sha}`, change: 'created', note: `on ${remote.branch || 'the werkbank branch'}` })
@@ -1288,7 +1351,10 @@ async function reportInterrupted($: EngineInterface, job: QueuedJob): Promise<st
   role.runs = Math.max(role.runs, run)
   const eff = effective(role, defs[role.name])
   const packet = failedPacket('Interrupted: the plugin was reloaded or the session ended while this run was working. It was not restarted.')
-  if (config.writeCheck === 'report') {
+  if (config.writeCheck === 'report' && job.backend === 'werkbank') {
+    // No local snapshot exists; the job may still run on the server (N53).
+    applyWriteCheck(packet, notChecked(`the werkbank job may still be running on the server; its changes would be on agent/relay/${role.name}`))
+  } else if (config.writeCheck === 'report') {
     let before: Snapshot | undefined
     try {
       before = JSON.parse(await $.fs.read(snapshotPath(role.name, run))) as Snapshot
@@ -1618,7 +1684,8 @@ export const register: Register = (on, options) => {
       notes.push(`backend changed from ${backendBefore} to ${eff.backend}: the old session was dropped`)
     }
     // A session belongs to its folder (N23).
-    if (eff.isolation !== prior.isolation && role.sessionId) {
+    // werkbank does not use isolation, so its session stays (N55).
+    if (eff.isolation !== prior.isolation && role.sessionId && eff.backend !== 'werkbank') {
       role.sessionId = undefined
       role.sessionBackend = undefined
       role.sessionDir = undefined
