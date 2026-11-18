@@ -1,6 +1,6 @@
 # Vertrag 0001: relay mit Backends je Rolle
 
-**Status:** abgenommen am 3. November 2026 (E1–E11 wie empfohlen, herdr gestrichen) · **Stand:** 13. November 2026, Nachtrag 1 (Abschnitt 14 und 14.1, N1–N28) abgenommen am 13. November 2026; Nachtrag 2 (Abschnitt 15, N29–N47, Backend `werkbank`) sowie Nachträge 2a (15.4, N48–N57) und 2b (15.5, N58–N67) abgenommen am 18. November 2026 · **Betrifft:** `plugins/relay` (heute 0.3.0)
+**Status:** abgenommen am 3. November 2026 (E1–E11 wie empfohlen, herdr gestrichen) · **Stand:** 13. November 2026, Nachtrag 1 (Abschnitt 14 und 14.1, N1–N28) abgenommen am 13. November 2026; Nachtrag 2 (Abschnitt 15, N29–N47, Backend `werkbank`) sowie Nachträge 2a (15.4, N48–N57) , 2b (15.5, N58–N67) und 2c (15.6, N68–N72) abgenommen am 18. November 2026 · **Betrifft:** `plugins/relay` (heute 0.3.0)
 
 Heute startet relay jeden Worker als `claude -p`. Künftig wählt jede Rolle ihr **Backend**: `claude`, `codex` oder `opencode`. Über opencode erreicht relay auch Ollama und OpenRouter. Warteschlange, Timeout, `owns`, Relay-Pakete und die drei Werkzeuge bleiben gleich. Neu sind die Backend-Schnittstelle, eine Schreibprüfung nach jedem Lauf, die gleich für alle Backends greift, Token-Angaben im Paket, Ollama als Ersatz-Verdichter und eine Warteschlange, die auf der Platte liegt.
 
@@ -693,3 +693,26 @@ Ein zweites Codex-Review (Stand `63ba3bf`) fand 14 weitere Befunde (6 hoch, 8 mi
 **Tests:** je Zeile mindestens ein Fall, der mit `61f3313` fehlschlägt; N59 mit einem git, das schon **vor** dem Start scheitert; N61 für werkbank und codex; N62 mit zwei Schlüsseln in einer Zeile; N63 mit einem Lauf, dessen ganzer Fortschritt in den ersten 2 Sekunden kommt. Fassung bleibt 0.5.0.
 
 **Stand 18. November 2026:** N58–N67 gebaut. `claude plugin test plugins/relay`: 156 bestanden, 0 fehlgeschlagen; `claude plugin test .`: 314 bestanden. Gegenprobe mit `61f3313`: die neuen Integrationsfälle (N59, N61, N63, N64, N66) schlagen fehl; N58, N60, N62, N65, N67 sind reine Fälle in `hooks/backends.test.ts`, die neue Schnittstellen nutzen. N61 für codex ist ein reiner Fall (`parse` mit `signal`).
+
+### 15.6 Nachtrag 2c (18. November 2026): Befunde aus dem dritten Codex-Review (`c270e77...9e02c5e`)
+
+**Status: abgenommen am 18. November 2026** (N68–N72 und die Grenzen wie vorgeschlagen). Das dritte Codex-Review (gpt-6.2-sol) fand 10 Befunde (4 hoch, 5 mittel, 1 niedrig). Entschieden vom Nutzer am 18. November 2026: nur die echten beheben, den Rest als Grenzen festhalten.
+
+| Nr. | Änderung | Ersetzt / ergänzt | Befund |
+|---|---|---|---|
+| N68 | **`live.log` gehört dem laufenden Lauf.** Beim Abschluss eines Laufs (`close`) verfällt ein noch geplantes Nachschreiben (N63); nach `close` schreibt dieser Lauf nichts mehr. Die Schreibvorgänge aller Läufe einer Rolle laufen nacheinander, sodass ein alter Lauf den Kopf eines neuen nie überschreibt. | N63, 9 | M1 |
+| N69 | **Ein unbrauchbares `error` ist ein Fehler.** Ist `error` im JSON vorhanden, aber kein Objekt, gilt das als Protokollfehler (`cli`, „werkbank-relay sent a malformed error field“); `done` wird dann `partial` (N48). Die Fehlerart wird nur aus eigenen Schlüsseln der Tabelle in N35 gelesen; jede andere Angabe (auch `constructor` o. Ä.) ist `unknown`. | N35, N48 | H4 |
+| N70 | **Das Ende muss zum Anfang passen.** Der Schlüsselfilter (N51, N62) merkt sich die Art des offenen Schlüssels (`RSA`, `OPENSSH`, `EC`, leer …); nur ein `END` derselben Art beendet die Ausblendung. | N51, N62 | M2 |
+| N71 | **Abbruch vor dem JSON richtig benennen.** Liefert `werkbank-relay` kein JSON und endet durch ein Signal oder einen Lesefehler, nennt der Fehler das (N61) statt stderr. Der Hinweis „could not start …; set <id>Bin …“ erscheint nur, wenn weder stdout noch stderr etwas enthalten und es weder Exit-Code noch Signal gibt. | N34, N61, 2.5 | M5 |
+| N72 | **Keine Session-ID, die nach Zugangsdaten aussieht.** Eine Session-ID, die die Bereinigung (N2) verändern würde, übernimmt relay nicht aus der Antwort und gibt sie beim Fortsetzen nicht mit (der Lauf beginnt neu). | N1, N34, N41 | H2 |
+
+**Festgehaltene Grenzen (nicht behoben):**
+- **H1:** Werte, die `build` später als Zugangsdaten ablehnt (N58), stehen vorher schon wörtlich in der Rolle (`$.store`) und in `queue.json`/`queue.json.bak`, wie jeder Auftrag (N2). Zugangsdaten gehören nicht in Rollen-Angaben.
+- **H3:** relay entfernt Leerzeichen am Anfang und Ende von `owns`-Einträgen (`toList`), auch für werkbank. Pfade, die mit Leerzeichen beginnen oder enden, lassen sich so nicht besitzen.
+- **M3:** Scheitert die Prüfung, ob eine Temp-Datei existiert (`$.fs.exists` wirft), gilt sie als nicht vorhanden. Ein hängender Link (Ziel fehlt) wird von `$.fs.exists` nicht sicher erkannt.
+- **M4:** Antwortet `werkbank-relay` ohne `jobId` mit Text ohne Paket und ist der Ersatz-Verdichter aus, steht der Hinweis „reported no jobId“ nur in `full.md` und der Kopfzeile (`error (…)`), nicht in der Zusammenfassung.
+- **L1:** Unter Windows lässt die Prüfung aus N64 Gerätepfade (z. B. benannte Pipes `\\.\pipe\…`) als UNC-Pfad durch. Die Einstellung setzt der Nutzer selbst.
+
+**Tests:** je Zeile N68–N72 mindestens ein Fall, der mit `9e02c5e` fehlschlägt; N68 mit zwei schnell aufeinander folgenden Läufen derselben Rolle.
+
+**Stand (18. November 2026):** N68–N72 umgesetzt. `claude plugin test plugins/relay`: 164 pass, 0 fail; die 8 neuen Fälle (4 rein, 4 Integration) schlagen mit `9e02c5e` fehl (156 pass, 8 fail). N71: die Ursache (Signal, Lesefehler) steht vorn, stderr folgt als Kontext wie in N61.

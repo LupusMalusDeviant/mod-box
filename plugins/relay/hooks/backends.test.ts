@@ -543,6 +543,35 @@ describe('werkbank: parsing', () => {
     expect(remoteEndLine(parse(job()).remote!)).toBeUndefined()
   })
 
+  test('N69: an error that is no object is a protocol failure; only own kinds count', () => {
+    const malformed = { kind: 'cli', message: 'werkbank-relay sent a malformed error field' }
+    expect(parse(job({ error: 'lost it' })).error).toEqual(malformed)
+    expect(parse(job({ error: ['x'] })).error).toEqual(malformed)
+    expect(parse(job({ error: 7 })).error).toEqual(malformed)
+    expect(parse(job({ error: null })).error).toBeUndefined()
+    for (const kind of ['constructor', 'toString', 'hasOwnProperty']) {
+      expect(parse({ error: { kind, message: 'm' } }, 2).error).toEqual({ kind: 'unknown', message: 'm' })
+    }
+  })
+
+  test('N71: no JSON and a signal or a broken stream says so, not stderr', () => {
+    const r = { stdout: '', stderr: 'queued\n', isTimedOut: false, isStoppedByLimit: false }
+    // the cause comes first; stderr follows as context, as in N61
+    expect(BACKENDS.werkbank.parse({ ...r, signal: 'SIGTERM' }).error?.message.startsWith('ended by signal SIGTERM')).toBe(true)
+    expect(BACKENDS.werkbank.parse({ ...r, streamError: 'EPIPE' }).error?.message.startsWith('reading the output failed: EPIPE')).toBe(true)
+    // with an exit code stderr stays the message
+    expect(BACKENDS.werkbank.parse({ ...r, exitCode: 1 }).error).toEqual({ kind: 'cli', message: 'queued' })
+  })
+
+  test('N72: a session id the redaction would change is neither kept nor sent', () => {
+    const id = 'token:abcdef0123456789abcd'
+    expect(parse(job({ sessionId: id })).sessionId).toBeUndefined()
+    const inv = BACKENDS.werkbank.build(wb({ isNew: false, sessionId: id }))
+    expect(inv.argv).not.toContain('--session')
+    expect(inv.sessionArg).toBeUndefined()
+    expect(parse(job({ sessionId: 'fsn1-5:9b1f' })).sessionId).toBe('fsn1-5:9b1f')
+  })
+
   test('error messages are redacted', () => {
     const o = parse({ error: { kind: 'auth', message: 'Authorization: Bearer abcdef0123456789abcdef' } }, 2)
     expect(o.error?.message).not.toContain('abcdef0123456789abcdef')
@@ -639,6 +668,18 @@ describe('werkbank: write check and rules', () => {
       undefined,
       'ok',
     ])
+  })
+
+  test('N70: only an END of the open kind closes the key', () => {
+    const f = privateKeyFilter()
+    const lines = ['-----BEGIN RSA PRIVATE KEY-----', 'firstBodyLine', '-----END EC PRIVATE KEY-----', 'stillBody', '-----END RSA PRIVATE KEY-----', 'after']
+    expect(lines.map(f)).toEqual([REDACTED_KEY_LINE, undefined, undefined, undefined, undefined, 'after'])
+    // a mismatched END on the opening line leaves the key open
+    const g = privateKeyFilter()
+    expect(['x -----BEGIN RSA PRIVATE KEY-----a-----END EC PRIVATE KEY-----', 'body'].map(g)).toEqual([REDACTED_KEY_LINE, undefined])
+    // an END without a BEGIN changes nothing
+    const h = privateKeyFilter()
+    expect(['-----END RSA PRIVATE KEY-----', 'next'].map(h)).toEqual(['-----END RSA PRIVATE KEY-----', 'next'])
   })
 
   test('werkbank ignores effort and isolation, nothing else', () => {

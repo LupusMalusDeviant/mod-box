@@ -356,14 +356,20 @@ export function remoteWriteCheck(
 // slip past `redact` one line at a time. This filter drops every line from a
 // BEGIN … PRIVATE KEY line through its END line and marks the block once;
 // without an END it drops the rest of the run (contract 0001, N51).
-const KEY_MARKER = /-----(BEGIN|END) [A-Z0-9 ]*PRIVATE KEY-----/g
+const KEY_MARKER = /-----(BEGIN|END) ([A-Z0-9 ]*)PRIVATE KEY-----/g
 export const REDACTED_KEY_LINE = '[redacted private key]'
 export function privateKeyFilter(): (line: string) => string | undefined {
-  let isInKey = false
+  // the kind of the open key (RSA, OPENSSH, EC, '' …); undefined: none open
+  let openKind: string | undefined
   return line => {
-    const wasInKey = isInKey
-    // every marker of the line, in order (N62)
-    for (const m of line.matchAll(KEY_MARKER)) isInKey = m[1] === 'BEGIN'
+    const wasInKey = openKind !== undefined
+    // every marker of the line, in order (N62); only an END of the same kind
+    // closes the open key (N70)
+    for (const m of line.matchAll(KEY_MARKER)) {
+      if (openKind === undefined) { if (m[1] === 'BEGIN') openKind = m[2] }
+      else if (m[1] === 'END' && m[2] === openKind) openKind = undefined
+    }
+    const isInKey = openKind !== undefined
     // a line inside a key is dropped, whatever it ends with
     if (wasInKey) return undefined
     // a key opens and stays open: the line is marked, the rest dropped

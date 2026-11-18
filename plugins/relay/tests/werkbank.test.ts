@@ -384,3 +384,55 @@ describe('werkbank, Nachtrag 2b (second Codex review)', () => {
     expect(w.submitted[0]).toContain('with a drive or a UNC share')
   })
 })
+
+describe('werkbank, Nachtrag 2c (third Codex review)', () => {
+  test('N68: a finished run never writes over the live.log of the next run of its role', { options: WB }, async ($: any, on: any) => {
+    const w = world(on)
+    w.play('ok', 'held')
+    if (!(await w.start($))) return
+    await w.send($, { role: 'coder', task: 'one' })
+    await w.send($, { role: 'coder', task: 'two' })
+    await w.until(() => w.heldCount() === 1 && (w.files.get('.relay/runs/coder/live.log') ?? '').includes('run 2'))
+    // the first run's 2-second write would be due now
+    await w.clock.advance(5000)
+    await w.until(() => false, 30)
+    const live = w.files.get('.relay/runs/coder/live.log')!
+    expect(live).toContain('coder · run 2')
+    expect(live).not.toContain('coder · run 1')
+    w.releaseHeld()
+    await w.until(() => w.submitted.length === 2)
+    expect(w.files.get('.relay/runs/coder/live.log')).toContain('# finished')
+  })
+
+  test('N69: an error field that is no object turns done into partial', { options: WB }, async ($: any, on: any) => {
+    const w = world(on)
+    w.play('error-malformed')
+    if (!(await w.start($))) return
+    await w.send($, { role: 'coder', task: 't' })
+    await w.until(() => w.submitted.length === 1)
+    expect(w.submitted[0]).toContain('Status: partial')
+    expect(w.submitted[0]).toContain('werkbank-relay reported an error (cli): werkbank-relay sent a malformed error field')
+  })
+
+  test('N71: killed before the JSON names the signal, not "could not start"', { options: WB }, async ($: any, on: any) => {
+    const w = world(on)
+    w.play('killed-early')
+    if (!(await w.start($))) return
+    await w.send($, { role: 'coder', task: 't' })
+    await w.until(() => w.submitted.length === 1)
+    expect(w.submitted[0]).toContain('ended by signal SIGTERM')
+    expect(w.submitted[0]).not.toContain('could not start')
+  })
+
+  test('N72: a session id that looks like a credential is neither kept nor sent', { options: WB }, async ($: any, on: any) => {
+    const w = world(on)
+    w.play('session-token', 'ok')
+    if (!(await w.start($))) return
+    await w.send($, { role: 'coder', task: 'one' })
+    await w.until(() => w.submitted.length === 1)
+    await w.send($, { role: 'coder', task: 'two' })
+    await w.until(() => w.submitted.length === 2)
+    expect(w.spawns[1]!.argv).not.toContain('--session')
+    expect(w.submitted.join('\n')).not.toContain('abcdef0123456789abcd')
+  })
+})

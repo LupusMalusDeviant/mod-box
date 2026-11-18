@@ -509,6 +509,10 @@ const werkbankList = (flag: string, what: string, list: readonly string[]) =>
 
 const COMMIT_ID = /^[0-9a-f]{7,64}$/i
 
+// A werkbank session id safe as an argument value and nothing the redaction
+// would touch: never stored from a reply, never sent on resume (N72).
+export const isSafeSession = (id: string) => isSafeId(id) && redact(id) === id
+
 const werkbank: Backend = {
   id: 'werkbank',
   capabilities: { budgetUsd: false, presetSessionId: false, inProcessOwnsGuard: false, sandbox: false, usage: 'both', streamsEvents: true },
@@ -533,7 +537,7 @@ const werkbank: Backend = {
     }
     // The protocol never goes into argv: it is a file at an absolute path (N31).
     const path = `${s.tmpDir.replace(/[\\/]+$/, '')}/${spec.role}-${spec.run}.protocol.md`
-    const sessionId = !spec.isNew && spec.sessionId && isSafeId(spec.sessionId) ? spec.sessionId : undefined
+    const sessionId = !spec.isNew && spec.sessionId && isSafeSession(spec.sessionId) ? spec.sessionId : undefined
     const timeoutMin = s.runTimeoutMin ?? 0
     const argv = [
       ...spec.bin,
@@ -570,7 +574,9 @@ const werkbank: Backend = {
     if (!json) {
       // A run relay stopped prints nothing; the timeout says enough.
       if (r.isTimedOut) return { answer: '', usage: {} }
-      return { answer: '', usage: {}, error: { kind: 'cli', message: cut(r.stderr.trim() || 'werkbank-relay printed no JSON') } }
+      // a signal or a broken stream is named as such, not as stderr (N71)
+      const cause = r.exitCode === undefined && (r.signal || r.streamError) ? cliFailure(r) : undefined
+      return { answer: '', usage: {}, error: cause ?? { kind: 'cli', message: cut(r.stderr.trim() || 'werkbank-relay printed no JSON') } }
     }
     const u = obj(json.usage)
     const usage = clean({
@@ -580,8 +586,12 @@ const werkbank: Backend = {
       outputTokens: num(u.outputTokens),
       model: str(u.model),
     })
-    const e = json.error && typeof json.error === 'object' ? obj(json.error) : undefined
-    const kind = e ? (WERKBANK_ERRORS[str(e.kind) ?? ''] ?? 'unknown') : undefined
+    const e = json.error && typeof json.error === 'object' && !Array.isArray(json.error) ? obj(json.error) : undefined
+    // an error that is there but no object is a protocol failure (N69)
+    const isErrorMalformed = json.error !== undefined && json.error !== null && !e
+    // only the table's own keys count, anything else is unknown (N69)
+    const errKind = str(e?.kind) ?? ''
+    const kind = e ? (Object.prototype.hasOwnProperty.call(WERKBANK_ERRORS, errKind) ? WERKBANK_ERRORS[errKind] : 'unknown') : undefined
     const errText = e ? cut(str(e.message) || `werkbank error (${str(e.kind) ?? 'unknown'})`) : undefined
     const sid = str(json.sessionId)
     const jobId = str(json.jobId)
@@ -626,7 +636,8 @@ const werkbank: Backend = {
     const answer = str(json.answer) ?? ''
     const isPartialState = !!remote && state !== 'done' && !WERKBANK_FAILED_STATES.includes(state)
     const jsonError: RunError | undefined = kind && errText && !isPartialState ? { kind, message: errText } : undefined
-    let error: RunError | undefined = jsonError ?? cliFailure(r)
+    let error: RunError | undefined =
+      jsonError ?? (isErrorMalformed ? { kind: 'cli', message: 'werkbank-relay sent a malformed error field' } : undefined) ?? cliFailure(r)
     if (!error && remote && state === 'done' && r.exitCode !== 0 && !r.isTimedOut) {
       error = { kind: 'cli', message: 'werkbank-relay ended without an exit code' }
     }
@@ -637,7 +648,7 @@ const werkbank: Backend = {
     }
     return {
       answer,
-      ...(sid && isSafeId(sid) ? { sessionId: sid } : {}),
+      ...(sid && isSafeSession(sid) ? { sessionId: sid } : {}),
       usage,
       ...(error ? { error } : {}),
       ...(remote ? { remote } : {}),

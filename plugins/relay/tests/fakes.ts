@@ -54,6 +54,12 @@ export type Scenario =
   | 'signal-after-done'
   // werkbank-relay: commits with entries that are no commit ids
   | 'bad-commits'
+  // werkbank-relay: a done job whose error field is a string, not an object
+  | 'error-malformed'
+  // werkbank-relay: progress on stderr, then killed before any JSON
+  | 'killed-early'
+  // werkbank-relay: a session id that looks like a credential
+  | 'session-token'
 
 export type Call = { argv: string[]; cwd?: string; env: Record<string, string>; input?: string; attachment?: string; protocolFile?: string }
 
@@ -64,6 +70,8 @@ export const KEY_BODY = 'MIIEexampleNotARealKeyBody0001'
 // What the fake werkbank-relay reports, so tests can change it per world.
 export const WERKBANK_JOB = 'wb-20261118-7'
 export const WERKBANK_COMMIT = 'abc1234def5678'
+// A made-up session id the redaction would change (no real token), for N72.
+export const WERKBANK_TOKEN_SESSION = 'token:abcdef0123456789abcd'
 
 // Placeholder credentials (no real ones) the leak scenarios put into every
 // output channel, in the forms relay redacts: Authorization header,
@@ -376,6 +384,10 @@ export function fakeWorld(
       if (scenario === 'error-repo') return yield* fail('repo', 'git@github.com:o/n.git is not in the repo list')
       if (scenario === 'error-budget') return yield* fail('budget', 'relay day budget used up (8 jobs)')
       if (scenario === 'not-json') return yield* out('Unhandled exception. System.Exception: boom\n', 1, 'boom\n')
+      if (scenario === 'killed-early') {
+        yield { stream: 'stderr', text: 'queued\n' }
+        return { value: { code: null, signal: 'SIGTERM' } }
+      }
       if (scenario === 'key-lines') yield { stream: 'stderr', text: `verifying\n${KEY_LINES[0]}\n${KEY_BODY}\n${KEY_LINES[1]}\nverify done\n` }
       if (scenario === 'progress-quiet') {
         yield { stream: 'stderr', text: 'queued\nrunning auf fsn1-5\n' }
@@ -406,13 +418,14 @@ export function fakeWorld(
         jobId: WERKBANK_JOB,
         state,
         answer: scenario === 'timed-out' || scenario === 'failed' ? '' : scenario === 'red-prose' ? 'Plain prose, no packet.' : answer,
-        sessionId: scenario === 'session-moved' ? 'fsn1-4:fresh2' : (arg('--session') ?? 'fsn1-5:9b1f'),
+        sessionId: scenario === 'session-moved' ? 'fsn1-4:fresh2' : scenario === 'session-token' ? WERKBANK_TOKEN_SESSION : (arg('--session') ?? 'fsn1-5:9b1f'),
         usage: { costUsd: 0.42, turns: 6, inputTokens: 12000, outputTokens: 3100, model: 'claude-opus-5-5' },
         branch: `agent/relay/${role}`,
         commits: scenario === 'failed' ? [] : scenario === 'bad-commits' ? [WERKBANK_COMMIT, `token=${SECRETS.token}`, 'nope'] : [WERKBANK_COMMIT],
         changedFiles: scenario === 'failed' ? [] : scenario === 'write-outside' ? ['src/a.ts', 'other/x.md'] : ['src/a.ts'],
         verify: { command: 'npm test', exitCode: isRed ? 1 : 0, tests: { total: 147, passed: isRed ? 145 : 147, failed: isRed ? 2 : 0 } },
         ...(error ? { error } : {}),
+        ...(scenario === 'error-malformed' ? { error: 'lost the Leitstand' } : {}),
       }
       if (scenario === 'signal-after-done') {
         yield { stream: 'stdout', text: JSON.stringify(json) }

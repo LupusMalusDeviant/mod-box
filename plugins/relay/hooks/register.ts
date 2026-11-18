@@ -886,16 +886,19 @@ async function start($: EngineInterface, job: QueuedJob, role: Role, run: number
             role.sessionDir = work.dir
             await save($)
           }
+          let sawOutput = false
           try {
             for (const f of inv.tempFiles ?? []) await $.fs.write(f.path, f.content)
-            await spawnRun($, id, eff.owns, work.dir, inv, backend.onLine?.bind(backend), proc, live)
+            sawOutput = (await spawnRun($, id, eff.owns, work.dir, inv, backend.onLine?.bind(backend), proc, live)).sawOutput
           } finally {
             // The task file never outlives its run, whatever ended it (N25),
             // and is checked again before it is cleared (N52).
             for (const f of inv.tempFiles ?? []) await clearTempFile($, f.path)
           }
           outcome = backend.parse(proc)
-          if (!outcome.answer.trim() && !proc.stdout.trim() && proc.exitCode === undefined && outcome.error?.kind === 'cli') {
+          // only when the child printed nothing and ended with neither exit
+          // code nor signal: it never ran (N71)
+          if (!outcome.answer.trim() && !sawOutput && proc.exitCode === undefined && !proc.signal && outcome.error?.kind === 'cli') {
             outcome.error.message += ` · could not start ${inv.argv[0]}; set ${id}Bin to the full path of the executable`
           }
         }
@@ -959,6 +962,8 @@ async function spawnRun(
   let usage: Usage = {}
   let rest = ''
   let errRest = ''
+  // whether the child printed anything at all (N71)
+  let sawOutput = false
   try {
     for (;;) {
       const step = await child.next()
@@ -969,6 +974,7 @@ async function spawnRun(
         break
       }
       const chunk = step.value
+      if (chunk.text) sawOutput = true
       if (chunk.stream === 'stderr') {
         proc.stderr += chunk.text
         if (isLiveErr) {
@@ -998,10 +1004,13 @@ async function spawnRun(
   }
   if (isLiveErr ? errRest : rest) live.line(isLiveErr ? errRest : rest)
   timer?.cancel()
+  return { sawOutput }
 }
 
 // <relayDir>/runs/<role>/live.log: one readable line per event, written in
 // batches (the plugin API cannot append). Every line is redacted first.
+const liveChains = new Map<string, Promise<void>>()
+const liveOwners = new Map<string, number>()
 function liveLog($: EngineInterface, role: string, run: number, id: BackendId, isEnabled = true) {
   const path = relayPath(`runs/${role}/live.log`)
   const lines = [`# ${role} · run ${run} · ${id} · started ${new Date().toISOString()}`]
@@ -1010,28 +1019,34 @@ function liveLog($: EngineInterface, role: string, run: number, id: BackendId, i
   // Timed by the plugin's clock: at most every 2 seconds, and at the end.
   const now = () => $.clock.now().catch(() => Date.now())
   let flushedAt = 0
-  // Writes run one after another, each with the lines of its moment (N63).
-  let writing: Promise<void> = Promise.resolve()
-  const write = () => {
-    writing = writing.then(async () => {
-      if (!isEnabled) return
+  // The log belongs to the role's newest run: an older run never writes over
+  // it, and a closed run writes nothing more (N68).
+  liveOwners.set(role, run)
+  let isClosed = false
+  // Writes of all runs of a role run one after another, each with the lines
+  // of its moment (N63, N68).
+  const write = (isFinal = false) => {
+    const next = (liveChains.get(role) ?? Promise.resolve()).then(async () => {
+      if (!isEnabled || (isClosed && !isFinal) || liveOwners.get(role) !== run) return
       await $.fs.write(path, `${lines.join('\n')}\n`).catch(() => undefined)
     })
-    return writing
+    liveChains.set(role, next)
+    return next
   }
   // A line within the 2 seconds gets one write at their end, so progress
-  // never waits for the next line or the run's end (N63).
-  let isTrailing = false
+  // never waits for the next line or the run's end (N63); close cancels it.
+  let trailing: { cancel(): void } | undefined
   const flushSoon = async () => {
     const t = await now()
+    if (isClosed) return
     if (t - flushedAt >= 2000) {
       flushedAt = t
       return write()
     }
-    if (isTrailing) return
-    isTrailing = true
-    $.clock.after(flushedAt + 2000 - t, () => {
-      isTrailing = false
+    if (trailing) return
+    trailing = $.clock.after(flushedAt + 2000 - t, () => {
+      trailing = undefined
+      if (isClosed) return
       void now().then(at => {
         flushedAt = at
         return write()
@@ -1055,7 +1070,10 @@ function liveLog($: EngineInterface, role: string, run: number, id: BackendId, i
     async close(outcome: RunOutcome, proc: ProcessResult) {
       const state = proc.isTimedOut ? 'stopped (timeout)' : proc.isStoppedByLimit ? 'stopped (token limit)' : outcome.error ? `error: ${outcome.error.message}` : 'finished'
       lines.push(redact(`# ${state} · ${new Date().toISOString()}`))
-      await write()
+      isClosed = true
+      trailing?.cancel()
+      trailing = undefined
+      await write(true)
     },
   }
 }
