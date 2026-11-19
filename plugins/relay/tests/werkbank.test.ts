@@ -474,3 +474,55 @@ describe('werkbank, Nachtrag 2d (fourth Codex review)', () => {
     expect(w.submitted[1]).toContain('werkbank reported a session id relay does not keep; the next task for coder starts a fresh session.')
   })
 })
+
+describe('werkbank, Nachtrag 2e (fifth Codex review)', () => {
+  const running = (role: string, run: number) => ({
+    version: 1,
+    owner: { session: 'old', heartbeatAt: '1970-01-01T00:00:00.000Z' },
+    jobs: [{ id: 'j_1', role, task: 'was running', enqueuedAt: '1970-01-01T00:00:00.000Z', state: 'running', run, backend: 'werkbank' }],
+  })
+
+  test('N81: a queued role that leaves the temp folder is dropped; no file outside is cleared', { options: WB }, async ($: any, on: any) => {
+    // the fake file system does not resolve "..": the file sits where the bad path would land
+    const outside = '.relay/tmp/../../docs/release-3.protocol.md'
+    const w = world(on, { files: { '.relay/queue.json': JSON.stringify(running('../../docs/release', 3)), [outside]: 'KEEP' } })
+    await w.clock.set(10 * 60_000)
+    if (!(await w.start($))) return
+    await w.until(() => false, 30)
+    expect(w.files.get(outside)).toBe('KEEP')
+    expect(await w.status($)).toContain('relay left out 1 job(s) from the queue with an invalid role name or run number.')
+  })
+
+  test('N82: a werkbankBin that looks like a credential runs neither the job nor the version probe', { options: { ...WB, werkbankBin: '/opt/apikey=sample-secret/werkbank-relay' } }, async ($: any, on: any) => {
+    const w = world(on)
+    if (!(await w.start($))) return
+    await w.send($, { role: 'coder', task: 't' })
+    await w.until(() => w.submitted.length === 1)
+    expect(w.spawns).toHaveLength(0)
+    expect(w.runs.some((r: { argv: string[] }) => r.argv.join(' ').includes('sample-secret'))).toBe(false)
+    expect(w.submitted[0]).toContain('werkbankBin looks like it contains a credential')
+    expect(w.submitted[0]).not.toContain('sample-secret')
+  })
+
+  test('N83: JSON-escaped key markers in separate codex events keep the key out of live.log', { options: WB }, async ($: any, on: any) => {
+    const w = world(on)
+    w.play('key-escaped')
+    if (!(await w.start($))) return
+    await w.send($, { role: 'cx', task: 't', backend: 'codex' })
+    await w.until(() => w.submitted.length === 1)
+    const live = w.files.get('.relay/runs/cx/live.log')!
+    expect(live).not.toContain(KEY_BODY)
+    expect(live).toContain('[redacted private key]')
+  })
+
+  test('N86: an interrupted werkbank run says the write check is incomplete in its headline', { options: WB }, async ($: any, on: any) => {
+    const w = world(on, {
+      files: { '.relay/queue.json': JSON.stringify(running('coder', 3)) },
+      store: { 'roles:/w': { coder: { name: 'coder', runs: 3, isBusy: true } } },
+    })
+    await w.clock.set(10 * 60_000)
+    if (!(await w.start($))) return
+    await w.until(() => w.submitted.length === 1)
+    expect(w.submitted[0]).toContain('[relay] coder · run 3 interrupted (werkbank) ⚠ write check incomplete')
+  })
+})

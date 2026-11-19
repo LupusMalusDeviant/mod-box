@@ -515,6 +515,10 @@ const COMMIT_ID = /^[0-9a-f]{7,64}$/i
 // would touch: never stored from a reply, never sent on resume (N72).
 export const isSafeSession = (id: string) => isSafeId(id) && redact(id) === id
 
+// werkbankBin without anything the redaction would change: else neither a
+// run nor the version probe starts (N82).
+export const isWerkbankBinSafe = (bin: readonly string[]) => bin.every(p => redact(p) === p)
+
 const werkbank: Backend = {
   id: 'werkbank',
   capabilities: { budgetUsd: false, presetSessionId: false, inProcessOwnsGuard: false, sandbox: false, usage: 'both', streamsEvents: true },
@@ -567,6 +571,15 @@ const werkbank: Backend = {
       '--protocol-file',
       path,
     ]
+    // No argument that looks like a credential reaches werkbank-relay; only
+    // its field is named (N82).
+    if (!isWerkbankBinSafe(spec.bin)) throw new BuildError('werkbank: werkbankBin looks like it contains a credential; it is not passed on.', 'cli')
+    for (let i = spec.bin.length + 1; i < argv.length; i++) {
+      const flag = argv[i - 1]!
+      if (flag.startsWith('--') && redact(argv[i]!) !== argv[i]) {
+        throw new BuildError(`werkbank: a value for ${flag} looks like a credential; it is not passed on.`, 'cli')
+      }
+    }
     return { argv, input: spec.task, env: {}, tempFiles: [{ path, content: spec.protocol }], ...(sessionId ? { sessionArg: sessionId } : {}) }
   },
   parse(r) {
@@ -643,8 +656,19 @@ const werkbank: Backend = {
     const answer = str(json.answer) ?? ''
     const isPartialState = !!remote && state !== 'done' && !WERKBANK_FAILED_STATES.includes(state)
     const jsonError: RunError | undefined = kind && errText && !isPartialState ? { kind, message: errText } : undefined
-    let error: RunError | undefined =
-      jsonError ?? (isErrorMalformed ? { kind: 'cli', message: 'werkbank-relay sent a malformed error field' } : undefined) ?? cliFailure(r)
+    const fromJson = jsonError ?? (isErrorMalformed ? { kind: 'cli' as const, message: 'werkbank-relay sent a malformed error field' } : undefined)
+    // a signal or broken stream after a JSON error is kept beside it (N85)
+    const processFailure =
+      r.isTimedOut || r.isStoppedByLimit || r.exitCode !== undefined
+        ? undefined
+        : r.signal
+          ? `ended by signal ${r.signal}`
+          : r.streamError
+            ? `reading the output failed: ${r.streamError}`
+            : undefined
+    let error: RunError | undefined = fromJson
+      ? { kind: fromJson.kind, message: processFailure ? `${fromJson.message} · ${processFailure}` : fromJson.message }
+      : cliFailure(r)
     if (!error && remote && state === 'done' && r.exitCode !== 0 && !r.isTimedOut) {
       error = { kind: 'cli', message: 'werkbank-relay ended without an exit code' }
     }

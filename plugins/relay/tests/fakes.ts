@@ -64,6 +64,8 @@ export type Scenario =
   | 'status-array'
   // werkbank-relay: an answer with a key whose END is of another kind
   | 'key-mismatch'
+  // codex: key markers JSON-escaped, each in its own event, then an ok answer
+  | 'key-escaped'
 
 export type Call = { argv: string[]; cwd?: string; env: Record<string, string>; input?: string; attachment?: string; protocolFile?: string }
 
@@ -337,6 +339,12 @@ export function fakeWorld(
           await clock.sleep(1000)
           yield { stream: 'stdout', text: jsonl({ type: 'turn.completed', usage: { input_tokens: 9000, cached_input_tokens: 0, output_tokens: 1000, reasoning_output_tokens: 0 } }) }
         }
+      }
+      if (scenario === 'key-escaped') {
+        // the markers JSON-escaped (- for -), each in its own event
+        const esc = (s: string) => s.replace(/-/g, '\\u002d')
+        const ev = (id: string, text: string) => `{"type":"item.completed","item":{"id":"${id}","type":"agent_message","text":"${text}"}}`
+        yield { stream: 'stdout', text: `${ev('e1', esc(KEY_LINES[0]))}\n${ev('e2', KEY_BODY)}\n${ev('e3', esc(KEY_LINES[1]))}\n${ev('e4', 'after the key')}\n` }
       }
       if (scenario === 'key-lines') {
         yield {

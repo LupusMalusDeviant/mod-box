@@ -9,6 +9,7 @@ import {
   BACKENDS,
   CHECKED_VERSIONS,
   ignoredRules,
+  isWerkbankBinSafe,
   liveLine,
   majorOf,
   ollamaArgv,
@@ -28,6 +29,7 @@ import {
 import {
   applyWriteCheck,
   baseName,
+  eventTexts,
   compareSnapshots,
   extractSection,
   fallbackPrompt,
@@ -65,6 +67,7 @@ import {
   newJobId,
   newToken,
   parseQueue,
+  ROLE_NAME,
   serializeQueue,
   type QueueFile,
   type QueuedJob,
@@ -100,7 +103,6 @@ type Role = RoleDef & {
   totals?: Usage
 }
 
-const ROLE_NAME = /^[a-z0-9][a-z0-9_-]{0,31}$/
 
 const config = {
   claudeBin: 'claude',
@@ -524,9 +526,11 @@ async function tempFilesProblem($: EngineInterface, inv: Invocation): Promise<st
   return undefined
 }
 
+// Writes exactly the path it checked (N81).
 async function clearTempFile($: EngineInterface, path: string) {
-  if (await storageProblem($, tempRel(path))) return
-  await $.fs.write(path, '').catch(() => undefined)
+  const rel = tempRel(path)
+  if (await storageProblem($, rel)) return
+  await $.fs.write(rel, '').catch(() => undefined)
 }
 
 // The project's place in its repository, or undefined when git cannot say
@@ -1061,9 +1065,11 @@ function liveLog($: EngineInterface, role: string, run: number, id: BackendId, i
   return {
     line(raw: string) {
       if (id === 'claude') return
-      const kept = keyFilter(raw)
+      // the raw line and every decoded text of its event, before any cut (N83)
+      const seen = [raw, ...eventTexts(raw)].join('\n')
+      const kept = keyFilter(seen)
       if (kept === undefined) return
-      const text = kept === raw ? liveLine(id, raw) : kept
+      const text = kept === seen ? liveLine(id, raw) : kept
       if (!text) return
       lines.push(redact(text))
       void flushSoon()
@@ -1082,6 +1088,8 @@ function liveLog($: EngineInterface, role: string, run: number, id: BackendId, i
 async function checkVersion($: EngineInterface, id: BackendId) {
   if (versions[id] !== undefined) return
   versions[id] = ''
+  // a werkbankBin that looks like a credential is never run, not even for --version (N82)
+  if (id === 'werkbank' && !isWerkbankBinSafe(binOf(id))) return
   try {
     const r = await $.process.run(BACKENDS[id].versionArgv(binOf(id)), { timeoutMs: 15_000 })
     const v = versionOf(`${r.stdout} ${r.stderr}`)
@@ -1411,7 +1419,11 @@ async function reportInterrupted($: EngineInterface, job: QueuedJob): Promise<st
     const dir = eff.isolation === 'worktree' ? absolute(relayPath(`worktrees/${role.name}`)) : cwd
     applyWriteCheck(packet, await writeCheckOf($, eff.owns, dir, before, await gitStateOf($, dir)))
   }
-  const isDone = await deliver($, role, run, job, '', packet, `[relay] ${role.name} · run ${run} interrupted (${job.backend})`, { backend: job.backend, usage: {} })
+  // the headline marks the check like a live report does (N10, N86)
+  let head = `[relay] ${role.name} · run ${run} interrupted (${job.backend})`
+  if (packet.write_check?.outside.length) head += ` ⚠ wrote outside owns (${packet.write_check.outside.length})`
+  if (packet.write_check?.incomplete?.length) head += ' ⚠ write check incomplete'
+  const isDone = await deliver($, role, run, job, '', packet, head, { backend: job.backend, usage: {} })
   return isDone ? undefined : 'reporting failed (relay retries with the next heartbeat)'
 }
 
@@ -1536,6 +1548,7 @@ export const register: Register = (on, options) => {
     }
     if (loaded?.isBroken) notices.push(loaded.isFromBackup ? 'queue.json was broken; relay read queue.json.bak instead.' : 'queue.json was broken and had no usable backup; the queue starts empty.')
     else if (loaded?.isFromBackup) notices.push('queue.json was empty or missing; relay read queue.json.bak instead.')
+    if (loaded?.dropped) notices.push(`relay left out ${loaded.dropped} job(s) from the queue with an invalid role name or run number.`)
     if (loaded) adopt(loaded)
     else {
       queue = emptyQueue()

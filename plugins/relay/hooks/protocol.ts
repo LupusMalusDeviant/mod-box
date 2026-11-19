@@ -380,6 +380,27 @@ export function privateKeyFilter(): (line: string) => string | undefined {
   }
 }
 
+// Every string inside a JSON line, decoded (- → -); none for other
+// lines. The key filter reads them beside the raw line (N83).
+export function eventTexts(line: string): string[] {
+  const t = line.trim()
+  if (!t.startsWith('{') && !t.startsWith('[')) return []
+  let v: unknown
+  try {
+    v = JSON.parse(t)
+  } catch {
+    return []
+  }
+  const out: string[] = []
+  const walk = (x: unknown) => {
+    if (typeof x === 'string') out.push(x)
+    else if (Array.isArray(x)) x.forEach(walk)
+    else if (x && typeof x === 'object') Object.values(x).forEach(walk)
+  }
+  walk(v)
+  return out
+}
+
 // Folds a write check into the packet: writes outside `owns` turn done into
 // partial and land under risks; files the worker did not list are added; what
 // could not be checked is named.

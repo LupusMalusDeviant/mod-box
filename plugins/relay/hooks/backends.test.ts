@@ -736,6 +736,37 @@ describe('werkbank: write check and rules', () => {
     expect(applyWriteCheck(packet(), check).artifacts.map(a => a.path)).toEqual(['src/a\\b.ts'])
   })
 
+  test('N81: loading the queue drops jobs with an unsafe role or run, and counts them', () => {
+    const job = (role: string, run?: unknown) => ({ id: `j_${role}`, role, task: 't', enqueuedAt: 'x', state: 'running', ...(run !== undefined ? { run } : {}) })
+    const text = JSON.stringify({ version: 1, jobs: [job('../../docs/release', 3), job('ok', 0), job('ok2', 1.5), job('ok3', '2'), job('Good', 1), job('coder', 2), job('scout')] })
+    const l = loadQueue(text, undefined) as ReturnType<typeof loadQueue> & { dropped?: number }
+    expect(l.queue.jobs.map(j => j.role)).toEqual(['coder', 'scout'])
+    expect(l.dropped).toBe(5)
+  })
+
+  test('N82: no werkbank argument that looks like a credential, not even the bin', () => {
+    expect(refused(wb({ cwd: '/w/password=sample-secret' }))).toBe('cli: werkbank: a value for --cwd looks like a credential; it is not passed on.')
+    expect(refused(wb({ settings: { ...wbSettings, tmpDir: '/t/token=sample-secret/tmp' } }))).toBe(
+      'cli: werkbank: a value for --protocol-file looks like a credential; it is not passed on.',
+    )
+    expect(refused(wb({ bin: ['/opt/apikey=sample-secret/werkbank-relay'] }))).toBe('cli: werkbank: werkbankBin looks like it contains a credential; it is not passed on.')
+    expect(refused(wb())).toBe('built')
+  })
+
+  test('N83: a JSON line gives its decoded texts to the key filter', () => {
+    const texts = (protocol as Record<string, unknown>).eventTexts as ((l: string) => string[]) | undefined
+    expect(texts?.('{"a":"x\\u002dy","b":["z",{"c":"w"}],"n":1}')).toEqual(['x-y', 'z', 'w'])
+    expect(texts?.('plain text')).toEqual([])
+    expect(texts?.('{broken')).toEqual([])
+  })
+
+  test('N85: a JSON error keeps its kind and gets the signal or read error beside it', () => {
+    const base = { stdout: JSON.stringify({ error: { kind: 'auth', message: 'not authorized' } }), stderr: '', isTimedOut: false, isStoppedByLimit: false }
+    expect(BACKENDS.werkbank.parse({ ...base, signal: 'SIGTERM' }).error).toEqual({ kind: 'auth', message: 'not authorized · ended by signal SIGTERM' })
+    expect(BACKENDS.werkbank.parse({ ...base, streamError: 'EPIPE' }).error).toEqual({ kind: 'auth', message: 'not authorized · reading the output failed: EPIPE' })
+    expect(BACKENDS.werkbank.parse({ ...base, exitCode: 2 }).error).toEqual({ kind: 'auth', message: 'not authorized' })
+  })
+
   test('werkbank ignores effort and isolation, nothing else', () => {
     expect(ignoredRules('werkbank', { effort: 'high', allowedTools: ['Read'], disallowedTools: ['WebFetch'], isolation: 'worktree' })).toEqual(['effort', 'isolation'])
     expect(ignoredRules('werkbank', { effort: '', allowedTools: ['Read'], disallowedTools: [], isolation: 'shared' })).toEqual([])
