@@ -357,20 +357,70 @@ export function remoteWriteCheck(
 // slip past `redact` one line at a time. This filter drops every line from a
 // BEGIN … PRIVATE KEY line through its END line and marks the block once;
 // without an END it drops the rest of the run (contract 0001, N51).
-// a hyphen as itself or JSON-escaped (-), N87
-const KEY_MARKER = /(?:-|\\u002[dD]){5}(BEGIN|END) ([A-Z0-9 ]*)PRIVATE KEY(?:-|\\u002[dD]){5}/g
+const KEY_MARKER = /-----(BEGIN|END) ([A-Z0-9 ]*)PRIVATE KEY-----/g
 export const REDACTED_KEY_LINE = '[redacted private key]'
+
+// A reading of the text with JSON escapes resolved (\uXXXX, \n, \" …), up to
+// three levels deep, and for each of its characters where it starts in the
+// original; map[decoded.length] is text.length (N94).
+const SIMPLE_ESCAPES: Record<string, string> = { n: '\n', r: '\r', t: '\t', b: '\b', f: '\f', '"': '"', '\\': '\\', '/': '/' }
+function decodeOnce(text: string): { decoded: string; map: number[] } {
+  let decoded = ''
+  const map: number[] = []
+  for (let i = 0; i < text.length; ) {
+    if (text[i] === '\\') {
+      const u = /^u([0-9a-fA-F]{4})/.exec(text.slice(i + 1, i + 6))
+      if (u) {
+        decoded += String.fromCharCode(parseInt(u[1]!, 16))
+        map.push(i)
+        i += 6
+        continue
+      }
+      const s = SIMPLE_ESCAPES[text[i + 1] ?? '']
+      if (s !== undefined) {
+        decoded += s
+        map.push(i)
+        i += 2
+        continue
+      }
+    }
+    decoded += text[i]
+    map.push(i)
+    i++
+  }
+  map.push(text.length)
+  return { decoded, map }
+}
+export function decodedView(text: string): { decoded: string; map: number[] } {
+  let view = { decoded: text, map: [...Array(text.length + 1).keys()] }
+  for (let level = 0; level < 3 && view.decoded.includes('\\'); level++) {
+    const next = decodeOnce(view.decoded)
+    if (next.decoded === view.decoded) break
+    view = { decoded: next.decoded, map: next.map.map(j => view.map[j]!) }
+  }
+  return view
+}
+
+// The kind of key left open after the markers of `text` (read decoded),
+// starting from `openKind`; only an END of the same kind closes (N62, N70, N94).
+export function keyStateAfter(text: string, openKind: string | undefined): string | undefined {
+  // no marker can hide in a text without PRIVATE or an escape
+  if (!/PRIVATE|\\u/i.test(text)) return openKind
+  for (const m of decodedView(text).decoded.matchAll(KEY_MARKER)) {
+    if (openKind === undefined) {
+      if (m[1] === 'BEGIN') openKind = m[2]
+    } else if (m[1] === 'END' && m[2] === openKind) openKind = undefined
+  }
+  return openKind
+}
+
 export function privateKeyFilter(): (line: string) => string | undefined {
   // the kind of the open key (RSA, OPENSSH, EC, '' …); undefined: none open
   let openKind: string | undefined
   return line => {
     const wasInKey = openKind !== undefined
-    // every marker of the line, in order (N62); only an END of the same kind
-    // closes the open key (N70)
-    for (const m of line.matchAll(KEY_MARKER)) {
-      if (openKind === undefined) { if (m[1] === 'BEGIN') openKind = m[2] }
-      else if (m[1] === 'END' && m[2] === openKind) openKind = undefined
-    }
+    // every marker of the line, in order, also when escaped (N62, N70, N94)
+    openKind = keyStateAfter(line, openKind)
     const isInKey = openKind !== undefined
     // a line inside a key is dropped, whatever it ends with
     if (wasInKey) return undefined
@@ -466,12 +516,6 @@ function redactKeyValue(match: string, name: string, sep: string, value: string)
 // packets, notices): replaced before they leave relay (contract 0001,
 // Nachtrag 1). Best effort by shape; it never makes text longer to read.
 const SECRET_PATTERNS: [RegExp, string | ((...args: string[]) => string)][] = [
-  // a key ends only at the END of its own kind, else at the end of the text (N74)
-  // hyphens JSON-escaped (-) count as well (N87)
-  [
-    /(?:-|\\u002[dD]){5}BEGIN ([A-Z0-9 ]*)PRIVATE KEY(?:-|\\u002[dD]){5}[\s\S]*?(?:(?:-|\\u002[dD]){5}END \1PRIVATE KEY(?:-|\\u002[dD]){5}|$)/g,
-    `${SECRET} private key`,
-  ],
   // `Authorization: Bearer x`, `Proxy-Authorization: Basic x`
   [/\b((?:proxy-)?authorization)(\s*[:=]\s*)(?:(bearer|basic|token|digest)\s+)?[^\s"'\\,;]+/gi, `$1$2$3 ${SECRET}`],
   [/\b(bearer|basic)\s+[A-Za-z0-9._~+/=-]{8,}/gi, `$1 ${SECRET}`],
@@ -490,20 +534,44 @@ const SECRET_PATTERNS: [RegExp, string | ((...args: string[]) => string)][] = [
   [/\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}/g, SECRET],
 ]
 
-export function redact(text: string): string {
+// A private key ends only at the END of its own kind, else at the end of the
+// text (N74). It is looked for in the decoded reading, whatever is escaped,
+// and cut from the original (N94).
+const PEM_BLOCK = /-----BEGIN ([A-Z0-9 ]*)PRIVATE KEY-----[\s\S]*?(?:-----END \1PRIVATE KEY-----|$)/g
+function redactKeys(text: string): string {
+  if (!/PRIVATE|\\u/i.test(text)) return text
+  const { decoded, map } = decodedView(text)
+  const spans = [...decoded.matchAll(PEM_BLOCK)].map(m => [map[m.index!]!, map[m.index! + m[0].length]!] as const)
   let out = text
+  for (const [from, to] of spans.reverse()) out = `${out.slice(0, from)}${SECRET} private key${out.slice(to)}`
+  return out
+}
+
+export function redact(text: string): string {
+  let out = redactKeys(text)
   for (const [re, by] of SECRET_PATTERNS) out = typeof by === 'string' ? out.replace(re, by) : out.replace(re, by)
   return out
 }
 
-// Every string in a value, redacted (packets, usage, write checks).
+// Every string in a value, redacted (packets, usage, write checks). The
+// strings are read in order like one stream: a key opened in one and not
+// closed hides the next ones through the one with its END (N95).
 export function redactDeep<T>(value: T): T {
-  if (typeof value === 'string') return redact(value) as T
-  if (Array.isArray(value)) return value.map(v => redactDeep(v)) as T
-  if (value && typeof value === 'object') {
-    return Object.fromEntries(Object.entries(value as Record<string, unknown>).map(([k, v]) => [k, redactDeep(v)])) as T
+  let openKind: string | undefined
+  const walk = (v: unknown): unknown => {
+    if (typeof v === 'string') {
+      if (openKind !== undefined) {
+        openKind = keyStateAfter(v, openKind)
+        return REDACTED_KEY_LINE
+      }
+      openKind = keyStateAfter(v, undefined)
+      return redact(v)
+    }
+    if (Array.isArray(v)) return v.map(walk)
+    if (v && typeof v === 'object') return Object.fromEntries(Object.entries(v as Record<string, unknown>).map(([k, x]) => [k, walk(x)]))
+    return v
   }
-  return value
+  return walk(value) as T
 }
 
 // "a, b  c" or a list → ["a", "b", "c"]; tool rules with spaces stay whole

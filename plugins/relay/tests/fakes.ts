@@ -71,6 +71,11 @@ export type Scenario =
   | 'key-escaped-stderr'
   // werkbank-relay: a failed job (repo error), then killed by SIGTERM
   | 'failed-signal'
+  // werkbank-relay: a whole key in one stderr JSON line, a letter of its
+  // markers escaped (BEGIN), then exit 1 without JSON on stdout
+  | 'key-letter-stderr'
+  // werkbank-relay: a packet whose risks hold a key's start, body and end
+  | 'key-split-risks'
 
 export type Call = { argv: string[]; cwd?: string; env: Record<string, string>; input?: string; attachment?: string; protocolFile?: string }
 
@@ -410,6 +415,11 @@ export function fakeWorld(
         yield { stream: 'stderr', text: `{"level":"error","detail":"${esc(KEY_LINES[0])}\\n${KEY_BODY}\\n${esc(KEY_LINES[1])}"}\n` }
         return { value: { code: 1, signal: null } }
       }
+      if (scenario === 'key-letter-stderr') {
+        const esc = (s: string) => s.replace('BEGIN', '\\u0042EGIN').replace('END', '\\u0045ND')
+        yield { stream: 'stderr', text: `{"level":"error","detail":"${esc(KEY_LINES[0])}\\n${KEY_BODY}\\n${esc(KEY_LINES[1])}"}\n` }
+        return { value: { code: 1, signal: null } }
+      }
       if (scenario === 'failed-signal') {
         yield { stream: 'stdout', text: JSON.stringify({ jobId: WERKBANK_JOB, state: 'failed', answer: '', sessionId: 'fsn1-5:9b1f', branch: `agent/relay/${role}`, commits: [], changedFiles: [], error: { kind: 'repo', message: 'the repo is gone' } }) }
         return { value: { code: null, signal: 'SIGTERM' } }
@@ -456,7 +466,9 @@ export function fakeWorld(
                 ? ['## Work', '```relay', JSON.stringify({ status: ['done'], summary: 'Did it.', sections: ['Work'] }), '```'].join('\n')
                 : scenario === 'key-mismatch'
                   ? [MISMATCHED_KEY, PACKET()].join('\n')
-                  : answer,
+                  : scenario === 'key-split-risks'
+                    ? ['## Work', '```relay', JSON.stringify({ status: 'done', summary: 'Did it.', risks: [KEY_LINES[0], KEY_BODY, KEY_LINES[1], 'nothing else'], sections: ['Work'] }), '```'].join('\n')
+                    : answer,
         sessionId: scenario === 'session-moved' ? 'fsn1-4:fresh2' : scenario === 'session-token' ? WERKBANK_TOKEN_SESSION : (arg('--session') ?? 'fsn1-5:9b1f'),
         usage: { costUsd: 0.42, turns: 6, inputTokens: 12000, outputTokens: 3100, model: 'claude-opus-5-5' },
         branch: `agent/relay/${role}`,

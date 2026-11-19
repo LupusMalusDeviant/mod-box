@@ -579,3 +579,77 @@ describe('werkbank, Nachtrag 2f (sixth Codex review)', () => {
     expect(w.submitted[0]).toContain(`${head} · delivered after a restart`)
   })
 })
+
+describe('werkbank, Nachtrag 2g (seventh Codex review)', () => {
+  test('N94: a key with an escaped letter in its markers reaches neither live.log nor the error', { options: WB }, async ($: any, on: any) => {
+    const w = world(on)
+    w.play('key-letter-stderr')
+    if (!(await w.start($))) return
+    await w.send($, { role: 'coder', task: 't' })
+    await w.until(() => w.submitted.length === 1)
+    expect(w.submitted[0]).not.toContain(KEY_BODY)
+    expect(w.files.get('.relay/runs/coder/live.log')).not.toContain(KEY_BODY)
+    expect(w.files.get('.relay/runs/coder/001.packet.json')).not.toContain(KEY_BODY)
+  })
+
+  test('N95: a key split over three risks entries reaches neither packet.json nor the message', { options: WB }, async ($: any, on: any) => {
+    const w = world(on)
+    w.play('key-split-risks')
+    if (!(await w.start($))) return
+    await w.send($, { role: 'coder', task: 't' })
+    await w.until(() => w.submitted.length === 1)
+    expect(w.submitted[0]).not.toContain(KEY_BODY)
+    expect(w.files.get('.relay/runs/coder/001.packet.json')).not.toContain(KEY_BODY)
+    expect(w.submitted[0]).toContain('nothing else')
+  })
+
+  test('N96: a live.log turned into a link after its last flush is still named in the report', { options: { ...WB, maxParallel: 1 } }, async ($: any, on: any) => {
+    const w = world(on)
+    w.play('progress-held')
+    if (!(await w.start($))) return
+    await w.send($, { role: 'coder', task: 'long' })
+    await w.clock.advance(5000)
+    await w.until(() => (w.files.get('.relay/runs/coder/live.log') ?? '').includes('running auf fsn1-5'))
+    w.links.set('.relay/runs/coder/live.log', '/etc/cron.d/x')
+    w.releaseHeld()
+    await w.until(() => w.submitted.length === 1)
+    expect(w.submitted[0]).toContain('live.log was not written: .relay/runs/coder/live.log resolves to /etc/cron.d/x')
+  })
+
+  const storedJob = (run: number) => ({
+    version: 1,
+    owner: { session: 'old', heartbeatAt: '1970-01-01T00:00:00.000Z' },
+    jobs: [{ id: 'j_1', role: 'coder', task: 't', enqueuedAt: '1970-01-01T00:00:00.000Z', state: 'running', run, backend: 'werkbank', delivery: 'stored' }],
+  })
+  const laterPacket = { run: 2, backend: 'werkbank', usage: {}, head: '[relay] coder · run 2 finished (werkbank)', status: 'done', summary: 'run two did it', decisions: [], facts: [], artifacts: [], open_questions: [], needs_from_main: [], risks: [], next_suggested: [], sections: [] }
+
+  test('N97: a slot taken by a later run is not delivered as the earlier one', { options: { ...WB, keepRuns: 1 } }, async ($: any, on: any) => {
+    const w = world(on, {
+      files: { '.relay/queue.json': JSON.stringify(storedJob(1)), '.relay/runs/coder/001.packet.json': JSON.stringify(laterPacket), '.relay/runs/coder/001.full.md': '# coder · run 2' },
+      store: { 'roles:/w': { coder: { name: 'coder', runs: 2, isBusy: false } } },
+    })
+    await w.clock.set(10 * 60_000)
+    if (!(await w.start($))) return
+    await w.until(() => w.submitted.length === 1)
+    expect(w.submitted[0]).not.toContain('run two did it')
+    expect(w.submitted[0]).toContain('run 1 interrupted')
+    expect(w.submitted[0]).toContain('the stored report was overwritten by a later run (keepRuns)')
+  })
+
+  test('N97: the kept message of the run is delivered, then cleared', { options: { ...WB, keepRuns: 1 } }, async ($: any, on: any) => {
+    const message = '[relay] coder · run 1 finished (werkbank)\nStatus: done\nrun one did it'
+    const w = world(on, {
+      files: {
+        '.relay/queue.json': JSON.stringify(storedJob(1)),
+        '.relay/runs/coder/001.packet.json': JSON.stringify(laterPacket),
+        '.relay/runs/coder/undelivered-1.md': message,
+      },
+      store: { 'roles:/w': { coder: { name: 'coder', runs: 2, isBusy: false } } },
+    })
+    await w.clock.set(10 * 60_000)
+    if (!(await w.start($))) return
+    await w.until(() => w.submitted.length === 1)
+    expect(w.submitted[0]).toContain('run one did it')
+    expect(w.files.get('.relay/runs/coder/undelivered-1.md')).toBe('')
+  })
+})

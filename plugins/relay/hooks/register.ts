@@ -379,6 +379,11 @@ function runPath(role: string, run: number, kind: 'full.md' | 'packet.json') {
   return relayPath(`runs/${role}/${String(slotOf(run)).padStart(3, '0')}.${kind}`)
 }
 
+// Not rotated: one file per run whose message waits for delivery (N97).
+function undeliveredPath(role: string, run: number) {
+  return relayPath(`runs/${role}/undelivered-${run}.md`)
+}
+
 function isRotatedOut(role: Role, run: number) {
   return config.keepRuns > 0 && run <= role.runs - config.keepRuns
 }
@@ -921,10 +926,11 @@ async function start($: EngineInterface, job: QueuedJob, role: Role, run: number
     running--
     try {
       // the log's own writes may still be queued: let them run first (N88)
-      await live.settle()
+      // live.log is finished, its end line written, before the report goes;
+      // a problem with it is still in the report (N88, N96)
+      await live.close(outcome, proc)
       if (live.problem) notes.push(`live.log was not written: ${live.problem}`)
       await finish($, { role, run, job, id, model: model || outcome.usage.model || '', outcome, proc, check, work, notes, notStarted, presetSessionId: inv?.presetSessionId, passedSessionId })
-      await live.close(outcome, proc)
     } catch (err) {
       // The report itself failed: free the role, keep the job, which the
       // next start reports as interrupted.
@@ -1088,7 +1094,6 @@ function liveLog($: EngineInterface, role: string, run: number, id: BackendId, i
     get problem() {
       return problem
     },
-    settle: () => (liveChains.get(role) ?? Promise.resolve()).catch(() => undefined),
     async close(outcome: RunOutcome, proc: ProcessResult) {
       const state = proc.isTimedOut ? 'stopped (timeout)' : proc.isStoppedByLimit ? 'stopped (token limit)' : outcome.error ? `error: ${outcome.error.message}` : 'finished'
       lines.push(redact(`# ${state} · ${new Date().toISOString()}`))
@@ -1315,7 +1320,17 @@ async function finish($: EngineInterface, r: RunResult) {
 
 // A run's report on its way: its files, then its notification. The job
 // leaves the queue only when both went through (N15).
-type Delivery = { role: Role; run: number; job: QueuedJob; files: [string, string][]; text: string; status: Packet['status']; isStored: boolean }
+type Delivery = {
+  role: Role
+  run: number
+  job: QueuedJob
+  files: [string, string][]
+  text: string
+  status: Packet['status']
+  isStored: boolean
+  // undelivered-<run>.md holds the message until it is delivered (N97)
+  hasUndelivered?: boolean
+}
 const pendingDeliveries: Delivery[] = []
 
 // Stores the run's files, updates the role and reports; true once the job
@@ -1372,6 +1387,9 @@ async function attemptDelivery($: EngineInterface, d: Delivery): Promise<boolean
         d.text += `\nNot stored: ${escape}.`
       } else {
         for (const [path, text] of d.files) await $.fs.write(path, text)
+        // the message itself, outside the rotation, until it is delivered (N97)
+        await $.fs.write(undeliveredPath(d.role.name, d.run), d.text)
+        d.hasUndelivered = true
       }
       d.isStored = true
       // Durable: a restart now delivers the stored packet, not "interrupted".
@@ -1387,6 +1405,10 @@ async function attemptDelivery($: EngineInterface, d: Delivery): Promise<boolean
       )
     }
     return false
+  }
+  // delivered: the kept message is cleared, checked like any relay file (N97)
+  if (d.hasUndelivered && !(await storageProblem($, undeliveredPath(d.role.name, d.run)))) {
+    await $.fs.write(undeliveredPath(d.role.name, d.run), '').catch(() => undefined)
   }
   const i = pendingDeliveries.indexOf(d)
   if (i >= 0) pendingDeliveries.splice(i, 1)
@@ -1414,10 +1436,33 @@ function storedHeadOf(text: string, role: string, run: number): string | undefin
   }
 }
 
+// Whether packet.json is the envelope of this run on this backend (N97).
+function isEnvelopeOf(text: string, run: number, backend: BackendId): boolean {
+  try {
+    const v = JSON.parse(text) as { run?: unknown; backend?: unknown }
+    return v.run === run && v.backend === backend
+  } catch {
+    return false
+  }
+}
+
 async function deliverStored($: EngineInterface, job: QueuedJob): Promise<string | undefined> {
   const role = roles[job.role]
   const run = job.run ?? 0
+  // the kept message first: it is this run's own, whatever rotated (N97)
+  const kept = role && !(await storageProblem($, undeliveredPath(role.name, run)))
+    ? String(await $.fs.read(undeliveredPath(role.name, run)).catch(() => ''))
+    : ''
+  if (role && kept.trim()) {
+    const status = (/Status: (done|partial|blocked|failed)\b/.exec(kept)?.[1] ?? 'partial') as Packet['status']
+    const d: Delivery = { role, run, job, files: [], text: redact(kept), status, isStored: true, hasUndelivered: true }
+    return (await attemptDelivery($, d)) ? undefined : 'reporting failed (the stored packet could not be delivered)'
+  }
   const text = role ? String(await $.fs.read(runPath(job.role, run, 'packet.json')).catch(() => '')) : ''
+  // packet.json only when it is this run's: a later run may have taken its slot (N97)
+  if (role && text.trim() && !isEnvelopeOf(text, run, job.backend)) {
+    return reportInterrupted($, job, 'the stored report was overwritten by a later run (keepRuns)')
+  }
   const stored = role ? parsePacket(text) : undefined
   if (!role || !stored) return reportInterrupted($, job)
   // the stored headline with its warnings, else the plain one (N92)
@@ -1431,7 +1476,7 @@ async function deliverStored($: EngineInterface, job: QueuedJob): Promise<string
 // as failed, with the write check against its snapshot, and never restart it.
 // Returns why it could not be reported yet, or undefined once it was (the job
 // then left the queue).
-async function reportInterrupted($: EngineInterface, job: QueuedJob): Promise<string | undefined> {
+async function reportInterrupted($: EngineInterface, job: QueuedJob, note?: string): Promise<string | undefined> {
   const defs = await loadRoleDefs($)
   let role = roles[job.role]
   if (!role && defs[job.role]) role = roles[job.role] = { name: job.role, runs: job.run ?? 0, isBusy: false }
@@ -1440,6 +1485,7 @@ async function reportInterrupted($: EngineInterface, job: QueuedJob): Promise<st
   role.runs = Math.max(role.runs, run)
   const eff = effective(role, defs[role.name])
   const packet = failedPacket('Interrupted: the plugin was reloaded or the session ended while this run was working. It was not restarted.')
+  if (note) packet.risks.push(note)
   if (config.writeCheck === 'report' && job.backend === 'werkbank') {
     // No local snapshot exists; the job may still run on the server (N53).
     applyWriteCheck(packet, notChecked(`the werkbank job may still be running on the server; its changes would be on agent/relay/${role.name}`))
