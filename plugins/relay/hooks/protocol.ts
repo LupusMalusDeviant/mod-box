@@ -118,7 +118,8 @@ export function parsePacket(text: string): Packet | undefined {
 function normalise(value: unknown): Packet | undefined {
   if (typeof value !== 'object' || value === null) return undefined
   const v = value as Record<string, unknown>
-  const status = ['done', 'partial', 'blocked', 'failed'].includes(String(v.status))
+  // only a string from the list counts; ["done"] is no status (N73)
+  const status = typeof v.status === 'string' && ['done', 'partial', 'blocked', 'failed'].includes(v.status)
     ? (v.status as Packet['status'])
     : 'partial'
   const strings = (x: unknown) => (Array.isArray(x) ? x.map(String) : [])
@@ -382,11 +383,13 @@ export function privateKeyFilter(): (line: string) => string | undefined {
 // Folds a write check into the packet: writes outside `owns` turn done into
 // partial and land under risks; files the worker did not list are added; what
 // could not be checked is named.
-export function applyWriteCheck(p: Packet, check: WriteCheck): Packet {
+// A remote (werkbank) check compares paths literally: a backslash is a name
+// character on the server, not a separator (N60, N80).
+export function applyWriteCheck(p: Packet, check: WriteCheck, opts: { isLiteral?: boolean } = {}): Packet {
   p.write_check = check
   for (const gap of check.incomplete ?? []) p.risks.push(`write check incomplete: ${gap}`)
   if (!check.checked) return p
-  const listed = new Set(p.artifacts.map(a => a.path.replace(/\\/g, '/')))
+  const listed = new Set(p.artifacts.map(a => (opts.isLiteral ? a.path : a.path.replace(/\\/g, '/'))))
   const notMine = new Set([...check.unattributed, ...check.byOtherRole.map(b => b.path)])
   for (const c of check.changed) {
     if (!listed.has(c.path) && !notMine.has(c.path)) p.artifacts.push({ path: c.path, change: c.change, note: 'found by the write check' })
@@ -400,6 +403,9 @@ export function applyWriteCheck(p: Packet, check: WriteCheck): Packet {
   if (check.outside.length && p.status === 'done') p.status = 'partial'
   return p
 }
+
+// The last part of a path after / or \, line breaks in the path included (N75).
+export const baseName = (path: string) => path.replace(/^[\s\S]*[\\/]/, '')
 
 // relayDir stays inside the project (contract 0001, Nachtrag 1): worktrees,
 // run files and the queue live under it.
@@ -438,7 +444,8 @@ function redactKeyValue(match: string, name: string, sep: string, value: string)
 // packets, notices): replaced before they leave relay (contract 0001,
 // Nachtrag 1). Best effort by shape; it never makes text longer to read.
 const SECRET_PATTERNS: [RegExp, string | ((...args: string[]) => string)][] = [
-  [/-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----[\s\S]*?(?:-----END [A-Z0-9 ]*PRIVATE KEY-----|$)/g, `${SECRET} private key`],
+  // a key ends only at the END of its own kind, else at the end of the text (N74)
+  [/-----BEGIN ([A-Z0-9 ]*)PRIVATE KEY-----[\s\S]*?(?:-----END \1PRIVATE KEY-----|$)/g, `${SECRET} private key`],
   // `Authorization: Bearer x`, `Proxy-Authorization: Basic x`
   [/\b((?:proxy-)?authorization)(\s*[:=]\s*)(?:(bearer|basic|token|digest)\s+)?[^\s"'\\,;]+/gi, `$1$2$3 ${SECRET}`],
   [/\b(bearer|basic)\s+[A-Za-z0-9._~+/=-]{8,}/gi, `$1 ${SECRET}`],

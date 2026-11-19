@@ -1,6 +1,6 @@
 # Vertrag 0001: relay mit Backends je Rolle
 
-**Status:** abgenommen am 3. November 2026 (E1–E11 wie empfohlen, herdr gestrichen) · **Stand:** 13. November 2026, Nachtrag 1 (Abschnitt 14 und 14.1, N1–N28) abgenommen am 13. November 2026; Nachtrag 2 (Abschnitt 15, N29–N47, Backend `werkbank`) sowie Nachträge 2a (15.4, N48–N57) , 2b (15.5, N58–N67) und 2c (15.6, N68–N72) abgenommen am 18. November 2026 · **Betrifft:** `plugins/relay` (heute 0.3.0)
+**Status:** abgenommen am 3. November 2026 (E1–E11 wie empfohlen, herdr gestrichen) · **Stand:** 13. November 2026, Nachtrag 1 (Abschnitt 14 und 14.1, N1–N28) abgenommen am 13. November 2026; Nachtrag 2 (Abschnitt 15, N29–N47, Backend `werkbank`) sowie Nachträge 2a (15.4, N48–N57) , 2b (15.5, N58–N67) und 2c (15.6, N68–N72) abgenommen am 18. November 2026; Nachtrag 2d (15.7, N73–N80) abgenommen am 19. November 2026 · **Betrifft:** `plugins/relay` (heute 0.3.0)
 
 Heute startet relay jeden Worker als `claude -p`. Künftig wählt jede Rolle ihr **Backend**: `claude`, `codex` oder `opencode`. Über opencode erreicht relay auch Ollama und OpenRouter. Warteschlange, Timeout, `owns`, Relay-Pakete und die drei Werkzeuge bleiben gleich. Neu sind die Backend-Schnittstelle, eine Schreibprüfung nach jedem Lauf, die gleich für alle Backends greift, Token-Angaben im Paket, Ollama als Ersatz-Verdichter und eine Warteschlange, die auf der Platte liegt.
 
@@ -716,3 +716,24 @@ Ein zweites Codex-Review (Stand `63ba3bf`) fand 14 weitere Befunde (6 hoch, 8 mi
 **Tests:** je Zeile N68–N72 mindestens ein Fall, der mit `9e02c5e` fehlschlägt; N68 mit zwei schnell aufeinander folgenden Läufen derselben Rolle.
 
 **Stand (18. November 2026):** N68–N72 umgesetzt. `claude plugin test plugins/relay`: 164 pass, 0 fail; die 8 neuen Fälle (4 rein, 4 Integration) schlagen mit `9e02c5e` fehl (156 pass, 8 fail). N71: die Ursache (Signal, Lesefehler) steht vorn, stderr folgt als Kontext wie in N61.
+
+### 15.7 Nachtrag 2d (19. November 2026): Befunde aus dem vierten Codex-Review (`c270e77...e6966a6`)
+
+**Status: abgenommen am 19. November 2026** (N73–N80 wie vorgeschlagen). Das vierte Codex-Review (gpt-6.2-sol) fand 8 Befunde (2 hoch, 5 mittel, 1 niedrig). Entschieden vom Nutzer am 19. November 2026: die echten beheben. Alle acht werden als echt eingestuft.
+
+| Nr. | Änderung | Ersetzt / ergänzt | Befund |
+|---|---|---|---|
+| N73 | **Der Paketstatus ist Text.** `status` im Paket zählt nur, wenn es ein Text aus `done`, `partial`, `blocked`, `failed` ist; alles andere (auch `["done"]`) wird `partial`. Damit greifen alle Abstufungen (Schreibprüfung, Fehler, Zeitlimit, rote Jobs) sicher. Gilt für alle Backends. | 4 (Paket), N48 | hoch 1 |
+| N74 | **Auch im ganzen Text endet ein Schlüssel nur an seinem eigenen Ende.** Die Bereinigung (N2) blendet einen privaten Schlüssel vom `BEGIN` bis zum `END` derselben Art aus; fehlt dieses Ende, bis zum Ende des Textes. Gilt für `full.md`, Paket, Fehlermeldungen und alles andere, was `redact` durchläuft. | N2, N70 | hoch 2 |
+| N75 | **Temp-Datei: geprüft wird, was geschrieben wird.** Der Prüfpfad unter `<relayDir>/tmp/` wird aus dem letzten Teil des Pfads nach `/` oder `\` gebildet, auch wenn der Pfad Zeilenumbrüche enthält. | N52 | mittel 1 |
+| N76 | **Token-Datei ohne Zugangsdaten im Pfad.** Ein `werkbankTokenFile`, das die Bereinigung (N2) nach dem Auflösen von `~` verändern würde, wird abgelehnt („werkbankTokenFile looks like it contains a credential; it is not passed on.“); der Wert wird nicht genannt, der Lauf startet nicht. | N50, N58, N64 | mittel 2 |
+| N77 | **Auch `error: null` ist unbrauchbar.** Steht der Schlüssel `error` im JSON, gilt jeder Wert außer einem Objekt (auch `null`) als Protokollfehler wie in N69. Fehlt der Schlüssel, ist das kein Fehler. | N69 | mittel 3 |
+| N78 | **Eine abgelehnte neue Session löscht die alte.** Meldet `werkbank-relay` eine Session-ID, die relay nach N72 nicht übernimmt, behält die Rolle auch die alte nicht; der nächste Lauf beginnt neu. Das Paket nennt das unter `risks` („werkbank reported a session id relay does not keep; the next task for <role> starts a fresh session.“). | N41, N72 | mittel 4 |
+| N79 | **Der eigene Testlauf von relay braucht relay.** Im Lauf `claude plugin test plugins/relay` schlägt ein Test fehl, wenn relay nicht geladen ist; im Lauf über das ganze Repo wird er sichtbar übersprungen statt still bestanden. Kann die Testvorrichtung die beiden Läufe nicht unterscheiden, wird das hier als Grenze nachgetragen und gemeldet. | 10.1 | mittel 5 |
+| N80 | **werkbank-Pfade bleiben beim Zusammenführen wörtlich.** Fügt relay die Schreibprüfung eines werkbank-Jobs ins Paket ein, vergleicht es die Artefakte des Workers mit den gemeldeten Dateien wörtlich (kein `\` → `/`, wie in N60); lokale Backends bleiben unverändert. | N39, N60 | niedrig 1 |
+
+**Tests:** je Zeile N73–N80 mindestens ein Fall, der mit `e6966a6` fehlschlägt (N79: der Test selbst ist der Nachweis; geprüft wird, dass er ohne geladenes relay im eigenen Lauf rot wird). N73 mit einem Schreibverstoß und `"status":["done"]`; N74 mit Paket und Fehlermeldung; N78 nach einer zuvor gültigen Session.
+
+**Grenze zu N79 (nachgetragen am 19. November 2026, wie in N79 vorgesehen):** Die Testvorrichtung lässt die beiden Läufe nicht unterscheiden. Geprüft mit einer Probe in beiden Läufen: Im Lauf über das Repo lädt relay nicht, registriert nichts und fragt nichts ab, also genau das Bild eines relay, das nicht lädt. Der Testkit kennt weder Umgebung noch Arbeitsordner noch Plugin-Namen (`process` fehlt, `$.config.describe` ist im Test nicht nutzbar), und `hooks.json` lässt sich im Test nicht einlesen (nur Code-Dateien). N79 bleibt deshalb offen: Fehlt relay im eigenen Lauf, bestehen die Integrationsfälle weiterhin still.
+
+**Stand (19. November 2026):** N73–N78 und N80 umgesetzt, N79 als Grenze oben. `claude plugin test plugins/relay`: 173 pass, 0 fail; mit `e6966a6` schlagen 10 Fälle fehl (163 pass, 10 fail): 7 reine Fälle (N73, N74, N75, N76, N78, N80 sowie der um N77 erweiterte N69-Fall) und 3 Integrationsfälle (N73, N74, N78). Der Dateiname für die Temp-Prüfung kommt jetzt aus `baseName` in `protocol.ts`.

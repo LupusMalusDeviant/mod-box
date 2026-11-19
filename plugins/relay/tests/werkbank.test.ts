@@ -1,7 +1,7 @@
 // The werkbank backend with a fake werkbank-relay (contract 0001, Nachtrag 2).
 import { describe, expect, test } from 'claude-code/testing'
 import { protocolPrompt } from '../hooks/protocol.ts'
-import { fakeWorld, KEY_BODY, WERKBANK_JOB, type Scenario } from './fakes.ts'
+import { fakeWorld, KEY_BODY, MISMATCHED_BODY, WERKBANK_JOB, type Scenario } from './fakes.ts'
 
 const WB = { defaultBackend: 'werkbank' }
 const HOME = { USERPROFILE: 'C:/Users/u', OS: 'Windows_NT' }
@@ -434,5 +434,43 @@ describe('werkbank, Nachtrag 2c (third Codex review)', () => {
     await w.until(() => w.submitted.length === 2)
     expect(w.spawns[1]!.argv).not.toContain('--session')
     expect(w.submitted.join('\n')).not.toContain('abcdef0123456789abcd')
+  })
+})
+
+describe('werkbank, Nachtrag 2d (fourth Codex review)', () => {
+  test('N73: a packet with status ["done"] and a write outside owns is partial', { options: WB }, async ($: any, on: any) => {
+    const w = world(on)
+    w.play('status-array')
+    if (!(await w.start($))) return
+    await w.send($, { role: 'coder', task: 't', owns: ['src/'] })
+    await w.until(() => w.submitted.length === 1)
+    expect(w.submitted[0]).toContain('Status: partial')
+    expect(w.submitted[0]).not.toContain('Status: done')
+    expect(w.submitted[0]).toContain('wrote outside owns: other/x.md')
+  })
+
+  test('N74: a key with a foreign END never reaches full.md or the packet', { options: WB }, async ($: any, on: any) => {
+    const w = world(on)
+    w.play('key-mismatch')
+    if (!(await w.start($))) return
+    await w.send($, { role: 'coder', task: 't' })
+    await w.until(() => w.submitted.length === 1)
+    expect(w.submitted[0]).not.toContain(MISMATCHED_BODY)
+    for (const [path, text] of w.files) if (path.startsWith('.relay/runs/coder/')) expect(text).not.toContain(MISMATCHED_BODY)
+  })
+
+  test('N78: a rejected new session drops the old one too', { options: WB }, async ($: any, on: any) => {
+    const w = world(on)
+    w.play('ok', 'session-token', 'ok')
+    if (!(await w.start($))) return
+    for (const task of ['one', 'two', 'three']) {
+      const n = w.submitted.length + 1
+      await w.send($, { role: 'coder', task })
+      await w.until(() => w.submitted.length === n)
+    }
+    // run 2 resumed the valid session; run 3 starts fresh
+    expect(w.spawns[1]!.argv).toContain('--session')
+    expect(w.spawns[2]!.argv).not.toContain('--session')
+    expect(w.submitted[1]).toContain('werkbank reported a session id relay does not keep; the next task for coder starts a fresh session.')
   })
 })

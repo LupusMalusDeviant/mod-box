@@ -101,6 +101,8 @@ export type RemoteRun = {
 export type RunOutcome = {
   answer: string
   sessionId?: string
+  // the backend reported a session id relay does not keep (werkbank, N78)
+  isSessionRejected?: boolean
   usage: Usage
   error?: RunError
   remote?: RemoteRun
@@ -530,6 +532,10 @@ const werkbank: Backend = {
         'cli',
       )
     }
+    // a path the redaction would change never reaches argv; its value is not named (N76)
+    if (redact(tokenFile) !== tokenFile) {
+      throw new BuildError('werkbank: werkbankTokenFile looks like it contains a credential; it is not passed on.', 'cli')
+    }
     if (!isAbsolutePath(s.tmpDir)) throw new BuildError(`werkbank needs an absolute folder for the protocol file, got "${s.tmpDir}".`, 'cli')
     const bytes = new TextEncoder().encode(spec.task).length
     if (bytes > WERKBANK_MAX_TASK_BYTES) {
@@ -588,7 +594,8 @@ const werkbank: Backend = {
     })
     const e = json.error && typeof json.error === 'object' && !Array.isArray(json.error) ? obj(json.error) : undefined
     // an error that is there but no object is a protocol failure (N69)
-    const isErrorMalformed = json.error !== undefined && json.error !== null && !e
+    // a present key with anything but an object, null included (N69, N77)
+    const isErrorMalformed = Object.prototype.hasOwnProperty.call(json, 'error') && !e
     // only the table's own keys count, anything else is unknown (N69)
     const errKind = str(e?.kind) ?? ''
     const kind = e ? (Object.prototype.hasOwnProperty.call(WERKBANK_ERRORS, errKind) ? WERKBANK_ERRORS[errKind] : 'unknown') : undefined
@@ -649,6 +656,8 @@ const werkbank: Backend = {
     return {
       answer,
       ...(sid && isSafeSession(sid) ? { sessionId: sid } : {}),
+      // reported but not kept: the old session must not stay either (N78)
+      ...(sid && !isSafeSession(sid) ? { isSessionRejected: true } : {}),
       usage,
       ...(error ? { error } : {}),
       ...(remote ? { remote } : {}),

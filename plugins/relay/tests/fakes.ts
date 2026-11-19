@@ -60,6 +60,10 @@ export type Scenario =
   | 'killed-early'
   // werkbank-relay: a session id that looks like a credential
   | 'session-token'
+  // werkbank-relay: a packet with status ["done"] and a write outside owns
+  | 'status-array'
+  // werkbank-relay: an answer with a key whose END is of another kind
+  | 'key-mismatch'
 
 export type Call = { argv: string[]; cwd?: string; env: Record<string, string>; input?: string; attachment?: string; protocolFile?: string }
 
@@ -70,6 +74,10 @@ export const KEY_BODY = 'MIIEexampleNotARealKeyBody0001'
 // What the fake werkbank-relay reports, so tests can change it per world.
 export const WERKBANK_JOB = 'wb-20261118-7'
 export const WERKBANK_COMMIT = 'abc1234def5678'
+// A made-up key (no real one) whose first END is of another kind, for N74.
+export const MISMATCHED_BODY = 'afterTheWrongEndNotARealKey0002'
+const MISMATCHED_KEY = ['-----BEGIN RSA PRIVATE KEY-----', 'MIIEexample', '-----END EC PRIVATE KEY-----', MISMATCHED_BODY, '-----END RSA PRIVATE KEY-----'].join('\n')
+
 // A made-up session id the redaction would change (no real token), for N72.
 export const WERKBANK_TOKEN_SESSION = 'token:abcdef0123456789abcd'
 
@@ -417,12 +425,21 @@ export function fakeWorld(
       const json = {
         jobId: WERKBANK_JOB,
         state,
-        answer: scenario === 'timed-out' || scenario === 'failed' ? '' : scenario === 'red-prose' ? 'Plain prose, no packet.' : answer,
+        answer:
+          scenario === 'timed-out' || scenario === 'failed'
+            ? ''
+            : scenario === 'red-prose'
+              ? 'Plain prose, no packet.'
+              : scenario === 'status-array'
+                ? ['## Work', '```relay', JSON.stringify({ status: ['done'], summary: 'Did it.', sections: ['Work'] }), '```'].join('\n')
+                : scenario === 'key-mismatch'
+                  ? [MISMATCHED_KEY, PACKET()].join('\n')
+                  : answer,
         sessionId: scenario === 'session-moved' ? 'fsn1-4:fresh2' : scenario === 'session-token' ? WERKBANK_TOKEN_SESSION : (arg('--session') ?? 'fsn1-5:9b1f'),
         usage: { costUsd: 0.42, turns: 6, inputTokens: 12000, outputTokens: 3100, model: 'claude-opus-5-5' },
         branch: `agent/relay/${role}`,
         commits: scenario === 'failed' ? [] : scenario === 'bad-commits' ? [WERKBANK_COMMIT, `token=${SECRETS.token}`, 'nope'] : [WERKBANK_COMMIT],
-        changedFiles: scenario === 'failed' ? [] : scenario === 'write-outside' ? ['src/a.ts', 'other/x.md'] : ['src/a.ts'],
+        changedFiles: scenario === 'failed' ? [] : scenario === 'write-outside' || scenario === 'status-array' ? ['src/a.ts', 'other/x.md'] : ['src/a.ts'],
         verify: { command: 'npm test', exitCode: isRed ? 1 : 0, tests: { total: 147, passed: isRed ? 145 : 147, failed: isRed ? 2 : 0 } },
         ...(error ? { error } : {}),
         ...(scenario === 'error-malformed' ? { error: 'lost the Leitstand' } : {}),

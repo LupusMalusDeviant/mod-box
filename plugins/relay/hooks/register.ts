@@ -27,6 +27,7 @@ import {
 } from './backends.ts'
 import {
   applyWriteCheck,
+  baseName,
   compareSnapshots,
   extractSection,
   fallbackPrompt,
@@ -513,7 +514,7 @@ async function storageProblem($: EngineInterface, rel: string): Promise<string |
 // the file itself is checked like its folder before relay writes it. $.fs
 // cannot create exclusively or refuse to follow a link (V3): a short window
 // between check and write remains (contract 0001, N52).
-const tempRel = (path: string) => relayPath(`tmp/${path.replace(/^.*[\\/]/, '')}`)
+const tempRel = (path: string) => relayPath(`tmp/${baseName(path)}`)
 
 async function tempFilesProblem($: EngineInterface, inv: Invocation): Promise<string | undefined> {
   for (const f of inv.tempFiles ?? []) {
@@ -1247,18 +1248,22 @@ async function finish($: EngineInterface, r: RunResult) {
     role.sessionBackend = undefined
     role.sessionDir = undefined
   } else if (!r.notStarted) {
-    const next = outcome.sessionId ?? r.presetSessionId ?? (sessionBackendOf(role) === r.id ? role.sessionId : undefined)
+    // a reported id relay does not keep drops the old one too (N78)
+    const next = outcome.isSessionRejected
+      ? undefined
+      : (outcome.sessionId ?? r.presetSessionId ?? (sessionBackendOf(role) === r.id ? role.sessionId : undefined))
     role.sessionId = next
     role.sessionBackend = next ? r.id : undefined
     role.sessionDir = next ? r.work.dir : undefined
-    if (!next && r.id !== 'claude') packet.risks.push(`No ${r.id} session id was reported; the next task for ${role.name} starts a fresh session.`)
+    if (outcome.isSessionRejected) packet.risks.push(`werkbank reported a session id relay does not keep; the next task for ${role.name} starts a fresh session.`)
+    else if (!next && r.id !== 'claude') packet.risks.push(`No ${r.id} session id was reported; the next task for ${role.name} starts a fresh session.`)
     // The role's worker was gone: the job ran fresh elsewhere (N41).
     if (r.id === 'werkbank' && r.passedSessionId && outcome.sessionId && outcome.sessionId !== r.passedSessionId) {
       packet.risks.push(`the werkbank session moved (${r.passedSessionId} → ${outcome.sessionId}); the worker started fresh, repeat the context it needs.`)
     }
   }
 
-  if (r.check) applyWriteCheck(packet, r.check)
+  if (r.check) applyWriteCheck(packet, r.check, { isLiteral: r.id === 'werkbank' })
   // Without git the check is skipped; that is said once per session (N27).
   if (r.check && !r.check.checked && !r.check.incomplete?.length && r.work.git.state === 'no' && !isNoGitNoticed) {
     isNoGitNoticed = true

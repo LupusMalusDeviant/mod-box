@@ -32,6 +32,8 @@ import {
   UNHASHED,
   type Packet,
 } from './protocol.ts'
+import * as protocol from './protocol.ts'
+import { parsePacket } from './protocol.ts'
 import { isFresh, loadQueue, mayOwn, parseQueue, serializeQueue } from './queue.ts'
 
 const spec = (over: Partial<LaunchSpec> = {}): LaunchSpec => ({
@@ -548,7 +550,9 @@ describe('werkbank: parsing', () => {
     expect(parse(job({ error: 'lost it' })).error).toEqual(malformed)
     expect(parse(job({ error: ['x'] })).error).toEqual(malformed)
     expect(parse(job({ error: 7 })).error).toEqual(malformed)
-    expect(parse(job({ error: null })).error).toBeUndefined()
+    // N77: a present null is no object either; a missing key is no error
+    expect(parse(job({ error: null })).error).toEqual(malformed)
+    expect(parse(job()).error).toBeUndefined()
     for (const kind of ['constructor', 'toString', 'hasOwnProperty']) {
       expect(parse({ error: { kind, message: 'm' } }, 2).error).toEqual({ kind: 'unknown', message: 'm' })
     }
@@ -680,6 +684,56 @@ describe('werkbank: write check and rules', () => {
     // an END without a BEGIN changes nothing
     const h = privateKeyFilter()
     expect(['-----END RSA PRIVATE KEY-----', 'next'].map(h)).toEqual(['-----END RSA PRIVATE KEY-----', 'next'])
+  })
+
+  test('N73: a packet status that is no string is partial, and the write check still turns it down', () => {
+    const p = parsePacket('```relay\n{"status":["done"],"summary":"s"}\n```')!
+    expect(p.status).toBe('partial')
+    applyWriteCheck(p, remoteWriteCheck({ changedFiles: ['docs/x.md'] }, ['src/'], ''), { isLiteral: true })
+    expect(p.status).toBe('partial')
+    expect(parsePacket('```relay\n{"status":"done"}\n```')!.status).toBe('done')
+  })
+
+  test('N74: in a whole text a key ends only at the END of its own kind', () => {
+    const text = ['-----BEGIN RSA PRIVATE KEY-----', 'firstBody', '-----END EC PRIVATE KEY-----', 'secondBodyLine', '-----END RSA PRIVATE KEY-----', 'after'].join('\n')
+    const out = redact(text)
+    expect(out).not.toContain('secondBodyLine')
+    expect(out).not.toContain('firstBody')
+    expect(out).toContain('after')
+    // no END of its kind: hidden to the end of the text
+    expect(redact(['-----BEGIN RSA PRIVATE KEY-----', 'a', '-----END EC PRIVATE KEY-----', 'tailBody'].join('\n'))).not.toContain('tailBody')
+    // in a werkbank error message too
+    const o = BACKENDS.werkbank.parse(done(JSON.stringify({ error: { kind: 'auth', message: text } }), 2))
+    expect(o.error?.message).not.toContain('secondBodyLine')
+  })
+
+  test('N75: the temp file is checked by its last path part, line breaks included', () => {
+    const baseName = (protocol as Record<string, unknown>).baseName as ((p: string) => string) | undefined
+    expect(baseName?.('/w/odd\nname/.relay/tmp/coder-1.protocol.md')).toBe('coder-1.protocol.md')
+    expect(baseName?.('C:\\w\\.relay\\tmp\\scout-1.md')).toBe('scout-1.md')
+  })
+
+  test('N76: a token file path that looks like a credential is refused, unnamed', () => {
+    const s = wb({ settings: { ...wbSettings, werkbankTokenFile: '/tmp/password=synthetic-value/relay.token' } })
+    const r = refused(s)
+    expect(r).toBe('cli: werkbank: werkbankTokenFile looks like it contains a credential; it is not passed on.')
+    expect(r).not.toContain('synthetic-value')
+  })
+
+  test('N78: a rejected session id is flagged, a kept or missing one is not', () => {
+    const p = (o: Record<string, unknown>) => BACKENDS.werkbank.parse(done(JSON.stringify(job(o))))
+    expect(p({ sessionId: 'token:abcdef0123456789abcd' }).isSessionRejected).toBe(true)
+    expect(p({}).isSessionRejected).toBeUndefined()
+    const { sessionId: _s, ...noSession } = job()
+    expect(BACKENDS.werkbank.parse(done(JSON.stringify(noSession))).isSessionRejected).toBeUndefined()
+  })
+
+  test('N80: a werkbank write check keeps paths literal when adding artifacts', () => {
+    const packet = (): Packet => ({ status: 'done', summary: '', decisions: [], facts: [], artifacts: [{ path: 'src/a\\b.ts', change: 'modified' }], open_questions: [], needs_from_main: [], risks: [], next_suggested: [], sections: [] })
+    const check = remoteWriteCheck({ changedFiles: ['src/a/b.ts'] }, [], '')
+    expect(applyWriteCheck(packet(), check, { isLiteral: true }).artifacts.map(a => a.path)).toEqual(['src/a\\b.ts', 'src/a/b.ts'])
+    // local backends keep folding \ into /
+    expect(applyWriteCheck(packet(), check).artifacts.map(a => a.path)).toEqual(['src/a\\b.ts'])
   })
 
   test('werkbank ignores effort and isolation, nothing else', () => {
