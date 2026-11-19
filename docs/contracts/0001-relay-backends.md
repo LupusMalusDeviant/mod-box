@@ -1,6 +1,6 @@
 # Vertrag 0001: relay mit Backends je Rolle
 
-**Status:** abgenommen am 3. November 2026 (E1–E11 wie empfohlen, herdr gestrichen) · **Stand:** 13. November 2026, Nachtrag 1 (Abschnitt 14 und 14.1, N1–N28) abgenommen am 13. November 2026; Nachtrag 2 (Abschnitt 15, N29–N47, Backend `werkbank`) sowie Nachträge 2a (15.4, N48–N57) , 2b (15.5, N58–N67) und 2c (15.6, N68–N72) abgenommen am 18. November 2026; Nachtrag 2d (15.7, N73–N80) abgenommen am 19. November 2026; Nachtrag 2e (15.8, N81–N86) abgenommen am 19. November 2026 · **Betrifft:** `plugins/relay` (heute 0.3.0)
+**Status:** abgenommen am 3. November 2026 (E1–E11 wie empfohlen, herdr gestrichen) · **Stand:** 13. November 2026, Nachtrag 1 (Abschnitt 14 und 14.1, N1–N28) abgenommen am 13. November 2026; Nachtrag 2 (Abschnitt 15, N29–N47, Backend `werkbank`) sowie Nachträge 2a (15.4, N48–N57) , 2b (15.5, N58–N67) und 2c (15.6, N68–N72) abgenommen am 18. November 2026; Nachtrag 2d (15.7, N73–N80) abgenommen am 19. November 2026; Nachtrag 2e (15.8, N81–N86) und 2f (15.9, N87–N93) abgenommen am 19. November 2026 · **Betrifft:** `plugins/relay` (heute 0.3.0)
 
 Heute startet relay jeden Worker als `claude -p`. Künftig wählt jede Rolle ihr **Backend**: `claude`, `codex` oder `opencode`. Über opencode erreicht relay auch Ollama und OpenRouter. Warteschlange, Timeout, `owns`, Relay-Pakete und die drei Werkzeuge bleiben gleich. Neu sind die Backend-Schnittstelle, eine Schreibprüfung nach jedem Lauf, die gleich für alle Backends greift, Token-Angaben im Paket, Ollama als Ersatz-Verdichter und eine Warteschlange, die auf der Platte liegt.
 
@@ -754,3 +754,21 @@ Ein zweites Codex-Review (Stand `63ba3bf`) fand 14 weitere Befunde (6 hoch, 8 mi
 **Tests:** je Zeile N81–N83, N85, N86 mindestens ein Fall, der mit `0a087d9` fehlschlägt; N81 mit einem Auftrag für die Rolle `../../docs/release` und einer Datei außerhalb von `<relayDir>/tmp`, die unverändert bleiben muss; N83 mit maskierten Marken in getrennten codex-Ereignissen.
 
 **Stand (19. November 2026):** N81–N83, N85, N86 umgesetzt, N84 als Klarstellung. `claude plugin test plugins/relay`: 181 pass, 0 fail; mit `0a087d9` schlagen die 8 neuen Fälle fehl (173 pass, 8 fail): 4 reine (N81, N82, N83, N85) und 4 Integrationsfälle (N81, N82, N83, N86). Das Muster für Rollennamen (`ROLE_NAME`) liegt jetzt in `queue.ts`. N86 gilt für jeden unterbrochenen Lauf: auch lokale Backends tragen `⚠ write check incomplete` bzw. `⚠ wrote outside owns` in der Kopfzeile, wie ein laufender Bericht (N10).
+
+### 15.9 Nachtrag 2f (19. November 2026): Befunde aus dem sechsten Codex-Review (`c270e77...ca161c6`)
+
+**Status: abgenommen am 19. November 2026** durch den Auftrag des Nutzers „Nachtrag 2f direkt umsetzen“ (ohne eigene Vorlage vorab). Das sechste Codex-Review (gpt-6.2-sol) fand 7 Befunde (2 hoch, 3 mittel, 2 niedrig); alle werden behoben.
+
+| Nr. | Änderung | Ersetzt / ergänzt | Befund |
+|---|---|---|---|
+| N87 | **Maskierte Schlüssel-Marken zählen wie echte.** Die Bereinigung (N2, N74) und der Zeilenfilter (N51, N70) erkennen die Marken auch, wenn ihre Bindestriche JSON-maskiert sind (`-`, `-`). Ein ganzer maskierter Schlüssel in einer Zeile wird so in `live.log`, `full.md`, Paket, Nachricht und Fehlermeldungen ausgeblendet. | N2, N74, N83 | hoch 1 |
+| N88 | **`live.log` selbst wird geprüft.** Vor jedem Schreiben prüft relay die Datei `<relayDir>/runs/<rolle>/live.log` wie ihren Ordner (N17). Ist sie ein Link oder zeigt sie aus dem Projekt, schreibt relay für diesen Lauf kein `live.log` mehr und nennt das einmal unter `risks`. | N17, N52 | hoch 2 |
+| N89 | **Der Prozessfehler aus N85 bleibt in jedem Endzustand sichtbar.** Bei `failed` und `cancelled` nennt das Paket neben dem Grund auch den Fehler aus `parse` (mit dem Prozessfehler). Bei Teilzuständen (`red`, `needs-approval`, `timed-out`, `limit`) stehen der Grund in der Endzeile (N54, N65) und der Prozessfehler als `cli`-Fehler unter `risks` (N48), beide sichtbar. | N48, N85 | mittel 1 |
+| N90 | **Eine leere Job-ID ist keine.** Eine `jobId` aus nur Leerzeichen gilt als fehlend (N48, N65). | N48, N65 | mittel 2 |
+| N91 | **Eine mitgeschickte, unbrauchbare Session-ID verwirft die alte.** Steht `sessionId` in der Antwort, ist aber kein brauchbarer Text (auch `""` oder kein Text), gilt N78. Fehlt der Schlüssel, bleibt es bei N78s Verhalten für „keine Session gemeldet“. | N78 | mittel 3 |
+| N92 | **Auch der nachgereichte Bericht behält seine Kopfzeile.** relay speichert die Kopfzeile in `packet.json`; ein nach einem Neustart zugestellter gespeicherter Bericht nutzt sie (mit dem Zusatz „delivered after a restart“), statt „finished“ und ohne Warnungen. | N86, 7.2 | niedrig 1 |
+| N93 | **Die Zahl der verworfenen Aufträge stimmt.** N81 zählt jeden Auftrag, der wegen seiner Rolle (auch einer, die kein Text ist) oder seiner Laufnummer verworfen wird. | N81 | niedrig 2 |
+
+**Tests:** je Zeile N87–N93 mindestens ein Fall, der mit `ca161c6` fehlschlägt; N87 mit einer werkbank-stderr-Zeile ohne JSON auf stdout (geprüft: `live.log`, `packet.json`, Nachricht).
+
+**Stand (19. November 2026):** N87–N93 umgesetzt. `claude plugin test plugins/relay`: 189 pass, 0 fail; mit `ca161c6` schlagen die 8 neuen Fälle fehl (181 pass, 8 fail): 4 reine (N87, N90, N91, N93) und 4 Integrationsfälle (N87, N88, N89, N92). `packet.json` trägt jetzt das Feld `head`. Vor dem Bericht wartet relay, bis die anstehenden `live.log`-Schreibvorgänge des Laufs durch sind, damit ein Problem aus N88 noch unter `risks` steht.

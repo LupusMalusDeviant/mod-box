@@ -920,6 +920,9 @@ async function start($: EngineInterface, job: QueuedJob, role: Role, run: number
     pruneActivity()
     running--
     try {
+      // the log's own writes may still be queued: let them run first (N88)
+      await live.settle()
+      if (live.problem) notes.push(`live.log was not written: ${live.problem}`)
       await finish($, { role, run, job, id, model: model || outcome.usage.model || '', outcome, proc, check, work, notes, notStarted, presetSessionId: inv?.presetSessionId, passedSessionId })
       await live.close(outcome, proc)
     } catch (err) {
@@ -1030,9 +1033,16 @@ function liveLog($: EngineInterface, role: string, run: number, id: BackendId, i
   let isClosed = false
   // Writes of all runs of a role run one after another, each with the lines
   // of its moment (N63, N68).
+  let problem: string | undefined
   const write = (isFinal = false) => {
     const next = (liveChains.get(role) ?? Promise.resolve()).then(async () => {
-      if (!isEnabled || (isClosed && !isFinal) || liveOwners.get(role) !== run) return
+      if (!isEnabled || problem || (isClosed && !isFinal) || liveOwners.get(role) !== run) return
+      // the file itself, not only its folder: a link out stops the log (N88)
+      const why = await storageProblem($, path).catch(err => `live.log could not be checked (${String(err)})`)
+      if (why) {
+        problem = why
+        return
+      }
       await $.fs.write(path, `${lines.join('\n')}\n`).catch(() => undefined)
     })
     liveChains.set(role, next)
@@ -1074,6 +1084,11 @@ function liveLog($: EngineInterface, role: string, run: number, id: BackendId, i
       lines.push(redact(text))
       void flushSoon()
     },
+    // why live.log is not written, once known (N88)
+    get problem() {
+      return problem
+    },
+    settle: () => (liveChains.get(role) ?? Promise.resolve()).catch(() => undefined),
     async close(outcome: RunOutcome, proc: ProcessResult) {
       const state = proc.isTimedOut ? 'stopped (timeout)' : proc.isStoppedByLimit ? 'stopped (token limit)' : outcome.error ? `error: ${outcome.error.message}` : 'finished'
       lines.push(redact(`# ${state} · ${new Date().toISOString()}`))
@@ -1238,6 +1253,11 @@ async function finish($: EngineInterface, r: RunResult) {
       if (packet.status === 'done') packet.status = 'partial'
       packet.risks.push(`werkbank-relay reported an error (${outcome.error.kind}): ${outcome.error.message}`)
     }
+    // a failed or cancelled job: the error beyond its reason (a signal, a
+    // broken stream) stays visible too (N85, N89)
+    if (outcome.error && isRemoteFailed(remote) && outcome.error.message !== remote.reason) {
+      packet.risks.push(`werkbank-relay reported an error (${outcome.error.kind}): ${outcome.error.message}`)
+    }
     if (remote.verify) packet.facts.push({ id: `F${packet.facts.length + 1}`, text: remoteVerifyLine(remote.verify) })
     // N66: only real commit ids are shown; the rest is counted
     if (remote.malformedCommits) packet.risks.push(`werkbank reported ${remote.malformedCommits} malformed commit id(s) (not shown)`)
@@ -1316,7 +1336,8 @@ async function deliver(
   const fullPath = runPath(role.name, run, 'full.md')
   const files: [string, string][] = [
     [fullPath, `# ${role.name} · run ${run}\n\n## Task\n\n${redact(job.task)}\n\n## Answer\n\n${redact(stripPacket(answer))}\n`],
-    [runPath(role.name, run, 'packet.json'), JSON.stringify(redactDeep({ run, backend: extra.backend, usage: extra.usage, ...packet }), null, 2)],
+    // the headline is kept for a delivery after a restart (N92)
+    [runPath(role.name, run, 'packet.json'), JSON.stringify(redactDeep({ run, backend: extra.backend, usage: extra.usage, head, ...packet }), null, 2)],
   ]
   role.isBusy = false
   role.lastStatus = packet.status
@@ -1383,12 +1404,25 @@ async function retryDeliveries($: EngineInterface) {
 
 // A job whose files were stored but whose packet never arrived: deliver the
 // stored packet; when it is gone, report the run as interrupted.
+// The headline packet.json kept, only when it is this run's own one line.
+function storedHeadOf(text: string, role: string, run: number): string | undefined {
+  try {
+    const head = (JSON.parse(text) as { head?: unknown }).head
+    return typeof head === 'string' && !head.includes('\n') && head.startsWith(`[relay] ${role} · run ${run} `) ? redact(head) : undefined
+  } catch {
+    return undefined
+  }
+}
+
 async function deliverStored($: EngineInterface, job: QueuedJob): Promise<string | undefined> {
   const role = roles[job.role]
   const run = job.run ?? 0
-  const stored = role ? parsePacket(await $.fs.read(runPath(job.role, run, 'packet.json')).catch(() => '')) : undefined
+  const text = role ? String(await $.fs.read(runPath(job.role, run, 'packet.json')).catch(() => '')) : ''
+  const stored = role ? parsePacket(text) : undefined
   if (!role || !stored) return reportInterrupted($, job)
-  const head = `[relay] ${role.name} · run ${run} finished (${job.backend}, delivered after a restart)`
+  // the stored headline with its warnings, else the plain one (N92)
+  const storedHead = storedHeadOf(text, role.name, run)
+  const head = storedHead ? `${storedHead} · delivered after a restart` : `[relay] ${role.name} · run ${run} finished (${job.backend}, delivered after a restart)`
   const d: Delivery = { role, run, job, files: [], text: renderPacket(head, stored, runPath(role.name, run, 'full.md'), config.packetDetail), status: stored.status, isStored: true }
   return (await attemptDelivery($, d)) ? undefined : 'reporting failed (the stored packet could not be delivered)'
 }

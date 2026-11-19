@@ -47,7 +47,7 @@ export function newJobId(): string {
 export const ROLE_NAME = /^[a-z0-9][a-z0-9_-]{0,31}$/
 
 // A job from the file whose role or run could steer a path elsewhere (N81).
-const isSafeJob = (j: QueuedJob) => ROLE_NAME.test(j.role) && (j.run === undefined || (Number.isInteger(j.run) && j.run > 0))
+const isSafeJob = (j: QueuedJob) => typeof j.role === 'string' && ROLE_NAME.test(j.role) && (j.run === undefined || (Number.isInteger(j.run) && j.run > 0))
 
 // The queue in the text plus the number of jobs dropped as unsafe;
 // undefined when the text is not a queue file.
@@ -58,7 +58,8 @@ function readQueueText(text: string | undefined): { queue: QueueFile; dropped: n
     if (v?.version !== 1 || !Array.isArray(v.jobs)) return undefined
     const jobs = v.jobs.filter(
       (j): j is QueuedJob =>
-        !!j && typeof j.id === 'string' && typeof j.role === 'string' && typeof j.task === 'string' && (j.state === 'queued' || j.state === 'running'),
+        // the role is judged by isSafeJob, so a bad one is counted (N93)
+        !!j && typeof j.id === 'string' && typeof j.task === 'string' && (j.state === 'queued' || j.state === 'running'),
     )
     const safe = jobs.filter(isSafeJob)
     const owner =

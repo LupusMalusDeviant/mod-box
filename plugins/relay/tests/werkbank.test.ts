@@ -526,3 +526,56 @@ describe('werkbank, Nachtrag 2e (fifth Codex review)', () => {
     expect(w.submitted[0]).toContain('[relay] coder · run 3 interrupted (werkbank) ⚠ write check incomplete')
   })
 })
+
+describe('werkbank, Nachtrag 2f (sixth Codex review)', () => {
+  test('N87: a whole JSON-escaped key on stderr reaches neither live.log nor packet nor message', { options: WB }, async ($: any, on: any) => {
+    const w = world(on)
+    w.play('key-escaped-stderr')
+    if (!(await w.start($))) return
+    await w.send($, { role: 'coder', task: 't' })
+    await w.until(() => w.submitted.length === 1)
+    expect(w.submitted[0]).not.toContain(KEY_BODY)
+    expect(w.files.get('.relay/runs/coder/live.log')).not.toContain(KEY_BODY)
+    expect(w.files.get('.relay/runs/coder/001.packet.json')).not.toContain(KEY_BODY)
+  })
+
+  test('N88: a live.log that is a link out of the project is not written, and that is said', { options: WB }, async ($: any, on: any) => {
+    // the run folder exists from an earlier run; only the log in it is a link
+    const w = world(on, { files: { '.relay/runs/coder/000.full.md': 'earlier' } })
+    w.links.set('.relay/runs/coder/live.log', '/etc/cron.d/x')
+    if (!(await w.start($))) return
+    await w.send($, { role: 'coder', task: 't' })
+    await w.until(() => w.submitted.length === 1)
+    expect(w.files.has('.relay/runs/coder/live.log')).toBe(false)
+    expect(w.submitted[0]).toContain('live.log was not written: .relay/runs/coder/live.log resolves to /etc/cron.d/x')
+  })
+
+  test('N89: a failed job killed by a signal names the signal beside its reason', { options: WB }, async ($: any, on: any) => {
+    const w = world(on)
+    w.play('failed-signal')
+    if (!(await w.start($))) return
+    await w.send($, { role: 'coder', task: 't' })
+    await w.until(() => w.submitted.length === 1)
+    expect(w.submitted[0]).toContain('Status: failed')
+    expect(w.submitted[0]).toContain('the repo is gone')
+    expect(w.submitted[0]).toContain('ended by signal SIGTERM')
+  })
+
+  test('N92: a stored report delivered after a restart keeps its headline', { options: WB }, async ($: any, on: any) => {
+    const head = '[relay] coder · run 3 interrupted (werkbank) ⚠ write check incomplete'
+    const packet = { run: 3, backend: 'werkbank', usage: {}, head, status: 'failed', summary: 'Interrupted.', decisions: [], facts: [], artifacts: [], open_questions: [], needs_from_main: [], risks: [], next_suggested: [], sections: [] }
+    const queue = {
+      version: 1,
+      owner: { session: 'old', heartbeatAt: '1970-01-01T00:00:00.000Z' },
+      jobs: [{ id: 'j_1', role: 'coder', task: 't', enqueuedAt: '1970-01-01T00:00:00.000Z', state: 'running', run: 3, backend: 'werkbank', delivery: 'stored' }],
+    }
+    const w = world(on, {
+      files: { '.relay/queue.json': JSON.stringify(queue), '.relay/runs/coder/003.packet.json': JSON.stringify(packet), '.relay/runs/coder/003.full.md': '# coder · run 3' },
+      store: { 'roles:/w': { coder: { name: 'coder', runs: 3, isBusy: true } } },
+    })
+    await w.clock.set(10 * 60_000)
+    if (!(await w.start($))) return
+    await w.until(() => w.submitted.length === 1)
+    expect(w.submitted[0]).toContain(`${head} · delivered after a restart`)
+  })
+})

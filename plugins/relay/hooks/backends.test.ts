@@ -767,6 +767,35 @@ describe('werkbank: write check and rules', () => {
     expect(BACKENDS.werkbank.parse({ ...base, exitCode: 2 }).error).toEqual({ kind: 'auth', message: 'not authorized' })
   })
 
+  test('N87: JSON-escaped key markers count like plain ones', () => {
+    const esc = (s: string) => s.replace(/-/g, '\\u002d')
+    const oneLine = `{"detail":"${esc('-----BEGIN RSA PRIVATE KEY-----')}\\nescapedBodyLine\\n${esc('-----END RSA PRIVATE KEY-----')}","x":1}`
+    expect(redact(oneLine)).not.toContain('escapedBodyLine')
+    const f = privateKeyFilter()
+    expect([esc('-----BEGIN EC PRIVATE KEY-----'), 'escapedBodyLine', esc('-----END EC PRIVATE KEY-----'), 'after'].map(f)).toEqual([REDACTED_KEY_LINE, undefined, undefined, 'after'])
+  })
+
+  test('N90: a job id of only spaces is no job id', () => {
+    const o = BACKENDS.werkbank.parse(done(JSON.stringify(job({ jobId: '   ' }))))
+    expect(o.remote).toBeUndefined()
+    expect(o.error).toEqual({ kind: 'cli', message: 'werkbank-relay reported no jobId' })
+  })
+
+  test('N91: a sent session id that is no usable text is rejected; a missing one is not', () => {
+    const p = (o: Record<string, unknown>) => BACKENDS.werkbank.parse(done(JSON.stringify(job(o)))).isSessionRejected
+    expect(p({ sessionId: '' })).toBe(true)
+    expect(p({ sessionId: 5 })).toBe(true)
+    expect(p({ sessionId: null })).toBe(true)
+    expect(p({})).toBeUndefined()
+  })
+
+  test('N93: every job dropped for its role or run is counted', () => {
+    const j = (role: unknown, run?: unknown) => ({ id: `j_${String(role)}`, role, task: 't', enqueuedAt: 'x', state: 'queued', ...(run !== undefined ? { run } : {}) })
+    const l = loadQueue(JSON.stringify({ version: 1, jobs: [j(5), j('../../x'), j('ok', -1), j('fine', 1)] }), undefined) as ReturnType<typeof loadQueue> & { dropped?: number }
+    expect(l.queue.jobs.map(x => x.role)).toEqual(['fine'])
+    expect(l.dropped).toBe(3)
+  })
+
   test('werkbank ignores effort and isolation, nothing else', () => {
     expect(ignoredRules('werkbank', { effort: 'high', allowedTools: ['Read'], disallowedTools: ['WebFetch'], isolation: 'worktree' })).toEqual(['effort', 'isolation'])
     expect(ignoredRules('werkbank', { effort: '', allowedTools: ['Read'], disallowedTools: [], isolation: 'shared' })).toEqual([])

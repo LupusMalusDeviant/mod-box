@@ -357,7 +357,8 @@ export function remoteWriteCheck(
 // slip past `redact` one line at a time. This filter drops every line from a
 // BEGIN … PRIVATE KEY line through its END line and marks the block once;
 // without an END it drops the rest of the run (contract 0001, N51).
-const KEY_MARKER = /-----(BEGIN|END) ([A-Z0-9 ]*)PRIVATE KEY-----/g
+// a hyphen as itself or JSON-escaped (-), N87
+const KEY_MARKER = /(?:-|\\u002[dD]){5}(BEGIN|END) ([A-Z0-9 ]*)PRIVATE KEY(?:-|\\u002[dD]){5}/g
 export const REDACTED_KEY_LINE = '[redacted private key]'
 export function privateKeyFilter(): (line: string) => string | undefined {
   // the kind of the open key (RSA, OPENSSH, EC, '' …); undefined: none open
@@ -466,7 +467,11 @@ function redactKeyValue(match: string, name: string, sep: string, value: string)
 // Nachtrag 1). Best effort by shape; it never makes text longer to read.
 const SECRET_PATTERNS: [RegExp, string | ((...args: string[]) => string)][] = [
   // a key ends only at the END of its own kind, else at the end of the text (N74)
-  [/-----BEGIN ([A-Z0-9 ]*)PRIVATE KEY-----[\s\S]*?(?:-----END \1PRIVATE KEY-----|$)/g, `${SECRET} private key`],
+  // hyphens JSON-escaped (-) count as well (N87)
+  [
+    /(?:-|\\u002[dD]){5}BEGIN ([A-Z0-9 ]*)PRIVATE KEY(?:-|\\u002[dD]){5}[\s\S]*?(?:(?:-|\\u002[dD]){5}END \1PRIVATE KEY(?:-|\\u002[dD]){5}|$)/g,
+    `${SECRET} private key`,
+  ],
   // `Authorization: Bearer x`, `Proxy-Authorization: Basic x`
   [/\b((?:proxy-)?authorization)(\s*[:=]\s*)(?:(bearer|basic|token|digest)\s+)?[^\s"'\\,;]+/gi, `$1$2$3 ${SECRET}`],
   [/\b(bearer|basic)\s+[A-Za-z0-9._~+/=-]{8,}/gi, `$1 ${SECRET}`],

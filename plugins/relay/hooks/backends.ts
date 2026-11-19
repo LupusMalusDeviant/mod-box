@@ -614,7 +614,8 @@ const werkbank: Backend = {
     const kind = e ? (Object.prototype.hasOwnProperty.call(WERKBANK_ERRORS, errKind) ? WERKBANK_ERRORS[errKind] : 'unknown') : undefined
     const errText = e ? cut(str(e.message) || `werkbank error (${str(e.kind) ?? 'unknown'})`) : undefined
     const sid = str(json.sessionId)
-    const jobId = str(json.jobId)
+    // only spaces is no job id (N90)
+    const jobId = str(json.jobId)?.trim() || undefined
     const state = str(json.state) ?? 'unknown'
     const strings = (v: unknown) => (Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : [])
     let remote: RemoteRun | undefined
@@ -681,7 +682,8 @@ const werkbank: Backend = {
       answer,
       ...(sid && isSafeSession(sid) ? { sessionId: sid } : {}),
       // reported but not kept: the old session must not stay either (N78)
-      ...(sid && !isSafeSession(sid) ? { isSessionRejected: true } : {}),
+      // a sent key with anything unusable, "" included, counts too (N91)
+      ...(Object.prototype.hasOwnProperty.call(json, 'sessionId') && !(sid && isSafeSession(sid)) ? { isSessionRejected: true } : {}),
       usage,
       ...(error ? { error } : {}),
       ...(remote ? { remote } : {}),

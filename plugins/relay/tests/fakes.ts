@@ -66,6 +66,11 @@ export type Scenario =
   | 'key-mismatch'
   // codex: key markers JSON-escaped, each in its own event, then an ok answer
   | 'key-escaped'
+  // werkbank-relay: a whole JSON-escaped key in one stderr line, then exit 1
+  // without JSON on stdout
+  | 'key-escaped-stderr'
+  // werkbank-relay: a failed job (repo error), then killed by SIGTERM
+  | 'failed-signal'
 
 export type Call = { argv: string[]; cwd?: string; env: Record<string, string>; input?: string; attachment?: string; protocolFile?: string }
 
@@ -400,6 +405,15 @@ export function fakeWorld(
       if (scenario === 'error-repo') return yield* fail('repo', 'git@github.com:o/n.git is not in the repo list')
       if (scenario === 'error-budget') return yield* fail('budget', 'relay day budget used up (8 jobs)')
       if (scenario === 'not-json') return yield* out('Unhandled exception. System.Exception: boom\n', 1, 'boom\n')
+      if (scenario === 'key-escaped-stderr') {
+        const esc = (s: string) => s.replace(/-/g, '\\u002d')
+        yield { stream: 'stderr', text: `{"level":"error","detail":"${esc(KEY_LINES[0])}\\n${KEY_BODY}\\n${esc(KEY_LINES[1])}"}\n` }
+        return { value: { code: 1, signal: null } }
+      }
+      if (scenario === 'failed-signal') {
+        yield { stream: 'stdout', text: JSON.stringify({ jobId: WERKBANK_JOB, state: 'failed', answer: '', sessionId: 'fsn1-5:9b1f', branch: `agent/relay/${role}`, commits: [], changedFiles: [], error: { kind: 'repo', message: 'the repo is gone' } }) }
+        return { value: { code: null, signal: 'SIGTERM' } }
+      }
       if (scenario === 'killed-early') {
         yield { stream: 'stderr', text: 'queued\n' }
         return { value: { code: null, signal: 'SIGTERM' } }
