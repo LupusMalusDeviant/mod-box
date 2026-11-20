@@ -357,6 +357,13 @@ async function beat($: EngineInterface) {
 async function recover($: EngineInterface) {
   const dead = queue.jobs.filter(j => j.state === 'running')
   for (const job of dead) {
+    // the role comes from the job and keeps its run number before anything
+    // is delivered, known to the roles file or not (N158)
+    if (job.run !== undefined && Number.isSafeInteger(job.run) && job.run >= 1) {
+      const role = (roles[job.role] ??= { name: job.role, runs: job.run, isBusy: false })
+      if (role.runs < job.run) role.runs = job.run
+      await save($).catch(() => undefined)
+    }
     // An opencode task file or a werkbank protocol file the dead run left
     // behind is cleared first, each checked like a live run's (N52, N53).
     for (const name of [`${job.role}-${job.run ?? 0}.md`, `${job.role}-${job.run ?? 0}.protocol.md`]) {
@@ -1143,6 +1150,11 @@ async function spawnRun(
       }
     }
   } catch (err) {
+    // the read error's text goes into the key check like a line (N155)
+    for (const line of String(err).split('\n')) {
+      track(line)
+      live.other(line)
+    }
     if (!proc.isTimedOut && !proc.isStoppedByLimit) {
       proc.stderr += `\n${String(err)}`
       proc.streamError = redact(String(err)).slice(0, 300)
@@ -1792,6 +1804,84 @@ async function deliverStored($: EngineInterface, job: QueuedJob): Promise<string
   return (await attemptDelivery($, d)) ? undefined : 'reporting failed (the stored packet could not be delivered)'
 }
 
+// worker_expand without the final redaction, which its handler applies (N157)
+async function expandRun($: EngineInterface, e: unknown): Promise<{ result: string }> {
+  const input = e as { role: string; run?: number; section?: string; maxChars?: number }
+  const role = roles[input.role]
+  if (!role || role.runs === 0) return { result: `No runs for role "${input.role}".` }
+  // only whole run numbers from 1 (N159)
+  if (input.run !== undefined && !(Number.isSafeInteger(input.run) && input.run >= 1)) {
+    return { result: `Run must be a whole number from 1 (got ${String(input.run).slice(0, 40)}).` }
+  }
+  const run = input.run ?? (role.isBusy ? role.runs - 1 : role.runs)
+  if (run < 1) return { result: `${role.name} has no finished run yet.` }
+  // no run that has not begun (N131)
+  if (run > role.runs) return { result: `${role.name} has no run ${run} yet (${role.runs} begun).` }
+  if (isRotatedOut(role, run)) return { result: `${role.name} run ${run} was rotated out (keepRuns ${config.keepRuns}).` }
+  // a slot file that belongs to another run is never shown as this one (N131)
+  const otherRun = { result: `No stored report for ${role.name} run ${run} (the slot holds another run, or its two files do not match).` }
+  // both files of the slot must name this run before either is shown (N138)
+  // a missing or unreadable file of the pair is named itself (N154)
+  const pairProblem = async () => {
+    const p = runPath(role.name, run, 'packet.json')
+    const f = runPath(role.name, run, 'full.md')
+    if ((await storageProblem($, p)) || (await storageProblem($, f))) return otherRun
+    const texts: string[] = []
+    for (const path of [p, f]) {
+      try {
+        texts.push(String(await $.fs.read(path)))
+      } catch {
+        return { result: `No stored report for ${role.name} run ${run} (${path} is missing or unreadable).` }
+      }
+    }
+    return isEnvelopeRun(texts[0]!, run) && texts[1]!.startsWith(`# ${role.name} · run ${run}\n`) ? undefined : otherRun
+  }
+  // a report file is read only when it is no link out, like before its
+  // write (N99, N108)
+  const refused = async (path: string) => {
+    const why = await storageProblem($, path)
+    return why ? { result: redact(`relay does not read ${path} (${why}).`) } : undefined
+  }
+  if (input.section?.trim().toLowerCase() === 'packet') {
+    const path = runPath(role.name, run, 'packet.json')
+    // either file of the slot that is unsafe is named itself (N147)
+    const no = (await refused(path)) ?? (await refused(runPath(role.name, run, 'full.md')))
+    if (no) return no
+    try {
+      const raw = String(await $.fs.read(path))
+      if (!isEnvelopeRun(raw, run)) return otherRun
+      const pair = await pairProblem()
+      if (pair) return pair
+      const packet = parsePacket(raw)
+      if (packet) return { result: redact(renderPacket(`[relay] ${role.name} · run ${run}`, packet, runPath(role.name, run, 'full.md'), 'full')) }
+    } catch {
+      // fall through
+    }
+    return { result: `No stored packet for ${role.name} run ${run}.` }
+  }
+  const fullPath = runPath(role.name, run, 'full.md')
+  const no = (await refused(fullPath)) ?? (await refused(runPath(role.name, run, 'packet.json')))
+  if (no) return no
+  let text: string
+  try {
+    // redacted before a section is looked for or the text is cut (N108)
+    text = redact(String(await $.fs.read(fullPath)))
+  } catch {
+    return { result: `No stored answer for ${role.name} run ${run}.` }
+  }
+  if (!text.startsWith(`# ${role.name} · run ${run}\n`)) return otherRun
+  const pair = await pairProblem()
+  if (pair) return pair
+  let out = text
+  if (input.section) {
+    const found = extractSection(text, input.section)
+    if (!found) return { result: redact(`No section "${input.section}" in ${role.name} run ${run}.`) }
+    out = found
+  }
+  const max = input.maxChars ?? 12000
+  return { result: out.length > max ? `${out.slice(0, max)}\n… [cut at ${max} of ${out.length} chars]` : out }
+}
+
 // A job the file still marks running died with the last module: report it
 // as failed, with the write check against its snapshot, and never restart it.
 // Returns why it could not be reported yet, or undefined once it was (the job
@@ -2062,76 +2152,9 @@ export const register: Register = (on, options) => {
   })
 
   on('tool.call', { tool: 'mcp__relay__worker_expand' }, async ($, e) => {
-    const input = e as unknown as { role: string; run?: number; section?: string; maxChars?: number }
-    const role = roles[input.role]
-    if (!role || role.runs === 0) return { result: `No runs for role "${input.role}".` }
-    const run = input.run ?? (role.isBusy ? role.runs - 1 : role.runs)
-    if (run < 1) return { result: `${role.name} has no finished run yet.` }
-    // no run that has not begun (N131)
-    if (run > role.runs) return { result: `${role.name} has no run ${run} yet (${role.runs} begun).` }
-    if (isRotatedOut(role, run)) return { result: `${role.name} run ${run} was rotated out (keepRuns ${config.keepRuns}).` }
-    // a slot file that belongs to another run is never shown as this one (N131)
-    const otherRun = { result: `No stored report for ${role.name} run ${run} (the slot holds another run, or its two files do not match).` }
-    // both files of the slot must name this run before either is shown (N138)
-    // a missing or unreadable file of the pair is named itself (N154)
-    const pairProblem = async () => {
-      const p = runPath(role.name, run, 'packet.json')
-      const f = runPath(role.name, run, 'full.md')
-      if ((await storageProblem($, p)) || (await storageProblem($, f))) return otherRun
-      const texts: string[] = []
-      for (const path of [p, f]) {
-        try {
-          texts.push(String(await $.fs.read(path)))
-        } catch {
-          return { result: `No stored report for ${role.name} run ${run} (${path} is missing or unreadable).` }
-        }
-      }
-      return isEnvelopeRun(texts[0]!, run) && texts[1]!.startsWith(`# ${role.name} · run ${run}\n`) ? undefined : otherRun
-    }
-    // a report file is read only when it is no link out, like before its
-    // write (N99, N108)
-    const refused = async (path: string) => {
-      const why = await storageProblem($, path)
-      return why ? { result: redact(`relay does not read ${path} (${why}).`) } : undefined
-    }
-    if (input.section?.trim().toLowerCase() === 'packet') {
-      const path = runPath(role.name, run, 'packet.json')
-      // either file of the slot that is unsafe is named itself (N147)
-      const no = (await refused(path)) ?? (await refused(runPath(role.name, run, 'full.md')))
-      if (no) return no
-      try {
-        const raw = String(await $.fs.read(path))
-        if (!isEnvelopeRun(raw, run)) return otherRun
-        const pair = await pairProblem()
-        if (pair) return pair
-        const packet = parsePacket(raw)
-        if (packet) return { result: redact(renderPacket(`[relay] ${role.name} · run ${run}`, packet, runPath(role.name, run, 'full.md'), 'full')) }
-      } catch {
-        // fall through
-      }
-      return { result: `No stored packet for ${role.name} run ${run}.` }
-    }
-    const fullPath = runPath(role.name, run, 'full.md')
-    const no = (await refused(fullPath)) ?? (await refused(runPath(role.name, run, 'packet.json')))
-    if (no) return no
-    let text: string
-    try {
-      // redacted before a section is looked for or the text is cut (N108)
-      text = redact(String(await $.fs.read(fullPath)))
-    } catch {
-      return { result: `No stored answer for ${role.name} run ${run}.` }
-    }
-    if (!text.startsWith(`# ${role.name} · run ${run}\n`)) return otherRun
-    const pair = await pairProblem()
-    if (pair) return pair
-    let out = text
-    if (input.section) {
-      const found = extractSection(text, input.section)
-      if (!found) return { result: redact(`No section "${input.section}" in ${role.name} run ${run}.`) }
-      out = found
-    }
-    const max = input.maxChars ?? 12000
-    return { result: out.length > max ? `${out.slice(0, max)}\n… [cut at ${max} of ${out.length} chars]` : out }
+    // every answer is redacted as a whole, diagnostics included (N157)
+    const r = await expandRun($, e)
+    return { result: redact(r.result) }
   })
 
   on('tool.call', { tool: 'mcp__relay__worker_send' }, async ($, e) => {

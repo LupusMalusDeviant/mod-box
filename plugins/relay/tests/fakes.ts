@@ -128,6 +128,12 @@ export type Scenario =
   // werkbank-relay: a key marker on stderr, placeholders in jobId and state
   // (N150)
   | 'key-bad-state'
+  // werkbank-relay: a whole answer, then the stream read fails with an error
+  // that holds a key marker (N155)
+  | 'key-read-error'
+  // werkbank-relay: once-escaped JSON on stderr, a key value with a quote
+  // inside and an Authorization value ending in a backslash (N156)
+  | 'quoted-escaped-json'
 
 export type Call = { argv: string[]; cwd?: string; env: Record<string, string>; input?: string; attachment?: string; protocolFile?: string }
 
@@ -521,6 +527,16 @@ export function fakeWorld(
       }
       if (scenario === 'quoted-auth-escaped') {
         yield { stream: 'stderr', text: 'Authorization: "a\\"opaque0tail0x9"\n{"Authorization": "b\\"opaque0tail0x9"}\n' }
+        yield { stream: 'stdout', text: JSON.stringify({ jobId: WERKBANK_JOB, state: 'done', answer: PACKET(), sessionId: 'fsn1-5:9b1f', branch: `agent/relay/${role}`, commits: [], changedFiles: [] }) }
+        return { value: { code: 0, signal: null } }
+      }
+      if (scenario === 'key-read-error') {
+        yield { stream: 'stdout', text: JSON.stringify({ jobId: WERKBANK_JOB, state: 'done', answer: PACKET('opaque0answer0x16'), sessionId: 'fsn1-5:9b1f', branch: `agent/relay/${role}`, commits: [], changedFiles: [] }) }
+        return { deny: `stream reset ${KEY_LINES[0]}` }
+      }
+      if (scenario === 'quoted-escaped-json') {
+        yield { stream: 'stderr', text: '{"detail":"{\\"api_key\\": \\"opaque0head\\\\\\"opaque0tail0x13\\", \\"next\\": 1}"}\n' }
+        yield { stream: 'stderr', text: '{"detail":"{\\"Authorization\\": \\"opaque0auth0x14\\\\\\\\\\", \\"sibling\\": \\"keep0me0x15\\"}"}\n' }
         yield { stream: 'stdout', text: JSON.stringify({ jobId: WERKBANK_JOB, state: 'done', answer: PACKET(), sessionId: 'fsn1-5:9b1f', branch: `agent/relay/${role}`, commits: [], changedFiles: [] }) }
         return { value: { code: 0, signal: null } }
       }

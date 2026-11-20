@@ -1400,6 +1400,70 @@ describe('werkbank, Nachtrag 2i (ninth Codex review)', () => {
     expect(r).toContain('.relay/runs/coder/001.full.md is missing or unreadable')
   })
 
+  test('N155: a key marker in a stream read error hides the answer', { options: WB }, async ($: any, on: any) => {
+    const w = world(on)
+    w.play('key-read-error')
+    if (!(await w.start($))) return
+    await w.send($, { role: 'coder', task: 't' })
+    await w.until(() => w.submitted.length === 1)
+    expect(w.submitted[0]).not.toContain('opaque0answer0x16')
+    expect(w.submitted[0]).toContain(KEY_STILL_OPEN)
+    expect(w.files.get('.relay/runs/coder/001.full.md') ?? '').not.toContain('opaque0answer0x16')
+    expect(w.files.get('.relay/runs/coder/001.packet.json') ?? '').not.toContain('opaque0answer0x16')
+  })
+
+  test('N156: once-escaped JSON values are replaced whole, a sibling field stays', { options: WB }, async ($: any, on: any) => {
+    const w = world(on)
+    w.play('quoted-escaped-json')
+    if (!(await w.start($))) return
+    await w.send($, { role: 'coder', task: 't' })
+    await w.until(() => w.submitted.length === 1)
+    const log = w.files.get('.relay/runs/coder/live.log') ?? ''
+    expect(log).not.toContain('opaque0head')
+    expect(log).not.toContain('opaque0tail0x13')
+    expect(log).not.toContain('opaque0auth0x14')
+    expect(log).toContain('keep0me0x15')
+    expect(log).toContain('\\"next\\": 1')
+  })
+
+  test('N157: every worker_expand answer is redacted, the missing-file one too', { options: { ...WB, relayDir: `.relay_token=${SECRETS.token}` } }, async ($: any, on: any) => {
+    const dir = `.relay_token=${SECRETS.token}`
+    const w = world(on, {
+      files: { [`${dir}/runs/coder/001.packet.json`]: JSON.stringify({ run: 1, backend: 'werkbank', usage: {}, status: 'done', summary: 'x' }) },
+      store: { 'roles:/w': { coder: { name: 'coder', runs: 1, isBusy: false } } },
+    })
+    if (!(await w.start($))) return
+    const r = String((await $.tool.call({ tool: 'mcp__relay__worker_expand', role: 'coder', run: 1, section: 'packet' })).result)
+    expect(r).toContain('is missing or unreadable')
+    expect(r).not.toContain(SECRETS.token)
+  })
+
+  test('N158: a stored report of a role unknown everywhere is delivered and its run kept', { options: WB }, async ($: any, on: any) => {
+    const envelope = { run: 1, backend: 'werkbank', usage: {}, status: 'done', summary: 'stored ghost report', decisions: [], facts: [], artifacts: [], open_questions: [], needs_from_main: [], risks: [], next_suggested: [], sections: [] }
+    const w = world(on, {
+      files: { '.relay/queue.json': JSON.stringify(runningJob(1, 'stored')), '.relay/runs/coder/001.packet.json': JSON.stringify(envelope) },
+    })
+    await w.clock.set(10 * 60_000)
+    if (!(await w.start($))) return
+    await w.until(() => w.submitted.length === 1)
+    expect(w.submitted[0]).toContain('stored ghost report')
+    await w.send($, { role: 'coder', task: 'next' })
+    await w.until(() => w.spawns.length === 1)
+    const a = w.spawns[0]!.argv
+    expect(a[a.indexOf('--run') + 1]).toBe('2')
+  })
+
+  test('N159: worker_expand refuses a run that is no whole number from 1', { options: WB }, async ($: any, on: any) => {
+    const w = world(on, {
+      files: { '.relay/runs/coder/001.packet.json': JSON.stringify({ run: 1.5, backend: 'werkbank', usage: {}, status: 'done', summary: 'half run' }) },
+      store: { 'roles:/w': { coder: { name: 'coder', runs: 2, isBusy: false } } },
+    })
+    if (!(await w.start($))) return
+    const r = String((await $.tool.call({ tool: 'mcp__relay__worker_expand', role: 'coder', run: 1.5, section: 'packet' })).result)
+    expect(r).toContain('Run must be a whole number from 1')
+    expect(r).not.toContain('half run')
+  })
+
   test('N112: worker_status shows no worktree for werkbank', { options: WB }, async ($: any, on: any) => {
     const w = world(on)
     if (!(await w.start($))) return

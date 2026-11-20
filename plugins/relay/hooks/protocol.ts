@@ -516,29 +516,85 @@ const isCount = (value: string) => /^[\d.,]+[kKmMbB]?$/.test(value)
 // The value is taken whole: double, single or escaped quotes with spaces and
 // escapes inside, else up to the next separator. Numbers are redacted too,
 // except the count of a counter name (contract 0001, Nachtrag 1, N18).
-const KEY_VALUE =
-  /\b([A-Za-z0-9_.-]*(?:api[_-]?key|apikey|secret|token|passwd|password|access[_-]?key|private[_-]?key|credential|session[_-]?key|(?<![A-Za-z])key(?![A-Za-z]))[A-Za-z0-9_.-]*)(\\?["']?\s*[:=]\s*)(\\"(?:[^"\\]|\\[^"])*\\"|"(?:[^"\\\r\n]|\\.)*"|'(?:[^'\\\r\n]|\\.)*'|[^\s"'&,;\\]+)/gi
+const KEY_NAME =
+  String.raw`[A-Za-z0-9_.-]*(?:api[_-]?key|apikey|secret|token|passwd|password|access[_-]?key|private[_-]?key|credential|session[_-]?key|(?<![A-Za-z])key(?![A-Za-z]))[A-Za-z0-9_.-]*`
+const KEY_SEP = String.raw`\\?["']?\s*[:=]\s*`
+// name and separator, the value read by quotedValue (N156)
+const KEY_HEAD = new RegExp(String.raw`\b(${KEY_NAME})(${KEY_SEP})`, 'gi')
+// an unquoted value; quoted ones were replaced before (N156)
+const KEY_VALUE = new RegExp(String.raw`\b(${KEY_NAME})(${KEY_SEP})([^\s"'&,;\\]+)`, 'gi')
+// `"Authorization": "x"`, `Authorization: "x"`, also once escaped (N142, N149)
+const AUTH_HEAD = /(\\?["']?\b(?:proxy-)?authorization\\?["']?\s*[:=]\s*)/gi
 
 function redactKeyValue(match: string, name: string, sep: string, value: string): string {
   if (isCounterName(name) && isCount(value)) return match
-  const quote = value.startsWith('\\"') ? '\\"' : value.startsWith('"') ? '"' : value.startsWith("'") ? "'" : ''
-  return `${name}${sep}${quote}${SECRET}${quote}`
+  return `${name}${sep}${SECRET}`
+}
+
+// Where a quoted value that starts at `at` ends, read character by character:
+// "…" and '…' with \ escaping the next character, and once-escaped JSON \"…\"
+// read as it would be after one decoding. Undefined when nothing quoted
+// starts there; isClosed false when it runs to the line or text end (N156).
+export function quotedValue(text: string, at: number): { end: number; open: string; isClosed: boolean } | undefined {
+  if (text.startsWith('\\"', at)) {
+    let isEscaped = false
+    for (let i = at + 2; i < text.length; ) {
+      let c = text[i]!
+      let width = 1
+      if (c === '\\') {
+        const d = text[i + 1]
+        if (d === undefined) break
+        c = d === '\\' ? '\\' : d === '"' ? '"' : 'x'
+        width = 2
+      } else if (c === '"' || c === '\n' || c === '\r') {
+        // a plain quote or a line end ends the outer string: no closing here
+        return { end: i, open: '\\"', isClosed: false }
+      }
+      if (isEscaped) isEscaped = false
+      else if (c === '\\') isEscaped = true
+      else if (c === '"') return { end: i + 2, open: '\\"', isClosed: true }
+      i += width
+    }
+    return { end: text.length, open: '\\"', isClosed: false }
+  }
+  const q = text[at]
+  if (q !== '"' && q !== "'") return undefined
+  for (let i = at + 1; i < text.length; i++) {
+    const c = text[i]
+    if (c === '\\') {
+      i++
+      continue
+    }
+    if (c === q) return { end: i + 1, open: q, isClosed: true }
+    if (c === '\n' || c === '\r') return { end: i, open: q, isClosed: false }
+  }
+  return { end: text.length, open: q, isClosed: false }
+}
+
+// Replaces the quoted value after each match of `head` (N156).
+function redactQuoted(text: string, head: RegExp, keep?: (name: string, value: string) => boolean): string {
+  let out = ''
+  let last = 0
+  head.lastIndex = 0
+  for (let m = head.exec(text); m; m = head.exec(text)) {
+    const at = m.index + m[0].length
+    const v = at >= last ? quotedValue(text, at) : undefined
+    if (!v || keep?.(m[1] ?? '', text.slice(at, v.end))) {
+      if (m[0].length === 0) head.lastIndex++
+      continue
+    }
+    out += `${text.slice(last, at)}${v.open}${SECRET}${v.isClosed ? v.open : ''}`
+    last = v.end
+    head.lastIndex = v.end
+  }
+  return out + text.slice(last)
 }
 
 // Credentials in text relay persists or delivers (live.log, run files,
 // packets, notices): replaced before they leave relay (contract 0001,
 // Nachtrag 1). Best effort by shape; it never makes text longer to read.
 const SECRET_PATTERNS: [RegExp, string | ((...args: string[]) => string)][] = [
-  // `"Authorization": "Bearer x"`, `Authorization: "x"`: the whole quoted
-  // value goes (N142)
-  // read with its escapes, so a \" inside does not end it (N149)
-  [
-    /(\\?["']?\b(?:proxy-)?authorization\\?["']?\s*[:=]\s*)(\\"(?:\\\\\\"|[^"\\]|\\\\|\\[^"\\])*\\"|"(?:[^"\\\r\n]|\\.)*"|'(?:[^'\\\r\n]|\\.)*')/gi,
-    ((_m: string, head: string, value: string) => {
-      const quote = value.startsWith('\\"') ? '\\"' : value[0]!
-      return `${head}${quote}${SECRET}${quote}`
-    }) as (...args: string[]) => string,
-  ],
+  // quoted Authorization values are replaced before, by quotedValue (N156)
   // `Authorization: Bearer x`, `Proxy-Authorization: Basic x`
   [/\b((?:proxy-)?authorization)(\s*[:=]\s*)(?:(bearer|basic|token|digest)\s+)?[^\s"'\\,;]+/gi, `$1$2$3 ${SECRET}`],
   [/\b(bearer|basic)\s+[A-Za-z0-9._~+/=-]{8,}/gi, `$1 ${SECRET}`],
@@ -572,6 +628,9 @@ function redactKeys(text: string): string {
 
 export function redact(text: string): string {
   let out = redactKeys(text)
+  // quoted values first, read with their escapes (N156)
+  out = redactQuoted(out, AUTH_HEAD)
+  out = redactQuoted(out, KEY_HEAD, (name, value) => isCounterName(name) && isCount(value))
   for (const [re, by] of SECRET_PATTERNS) out = typeof by === 'string' ? out.replace(re, by) : out.replace(re, by)
   return out
 }
