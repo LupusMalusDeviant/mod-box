@@ -323,9 +323,13 @@ async function claimQueue($: EngineInterface) {
     return
   }
   isOwner = true
+  // the claim is renewed from now on, but nothing starts before every
+  // interrupted run is handled and its run number taken over (N167)
+  isRecovering = true
   heartbeat = $.clock.every(HEARTBEAT_MS, () => void beat($))
   showStatus($)
   await recover($).catch(err => notices.push(`relay could not finish taking over the queue (${message(err)}).`))
+  isRecovering = false
 }
 
 async function beat($: EngineInterface) {
@@ -383,7 +387,7 @@ async function recover($: EngineInterface) {
     // file that is a link out means interrupted, without files (N118)
     const kept = await keptMessageOf($, job).catch(() => undefined)
     const why = await (
-      typeof kept === 'object'
+      kept && 'unsafe' in kept
         ? reportInterrupted($, job, redact(`the kept message was not read: ${kept.unsafe}`), { noFiles: 'its stored files are not safe to use' })
         : kept !== undefined
           ? deliverKept($, job, kept)
@@ -400,6 +404,8 @@ async function recover($: EngineInterface) {
   }
   await save($)
   await writeQueue($).catch(err => notices.push(`relay could not write the queue after the restart (${message(err)}).`))
+  // the restart is done: waiting jobs may start (N167)
+  isRecovering = false
   await pump($)
 }
 
@@ -849,7 +855,11 @@ async function writeCheckOf($: EngineInterface, owns: string[], dir: string, bef
 // a time; a call while one runs makes it look again before it ends.
 let pumping: Promise<void> | undefined
 let isPumpAsked = false
+// true while the restart handles the interrupted runs (N167)
+let isRecovering = false
 function pump($: EngineInterface): Promise<void> {
+  // no start during the restart; it pumps itself once it is done (N167)
+  if (isRecovering) return Promise.resolve()
   if (pumping) {
     isPumpAsked = true
     return pumping
@@ -1645,7 +1655,9 @@ async function deliver(
   extra: { backend: BackendId; usage: Usage; noFiles?: string },
 ): Promise<boolean> {
   const packet = redactDeep(raw)
-  const head = redact(rawHead)
+  // the headline is always one line: a line break in its fields (usage.model,
+  // say) becomes a space (N168)
+  const head = redact(rawHead).replace(/[\r\n]+/g, ' ')
   // a later run holds the slot (N102, N110) or a file there is unsafe (N108)
   const noFiles = extra.noFiles ?? (isRotatedOut(role, run) ? 'a later run holds this slot' : undefined)
   const fullPath = noFiles ? `(not stored: ${noFiles})` : runPath(role.name, run, 'full.md')
@@ -1715,7 +1727,7 @@ async function attemptDelivery($: EngineInterface, d: Delivery): Promise<boolean
           warnings.add(why)
           text = withWarnings()
         } else {
-          await $.fs.write(keptPath, `${jobLine(d.job.id, text.length)}\n${text}`)
+          await $.fs.write(keptPath, `${jobLine(d.job.id, text.length, d.status)}\n${text}`)
           d.hasUndelivered = true
         }
       }
@@ -1792,13 +1804,17 @@ function isEnvelopeRun(text: string, run: number): boolean {
 
 // The first line of undelivered-<run>.md: whose message it is and how long,
 // so a partly written one is told apart (N103, N111).
-const jobLine = (id: string, length: number) => `<!-- relay job ${id} length ${length} -->`
+// It carries the checked packet status too, so a restart never reads it from
+// the text (N168).
+const jobLine = (id: string, length: number, status?: Packet['status']) => `<!-- relay job ${id} length ${length}${status ? ` status ${status}` : ''} -->`
+const JOB_LINE = /^<!-- relay job (\S+) length (\d+)(?: status (done|partial|blocked|failed))? -->$/
+type KeptMessage = { body: string; status?: Packet['status'] }
 const RESTART_MARK = ' · delivered after a restart'
 
 // The kept message of this job, without its id line; undefined when the file
 // is missing, empty, unsafe, carries another (or no) job id or is not as
 // long as its id line says (N103, N111).
-async function keptMessageOf($: EngineInterface, job: QueuedJob): Promise<string | { unsafe: string } | undefined> {
+async function keptMessageOf($: EngineInterface, job: QueuedJob): Promise<KeptMessage | { unsafe: string } | undefined> {
   if (job.run === undefined) return undefined
   const path = undeliveredPath(job.role, job.run)
   // a link out is no missing file: the run is reported as interrupted (N118)
@@ -1807,12 +1823,14 @@ async function keptMessageOf($: EngineInterface, job: QueuedJob): Promise<string
   const text = String(await $.fs.read(path).catch(() => ''))
   const nl = text.indexOf('\n')
   const body = text.slice(nl + 1)
-  if (nl < 0 || text.slice(0, nl) !== jobLine(job.id, body.length)) return undefined
-  return body.trim() ? body : undefined
+  const line = nl < 0 ? undefined : JOB_LINE.exec(text.slice(0, nl))
+  if (!line || line[1] !== job.id || Number(line[2]) !== body.length) return undefined
+  return body.trim() ? { body, status: line[3] as Packet['status'] | undefined } : undefined
 }
 
 // Delivers a kept message; its headline says it came after a restart (N105).
-async function deliverKept($: EngineInterface, job: QueuedJob, body: string): Promise<string | undefined> {
+async function deliverKept($: EngineInterface, job: QueuedJob, kept: KeptMessage): Promise<string | undefined> {
+  const body = kept.body
   const run = job.run ?? 0
   // the role is kept with at least this run, before any later task starts (N152)
   const role = (roles[job.role] ??= { name: job.role, runs: run, isBusy: false })
@@ -1820,7 +1838,10 @@ async function deliverKept($: EngineInterface, job: QueuedJob, body: string): Pr
   await save($).catch(() => undefined)
   const nl = body.indexOf('\n')
   const text = nl < 0 ? `${body}${RESTART_MARK}` : `${body.slice(0, nl)}${RESTART_MARK}${body.slice(nl)}`
-  const status = (/^Status: (done|partial|blocked|failed)\b/m.exec(body)?.[1] ?? 'partial') as Packet['status']
+  // the status of the id line; a file from before 2r: only the line right
+  // after the headline (N168)
+  const second = nl < 0 ? '' : (body.slice(nl + 1).split('\n')[0] ?? '')
+  const status = kept.status ?? ((/^Status: (done|partial|blocked|failed)\b/.exec(second)?.[1] ?? 'partial') as Packet['status'])
   const d: Delivery = { role, run, job, files: [], text: redact(text), status, isStored: true, hasUndelivered: true }
   return (await attemptDelivery($, d)) ? undefined : 'reporting failed (the stored packet could not be delivered)'
 }

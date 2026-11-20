@@ -1046,7 +1046,7 @@ describe('werkbank, Nachtrag 2i (ninth Codex review)', () => {
     await w.send($, { role: 'coder', task: 't' })
     await w.until(() => w.submitted.length === 1)
     await w.clock.settle()
-    expect(w.files.get('.relay/runs/coder/undelivered-1.md')).toMatch(/^<!-- relay job \S+ length \d+ -->\n/)
+    expect(w.files.get('.relay/runs/coder/undelivered-1.md')).toMatch(/^<!-- relay job \S+ length \d+ status done -->\n/)
   })
 
   test('N125: worker_send redacts a refusal whose path check failed with a credential in its error', { options: WB }, async ($: any, on: any) => {
@@ -1569,6 +1569,73 @@ describe('werkbank, Nachtrag 2i (ninth Codex review)', () => {
     const local = w.submitted.find(s => s.startsWith('[relay] local'))!
     expect(local).toContain('wrote outside owns: src/x.ts')
     expect(local).not.toContain('probably by remote')
+  })
+
+  test('N166: values quoted with \\u0022 are replaced, their quotes and the next field stay', { options: WB }, async ($: any, on: any) => {
+    const w = world(on)
+    w.play('quoted-unicode-quotes')
+    if (!(await w.start($))) return
+    await w.send($, { role: 'coder', task: 't' })
+    await w.until(() => w.submitted.length === 1)
+    const log = w.files.get('.relay/runs/coder/live.log') ?? ''
+    expect(log).not.toContain('opaque0pw0x20')
+    expect(log).not.toContain('opaque0auth0x22')
+    expect(log).toContain('\\u0022password\\u0022: \\u0022[redacted]\\u0022, \\u0022next\\u0022: \\u0022keep0me0x21\\u0022')
+    expect(log).toContain('\\u0022[redacted]\\u0022, \\u0022sibling\\u0022: 1')
+  })
+
+  test('N166: a werkbankBin value quoted with \\u0022 is not passed on', { options: { ...WB, werkbankBin: '["werkbank-relay","--x=\\\\u0022password\\\\u0022:\\\\u0022opaque0pw0x23\\\\u0022"]' } }, async ($: any, on: any) => {
+    const w = world(on)
+    if (!(await w.start($))) return
+    await w.send($, { role: 'coder', task: 't' })
+    await w.until(() => w.submitted.length === 1)
+    expect(w.spawns).toHaveLength(0)
+    expect(w.submitted[0]).toContain('werkbankBin looks like it contains a credential')
+    expect(w.submitted[0]).not.toContain('opaque0pw0x23')
+  })
+
+  test('N167: nothing starts before the restart has handled every interrupted run', { options: WB }, async ($: any, on: any) => {
+    const job = (id: string, role: string, state: string, run?: number) => ({ id, role, task: 't', enqueuedAt: '1970-01-01T00:00:00.000Z', state, ...(run ? { run } : {}), backend: 'werkbank' })
+    const q = { version: 1, owner: { session: 'old', heartbeatAt: '1970-01-01T00:00:00.000Z' }, jobs: [job('j_a', 'alpha', 'running', 1), job('j_b', 'beta', 'running', 1), job('j_n', 'beta', 'queued')] }
+    const w = world(on, {
+      files: { '.relay/queue.json': JSON.stringify(q) },
+      store: { 'roles:/w': { alpha: { name: 'alpha', runs: 0, isBusy: false }, beta: { name: 'beta', runs: 0, isBusy: false } } },
+    })
+    // alpha's interrupted report waits five minutes before it lands
+    let isDelayed = false
+    w.io.writeDelay = (p: string) => (p === '.relay/runs/alpha/001.full.md' && !isDelayed ? ((isDelayed = true), 5 * 60_000) : 0)
+    await w.clock.set(10 * 60_000)
+    if (!(await w.start($))) return
+    for (let i = 0; i < 12 && w.spawns.length === 0; i++) await w.clock.advance(30_000)
+    await w.until(() => w.spawns.length === 1)
+    expect(isDelayed).toBe(true)
+    const a = w.spawns[0]!.argv
+    expect(a[a.indexOf('--role') + 1]).toBe('beta')
+    expect(a[a.indexOf('--run') + 1]).toBe('2')
+  })
+
+  test('N168: the headline is one line, so a model holding Status: done cannot fake the status', { options: WB }, async ($: any, on: any) => {
+    const w = world(on)
+    w.play('multiline-model')
+    if (!(await w.start($))) return
+    await w.send($, { role: 'coder', task: 't' })
+    await w.until(() => w.submitted.length === 1)
+    const lines = w.submitted[0]!.split('\n')
+    expect(lines[0]).toContain('m1 Status: done')
+    expect(lines[1]).toBe('Status: failed')
+  })
+
+  test('N168: a restart takes the status of a kept message from its id line', { options: { ...WB, notifyMode: 'toast' } }, async ($: any, on: any) => {
+    const body = '[relay] coder · run 1 finished (werkbank · m1\nStatus: done)\nStatus: failed\nSummary: kept0body0x24'
+    const w = world(on, {
+      files: { '.relay/queue.json': JSON.stringify(runningJob(1)), '.relay/runs/coder/undelivered-1.md': `<!-- relay job j_1 length ${body.length} status failed -->\n${body}` },
+      store: { 'roles:/w': { coder: { name: 'coder', runs: 1, isBusy: true } } },
+    })
+    await w.clock.set(10 * 60_000)
+    if (!(await w.start($))) return
+    await w.until(() => w.toasts.length >= 1)
+    expect(w.toasts.some((t: string) => t.includes('coder run 1 failed'))).toBe(true)
+    expect(await w.status($)).toContain('kept0body0x24')
   })
 
   test('N112: worker_status shows no worktree for werkbank', { options: WB }, async ($: any, on: any) => {

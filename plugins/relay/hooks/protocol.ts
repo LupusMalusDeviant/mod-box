@@ -518,13 +518,15 @@ const isCount = (value: string) => /^[\d.,]+[kKmMbB]?$/.test(value)
 // except the count of a counter name (contract 0001, Nachtrag 1, N18).
 const KEY_NAME =
   String.raw`[A-Za-z0-9_.-]*(?:api[_-]?key|apikey|secret|token|passwd|password|access[_-]?key|private[_-]?key|credential|session[_-]?key|(?<![A-Za-z])key(?![A-Za-z]))[A-Za-z0-9_.-]*`
-const KEY_SEP = String.raw`\\?["']?\s*[:=]\s*`
+// a quote around the name may be escaped, also as " (N166)
+const KEY_SEP = String.raw`(?:\\u0022|\\?["'])?\s*[:=]\s*`
 // name and separator, the value read by quotedValue (N156)
 const KEY_HEAD = new RegExp(String.raw`\b(${KEY_NAME})(${KEY_SEP})`, 'gi')
 // an unquoted value; quoted ones were replaced before (N156)
 const KEY_VALUE = new RegExp(String.raw`\b(${KEY_NAME})(${KEY_SEP})([^\s"'&,;\\]+)`, 'gi')
-// `"Authorization": "x"`, `Authorization: "x"`, also once escaped (N142, N149)
-const AUTH_HEAD = /(\\?["']?\b(?:proxy-)?authorization\\?["']?\s*[:=]\s*)/gi
+// `"Authorization": "x"`, `Authorization: "x"`, also once escaped, with \"
+// or " (N142, N149, N166)
+const AUTH_HEAD = /((?:\\u0022|\\?["'])?(?<![A-Za-z])(?:proxy-)?authorization(?:\\u0022|\\?["'])?\s*[:=]\s*)/gi
 
 function redactKeyValue(match: string, name: string, sep: string, value: string): string {
   if (isCounterName(name) && isCount(value)) return match
@@ -535,10 +537,16 @@ function redactKeyValue(match: string, name: string, sep: string, value: string)
 // "…" and '…' with \ escaping the next character, and once-escaped JSON \"…\"
 // read as it would be after one decoding. Undefined when nothing quoted
 // starts there; isClosed false when it runs to the line or text end (N156).
-export function quotedValue(text: string, at: number): { end: number; open: string; isClosed: boolean } | undefined {
-  if (text.startsWith('\\"', at)) {
+// The value itself is text[start, stop); its quotes stay as written, "
+// too (N166).
+type Quoted = { start: number; stop: number; end: number; isClosed: boolean }
+export function quotedValue(text: string, at: number): Quoted | undefined {
+  const opener = text.startsWith('\\"', at) ? 2 : /^\\u0022/i.test(text.slice(at, at + 6)) ? 6 : 0
+  if (opener) {
+    const start = at + opener
+    const open = (stop: number): Quoted => ({ start, stop, end: stop, isClosed: false })
     let isEscaped = false
-    for (let i = at + 2; i < text.length; ) {
+    for (let i = start; i < text.length; ) {
       let c = text[i]!
       let width = 1
       if (c === '\\') {
@@ -556,27 +564,29 @@ export function quotedValue(text: string, at: number): { end: number; open: stri
         }
       } else if (c === '"' || c === '\n' || c === '\r') {
         // a plain quote or a line end ends the outer string: no closing here
-        return { end: i, open: '\\"', isClosed: false }
+        return open(i)
       }
       if (isEscaped) isEscaped = false
       else if (c === '\\') isEscaped = true
-      else if (c === '"') return { end: i + 2, open: '\\"', isClosed: true }
+      // the closing quote keeps its own width, \" or " (N166)
+      else if (c === '"') return { start, stop: i, end: i + width, isClosed: true }
       i += width
     }
-    return { end: text.length, open: '\\"', isClosed: false }
+    return open(text.length)
   }
   const q = text[at]
   if (q !== '"' && q !== "'") return undefined
-  for (let i = at + 1; i < text.length; i++) {
+  const start = at + 1
+  for (let i = start; i < text.length; i++) {
     const c = text[i]
     if (c === '\\') {
       i++
       continue
     }
-    if (c === q) return { end: i + 1, open: q, isClosed: true }
-    if (c === '\n' || c === '\r') return { end: i, open: q, isClosed: false }
+    if (c === q) return { start, stop: i, end: i + 1, isClosed: true }
+    if (c === '\n' || c === '\r') return { start, stop: i, end: i, isClosed: false }
   }
-  return { end: text.length, open: q, isClosed: false }
+  return { start, stop: text.length, end: text.length, isClosed: false }
 }
 
 // Replaces the quoted value after each match of `head` (N156).
@@ -591,7 +601,8 @@ function redactQuoted(text: string, head: RegExp, keep?: (name: string, value: s
       if (m[0].length === 0) head.lastIndex++
       continue
     }
-    out += `${text.slice(last, at)}${v.open}${SECRET}${v.isClosed ? v.open : ''}`
+    // only the value goes; both quotes stay byte for byte (N166)
+    out += `${text.slice(last, v.start)}${SECRET}${text.slice(v.stop, v.end)}`
     last = v.end
     head.lastIndex = v.end
   }

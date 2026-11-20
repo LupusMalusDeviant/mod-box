@@ -405,6 +405,14 @@ describe('werkbank: building', () => {
     expect(b).not.toContain('--owns')
   })
 
+  test('N169: a resumed run has the whole argv in order, --session after --cwd, no empty list flags', () => {
+    expect(BACKENDS.werkbank.build(wb({ isNew: false, sessionId: 'fsn1-5:9b1f', run: 2 })).argv).toEqual([
+      'werkbank-relay', 'run', '--leitstand', 'http://100.73.150.87:5080', '--token-file', '/h/.werkbank/relay.token',
+      '--role', 'r', '--run', '2', '--cwd', '/w', '--session', 'fsn1-5:9b1f', '--timeout-min', '30',
+      '--protocol-file', '/w/.relay/tmp/r-2.protocol.md',
+    ])
+  })
+
   test('refused before the start: big task, option-like or comma values, a bad Leitstand, a relative tmp folder', () => {
     expect(refused(wb({ task: 'x'.repeat(16 * 1024) }))).toBe('built')
     expect(refused(wb({ task: 'x'.repeat(16 * 1024 + 1) }))).toContain('cli: werkbank: the task has 16385 bytes')

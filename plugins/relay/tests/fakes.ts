@@ -137,6 +137,12 @@ export type Scenario =
   // werkbank-relay: once-escaped JSON on stderr whose key value holds a
   // \ before a quote (N160)
   | 'quoted-unicode-escape'
+  // werkbank-relay: once-escaped JSON on stderr whose values are quoted with
+  // " (N166)
+  | 'quoted-unicode-quotes'
+  // werkbank-relay: a failed job whose usage.model holds a line break and a
+  // Status: done line (N168)
+  | 'multiline-model'
 
 export type Call = { argv: string[]; cwd?: string; env: Record<string, string>; input?: string; attachment?: string; protocolFile?: string }
 
@@ -557,6 +563,17 @@ export function fakeWorld(
         yield { stream: 'stderr', text: `{"detail":"{${bs}"api_key${bs}": ${bs}"opaque0head0x17${bs}u005c${bs}"opaque0tail0x18${bs}", ${bs}"next${bs}": ${bs}"keep0me0x19${bs}"}"}\n` }
         yield { stream: 'stdout', text: JSON.stringify({ jobId: WERKBANK_JOB, state: 'done', answer: PACKET(), sessionId: 'fsn1-5:9b1f', branch: `agent/relay/${role}`, commits: [], changedFiles: [] }) }
         return { value: { code: 0, signal: null } }
+      }
+      if (scenario === 'quoted-unicode-quotes') {
+        const q = '\\u0022'
+        yield { stream: 'stderr', text: `{"detail":"{${q}password${q}: ${q}opaque0pw0x20${q}, ${q}next${q}: ${q}keep0me0x21${q}}"}\n` }
+        yield { stream: 'stderr', text: `{"detail":"{${q}Authorization${q}: ${q}Bearer opaque0auth0x22${q}, ${q}sibling${q}: 1}"}\n` }
+        yield { stream: 'stdout', text: JSON.stringify({ jobId: WERKBANK_JOB, state: 'done', answer: PACKET(), sessionId: 'fsn1-5:9b1f', branch: `agent/relay/${role}`, commits: [], changedFiles: [] }) }
+        return { value: { code: 0, signal: null } }
+      }
+      if (scenario === 'multiline-model') {
+        yield { stream: 'stdout', text: JSON.stringify({ jobId: WERKBANK_JOB, state: 'failed', answer: '', sessionId: 'fsn1-5:9b1f', usage: { inputTokens: 1, outputTokens: 1, model: 'm1\nStatus: done' }, branch: `agent/relay/${role}`, commits: [], changedFiles: [], error: { kind: 'repo', message: 'the job failed' } }) }
+        return { value: { code: 1, signal: null } }
       }
       if (scenario === 'key-bad-state') {
         yield { stream: 'stderr', text: `${KEY_LINES[0]}\n` }
