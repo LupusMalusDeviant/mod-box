@@ -107,7 +107,9 @@ export function parsePacket(text: string): Packet | undefined {
     : [text.slice(text.indexOf('{'), text.lastIndexOf('}') + 1)]
   for (const raw of candidates) {
     try {
-      return normalise(JSON.parse(raw))
+      // redacted in the worker's own field order, before the fields are
+      // put in relay's order: a key spread over fields stays hidden (N100)
+      return normalise(redactDeep(JSON.parse(raw) as unknown))
     } catch {
       // not JSON: fall through
     }
@@ -414,10 +416,19 @@ export function keyStateAfter(text: string, openKind: string | undefined): strin
   return openKind
 }
 
-export function privateKeyFilter(): (line: string) => string | undefined {
+// Whether a BEGIN … PRIVATE KEY marker is in the text, read decoded (N101).
+export function hasKeyBegin(text: string): boolean {
+  if (!/PRIVATE|\\u/i.test(text)) return false
+  return /-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----/.test(decodedView(text).decoded)
+}
+
+// The filter, and whether a key is open after the lines it saw (N101).
+export type KeyFilter = ((line: string) => string | undefined) & { readonly isOpen: boolean }
+
+export function privateKeyFilter(): KeyFilter {
   // the kind of the open key (RSA, OPENSSH, EC, '' …); undefined: none open
   let openKind: string | undefined
-  return line => {
+  const filter = (line: string) => {
     const wasInKey = openKind !== undefined
     // every marker of the line, in order, also when escaped (N62, N70, N94)
     openKind = keyStateAfter(line, openKind)
@@ -429,6 +440,8 @@ export function privateKeyFilter(): (line: string) => string | undefined {
     // whole keys on one line are left to redact()
     return line
   }
+  Object.defineProperty(filter, 'isOpen', { get: () => openKind !== undefined })
+  return filter as KeyFilter
 }
 
 // Every string inside a JSON line, decoded (- → -); none for other

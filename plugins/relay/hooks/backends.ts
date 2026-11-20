@@ -238,6 +238,19 @@ function cliFailure(r: ProcessResult): RunError | undefined {
   return undefined
 }
 
+// A signal or broken stream beside an error the CLI reported itself: kept
+// with it, the error keeps its kind (N85, N106).
+function processFailure(r: ProcessResult): string | undefined {
+  if (r.isTimedOut || r.isStoppedByLimit || r.exitCode !== undefined) return undefined
+  if (r.signal) return `ended by signal ${r.signal}`
+  if (r.streamError) return `reading the output failed: ${r.streamError}`
+  return undefined
+}
+function reported(message: string, r: ProcessResult): RunError {
+  const extra = processFailure(r)
+  return { kind: classifyError(message), message: extra ? `${cut(message)} · ${extra}` : cut(message) }
+}
+
 // ── claude ──────────────────────────────────────────────────────────────
 
 const claude: Backend = {
@@ -347,7 +360,7 @@ const codex: Backend = {
       else if (e.type === 'error') message = str(e.message) ?? 'error'
     }
     const error: RunError | undefined = message
-      ? { kind: classifyError(message), message: cut(message) }
+      ? reported(message, r)
       : // a nonzero exit is a failure even when an answer came first
         cliFailure(r)
     return { answer, sessionId, usage: clean(usage), error }
@@ -439,7 +452,7 @@ const opencode: Backend = {
     }
     const answer = texts.join('\n\n')
     const error: RunError | undefined = message
-      ? { kind: classifyError(message), message: cut(message) }
+      ? reported(message, r)
       : // a nonzero exit is a failure even when an answer came first
         cliFailure(r)
     return { answer, sessionId, usage: clean(usage), error }
@@ -659,16 +672,9 @@ const werkbank: Backend = {
     const jsonError: RunError | undefined = kind && errText && !isPartialState ? { kind, message: errText } : undefined
     const fromJson = jsonError ?? (isErrorMalformed ? { kind: 'cli' as const, message: 'werkbank-relay sent a malformed error field' } : undefined)
     // a signal or broken stream after a JSON error is kept beside it (N85)
-    const processFailure =
-      r.isTimedOut || r.isStoppedByLimit || r.exitCode !== undefined
-        ? undefined
-        : r.signal
-          ? `ended by signal ${r.signal}`
-          : r.streamError
-            ? `reading the output failed: ${r.streamError}`
-            : undefined
+    const failure = processFailure(r)
     let error: RunError | undefined = fromJson
-      ? { kind: fromJson.kind, message: processFailure ? `${fromJson.message} · ${processFailure}` : fromJson.message }
+      ? { kind: fromJson.kind, message: failure ? `${fromJson.message} · ${failure}` : fromJson.message }
       : cliFailure(r)
     if (!error && remote && state === 'done' && r.exitCode !== 0 && !r.isTimedOut) {
       error = { kind: 'cli', message: 'werkbank-relay ended without an exit code' }

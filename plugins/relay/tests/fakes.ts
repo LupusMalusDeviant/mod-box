@@ -76,6 +76,17 @@ export type Scenario =
   | 'key-letter-stderr'
   // werkbank-relay: a packet whose risks hold a key's start, body and end
   | 'key-split-risks'
+  // werkbank-relay: a packet whose JSON holds a key's start in decisions, its
+  // body in summary and its end in risks (N100)
+  | 'key-across-fields'
+  // codex: one event with a key's start, body and end in three fields; the
+  // shown field holds only the body (N101)
+  | 'key-fields-event'
+  // werkbank-relay: a key opens on stderr and never ends; the JSON error
+  // carries the body (N101)
+  | 'key-open-error'
+  // codex: an error event, then killed by SIGTERM (N106)
+  | 'error-signal'
 
 export type Call = { argv: string[]; cwd?: string; env: Record<string, string>; input?: string; attachment?: string; protocolFile?: string }
 
@@ -356,6 +367,13 @@ export function fakeWorld(
         const ev = (id: string, text: string) => `{"type":"item.completed","item":{"id":"${id}","type":"agent_message","text":"${text}"}}`
         yield { stream: 'stdout', text: `${ev('e1', esc(KEY_LINES[0]))}\n${ev('e2', KEY_BODY)}\n${ev('e3', esc(KEY_LINES[1]))}\n${ev('e4', 'after the key')}\n` }
       }
+      if (scenario === 'key-fields-event') {
+        yield { stream: 'stdout', text: jsonl({ type: 'item.completed', item: { a: KEY_LINES[0], id: 'k2', type: 'command_execution', command: KEY_BODY, z: KEY_LINES[1] } }) }
+      }
+      if (scenario === 'error-signal') {
+        yield { stream: 'stdout', text: jsonl({ type: 'error', message: 'stream disconnected before completion' }) }
+        return { value: { code: null, signal: 'SIGTERM' } }
+      }
       if (scenario === 'key-lines') {
         yield {
           stream: 'stdout',
@@ -420,6 +438,9 @@ export function fakeWorld(
         yield { stream: 'stderr', text: `{"level":"error","detail":"${esc(KEY_LINES[0])}\\n${KEY_BODY}\\n${esc(KEY_LINES[1])}"}\n` }
         return { value: { code: 1, signal: null } }
       }
+      if (scenario === 'key-open-error') {
+        return yield* out(JSON.stringify({ error: { kind: 'cli', message: KEY_BODY } }), 2, `queued\n${KEY_LINES[0]}\n`)
+      }
       if (scenario === 'failed-signal') {
         yield { stream: 'stdout', text: JSON.stringify({ jobId: WERKBANK_JOB, state: 'failed', answer: '', sessionId: 'fsn1-5:9b1f', branch: `agent/relay/${role}`, commits: [], changedFiles: [], error: { kind: 'repo', message: 'the repo is gone' } }) }
         return { value: { code: null, signal: 'SIGTERM' } }
@@ -468,7 +489,9 @@ export function fakeWorld(
                   ? [MISMATCHED_KEY, PACKET()].join('\n')
                   : scenario === 'key-split-risks'
                     ? ['## Work', '```relay', JSON.stringify({ status: 'done', summary: 'Did it.', risks: [KEY_LINES[0], KEY_BODY, KEY_LINES[1], 'nothing else'], sections: ['Work'] }), '```'].join('\n')
-                    : answer,
+                    : scenario === 'key-across-fields'
+                      ? ['## Work', '```relay', JSON.stringify({ status: 'done', decisions: [KEY_LINES[0]], summary: KEY_BODY, risks: [KEY_LINES[1], 'nothing else'], sections: ['Work'] }), '```'].join('\n')
+                      : answer,
         sessionId: scenario === 'session-moved' ? 'fsn1-4:fresh2' : scenario === 'session-token' ? WERKBANK_TOKEN_SESSION : (arg('--session') ?? 'fsn1-5:9b1f'),
         usage: { costUsd: 0.42, turns: 6, inputTokens: 12000, outputTokens: 3100, model: 'claude-opus-5-5' },
         branch: `agent/relay/${role}`,

@@ -642,7 +642,8 @@ describe('werkbank, Nachtrag 2g (seventh Codex review)', () => {
       files: {
         '.relay/queue.json': JSON.stringify(storedJob(1)),
         '.relay/runs/coder/001.packet.json': JSON.stringify(laterPacket),
-        '.relay/runs/coder/undelivered-1.md': message,
+        // since N103 the kept message starts with its job's id
+        '.relay/runs/coder/undelivered-1.md': `<!-- relay job j_1 -->\n${message}`,
       },
       store: { 'roles:/w': { coder: { name: 'coder', runs: 2, isBusy: false } } },
     })
@@ -651,5 +652,130 @@ describe('werkbank, Nachtrag 2g (seventh Codex review)', () => {
     await w.until(() => w.submitted.length === 1)
     expect(w.submitted[0]).toContain('run one did it')
     expect(w.files.get('.relay/runs/coder/undelivered-1.md')).toBe('')
+  })
+})
+
+describe('werkbank, Nachtrag 2h (eighth Codex review)', () => {
+  const runningJob = (run: number, delivery?: 'stored') => ({
+    version: 1,
+    owner: { session: 'old', heartbeatAt: '1970-01-01T00:00:00.000Z' },
+    jobs: [{ id: 'j_1', role: 'coder', task: 't', enqueuedAt: '1970-01-01T00:00:00.000Z', state: 'running', run, backend: 'werkbank', ...(delivery ? { delivery } : {}) }],
+  })
+  const laterPacket = { run: 2, backend: 'werkbank', usage: {}, head: '[relay] coder · run 2 finished (werkbank)', status: 'done', summary: 'run two did it', decisions: [], facts: [], artifacts: [], open_questions: [], needs_from_main: [], risks: [], next_suggested: [], sections: [] }
+  const kept = '[relay] coder · run 1 finished (werkbank)\nStatus: done\nrun one did it'
+
+  test('N99: an undelivered file that is a link out is not written, and that is said', { options: WB }, async ($: any, on: any) => {
+    // the run folder exists from an earlier run; only the kept file is a link
+    const w = world(on, { files: { '.relay/runs/coder/000.full.md': 'earlier' } })
+    w.links.set('.relay/runs/coder/undelivered-1.md', '/etc/cron.d/x')
+    if (!(await w.start($))) return
+    await w.send($, { role: 'coder', task: 't' })
+    await w.until(() => w.submitted.length === 1)
+    // nothing was written through the link
+    expect(w.files.has('.relay/runs/coder/undelivered-1.md')).toBe(false)
+    expect(w.submitted[0]).toContain('Not stored: .relay/runs/coder/undelivered-1.md resolves to /etc/cron.d/x')
+    expect(w.files.get('.relay/runs/coder/001.full.md')).toContain('# coder · run 1')
+  })
+
+  test('N100: a key spread over decisions, summary and risks reaches neither packet.json nor the message', { options: WB }, async ($: any, on: any) => {
+    const w = world(on)
+    w.play('key-across-fields')
+    if (!(await w.start($))) return
+    await w.send($, { role: 'coder', task: 't' })
+    await w.until(() => w.submitted.length === 1)
+    expect(w.submitted[0]).not.toContain(KEY_BODY)
+    expect(w.files.get('.relay/runs/coder/001.packet.json')).not.toContain(KEY_BODY)
+    expect(w.submitted[0]).toContain('nothing else')
+  })
+
+  test('N101: a codex event with a whole key over three fields never reaches live.log', { options: WB }, async ($: any, on: any) => {
+    const w = world(on)
+    w.play('key-fields-event')
+    if (!(await w.start($))) return
+    await w.send($, { role: 'cx', task: 't', backend: 'codex' })
+    await w.until(() => w.submitted.length === 1)
+    const live = w.files.get('.relay/runs/cx/live.log')!
+    expect(live).not.toContain(KEY_BODY)
+    expect(live).toContain('[redacted private key]')
+  })
+
+  test('N101: with a key still open, the end line of live.log hides the error text', { options: WB }, async ($: any, on: any) => {
+    const w = world(on)
+    w.play('key-open-error')
+    if (!(await w.start($))) return
+    await w.send($, { role: 'coder', task: 't' })
+    await w.until(() => w.submitted.length === 1)
+    const live = w.files.get('.relay/runs/coder/live.log')!
+    expect(live).not.toContain(KEY_BODY)
+    expect(live).toContain('error (text hidden: a private key is open)')
+  })
+
+  test('N102: an interrupted run whose slot a later run holds leaves those files alone', { options: { ...WB, keepRuns: 1 } }, async ($: any, on: any) => {
+    const later = JSON.stringify(laterPacket)
+    const w = world(on, {
+      files: { '.relay/queue.json': JSON.stringify(runningJob(1, 'stored')), '.relay/runs/coder/001.packet.json': later, '.relay/runs/coder/001.full.md': '# coder · run 2' },
+      store: { 'roles:/w': { coder: { name: 'coder', runs: 2, isBusy: false } } },
+    })
+    await w.clock.set(10 * 60_000)
+    if (!(await w.start($))) return
+    await w.until(() => w.submitted.length === 1)
+    expect(w.submitted[0]).toContain('run 1 interrupted')
+    expect(w.files.get('.relay/runs/coder/001.packet.json')).toBe(later)
+    expect(w.files.get('.relay/runs/coder/001.full.md')).toBe('# coder · run 2')
+  })
+
+  test('N103: a running job without delivery stored gets its kept message, not "interrupted"', { options: WB }, async ($: any, on: any) => {
+    const w = world(on, {
+      files: { '.relay/queue.json': JSON.stringify(runningJob(1)), '.relay/runs/coder/undelivered-1.md': `<!-- relay job j_1 -->\n${kept}` },
+      store: { 'roles:/w': { coder: { name: 'coder', runs: 1, isBusy: true } } },
+    })
+    await w.clock.set(10 * 60_000)
+    if (!(await w.start($))) return
+    await w.until(() => w.submitted.length === 1)
+    expect(w.submitted[0]).toContain('run one did it')
+    expect(w.submitted[0]).not.toContain('interrupted')
+    expect(w.submitted[0]).not.toContain('relay job j_1')
+  })
+
+  test('N103: a kept message of another job is not delivered', { options: WB }, async ($: any, on: any) => {
+    const w = world(on, {
+      files: { '.relay/queue.json': JSON.stringify(runningJob(1, 'stored')), '.relay/runs/coder/undelivered-1.md': `<!-- relay job j_9 -->\n${kept}` },
+      store: { 'roles:/w': { coder: { name: 'coder', runs: 1, isBusy: true } } },
+    })
+    await w.clock.set(10 * 60_000)
+    if (!(await w.start($))) return
+    await w.until(() => w.submitted.length === 1)
+    expect(w.submitted[0]).not.toContain('run one did it')
+    expect(w.submitted[0]).toContain('run 1 interrupted')
+  })
+
+  test('N104: a live.log write that fails is named under risks', { options: WB }, async ($: any, on: any) => {
+    const w = world(on)
+    w.io.failWrite = (p: string) => p === '.relay/runs/coder/live.log'
+    if (!(await w.start($))) return
+    await w.send($, { role: 'coder', task: 't' })
+    await w.until(() => w.submitted.length === 1)
+    expect(w.submitted[0]).toContain('live.log was not written: the write failed (')
+    expect(w.submitted[0]).toContain('ENOSPC')
+  })
+
+  test('N105: a kept message delivered after a restart says so in its first line', { options: WB }, async ($: any, on: any) => {
+    const w = world(on, {
+      files: { '.relay/queue.json': JSON.stringify(runningJob(1, 'stored')), '.relay/runs/coder/undelivered-1.md': `<!-- relay job j_1 -->\n${kept}` },
+      store: { 'roles:/w': { coder: { name: 'coder', runs: 1, isBusy: true } } },
+    })
+    await w.clock.set(10 * 60_000)
+    if (!(await w.start($))) return
+    await w.until(() => w.submitted.length === 1)
+    expect(w.submitted[0]!.split('\n')[0]).toBe('[relay] coder · run 1 finished (werkbank) · delivered after a restart')
+  })
+
+  test('N106: a codex error event and a signal are both named, the kind kept', { options: WB }, async ($: any, on: any) => {
+    const w = world(on)
+    w.play('error-signal')
+    if (!(await w.start($))) return
+    await w.send($, { role: 'cx', task: 't', backend: 'codex' })
+    await w.until(() => w.submitted.length === 1)
+    expect(w.submitted[0]).toContain('stream disconnected before completion · ended by signal SIGTERM')
   })
 })
