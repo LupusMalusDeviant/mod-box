@@ -362,7 +362,16 @@ async function recover($: EngineInterface) {
     if (job.run !== undefined && Number.isSafeInteger(job.run) && job.run >= 1) {
       const role = (roles[job.role] ??= { name: job.role, runs: job.run, isBusy: false })
       if (role.runs < job.run) role.runs = job.run
-      await save($).catch(() => undefined)
+      // nothing is delivered before the run number is stored; the job, its
+      // kept message and packet.json stay for the next start (N163)
+      const notSaved = await save($).then(
+        () => undefined,
+        err => `the run number could not be stored (${message(err)})`,
+      )
+      if (notSaved) {
+        unreported.set(job.id, redact(notSaved))
+        continue
+      }
     }
     // An opencode task file or a werkbank protocol file the dead run left
     // behind is cleared first, each checked like a live run's (N52, N53).
@@ -431,11 +440,25 @@ async function slotProblem($: EngineInterface, role: string, run: number): Promi
   } catch (err) {
     return `the slot could not be checked (${message(err)})`
   }
-  if (!isThere) return undefined
+  if (isThere) {
+    try {
+      const stored = (JSON.parse(String(await $.fs.read(path))) as { run?: unknown }).run
+      // only a whole run number from 1 counts (N145)
+      if (typeof stored !== 'number' || !Number.isSafeInteger(stored) || stored < 1) return 'the slot could not be checked (its packet.json names no valid run)'
+      if (stored > run) return 'a later run holds this slot'
+    } catch (err) {
+      return `the slot could not be checked (${message(err)})`
+    }
+  }
+  // full.md too: a later run may have written it first (N161)
+  const full = runPath(role, run, 'full.md')
+  const fullUnsafe = await storageProblem($, full)
+  if (fullUnsafe) return fullUnsafe
   try {
-    const stored = (JSON.parse(String(await $.fs.read(path))) as { run?: unknown }).run
-    // only a whole run number from 1 counts (N145)
-    if (typeof stored !== 'number' || !Number.isSafeInteger(stored) || stored < 1) return 'the slot could not be checked (its packet.json names no valid run)'
+    if (!(await $.fs.exists(full))) return undefined
+    const head = new RegExp(`^# ${role.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')} · run (\\d+)\\n`).exec(String(await $.fs.read(full)))
+    const stored = head ? Number(head[1]) : NaN
+    if (!Number.isSafeInteger(stored) || stored < 1) return 'the slot could not be checked (its full.md names no valid run)'
     return stored > run ? 'a later run holds this slot' : undefined
   } catch (err) {
     return `the slot could not be checked (${message(err)})`
@@ -855,17 +878,36 @@ async function pumpOnce($: EngineInterface) {
     }
   }
   while (isOwner && running < Math.max(1, config.maxParallel)) {
+    const candidate = queue.jobs.find(j => j.state === 'queued' && roles[j.role] && !roles[j.role]?.isBusy)
+    if (!candidate) break
+    // the roles file is checked and the start time taken before anything is
+    // reserved, so no heartbeat writes a job as running before (N162); a roles
+    // file that exists but cannot be read keeps the job queued (N137)
+    let defs: Record<string, RoleDef>
+    let startedAt: string
+    try {
+      defs = await loadRoleDefs($, { isStrict: true })
+      startedAt = await iso($)
+    } catch (err) {
+      dispatchError = message(err)
+      const name = candidate.role
+      if (err instanceof RoleFileError) notices.push(redact(`relay did not start ${name}: ${dispatchError}; the job stays queued and starts once the roles file can be read.`))
+      else notices.push(redact(`relay did not start ${name} (${dispatchError}); the job stays queued.`))
+      break
+    }
+    // looked for again after the awaits; reserved with no await in between:
+    // the job, its role and the slot
     const job = queue.jobs.find(j => j.state === 'queued' && roles[j.role] && !roles[j.role]?.isBusy)
     const role = job && roles[job.role]
-    if (!job || !role) break
-    // Reserved before the first await: the job, its role and the slot.
+    if (!isOwner || !job || !role || running >= Math.max(1, config.maxParallel)) break
     const run = role.runs + 1
     role.isBusy = true
     role.runs = run
     running++
     job.state = 'running'
     job.run = run
-    if (!(await start($, job, role, run))) break
+    job.startedAt = startedAt
+    if (!(await start($, job, role, run, defs))) break
   }
 }
 
@@ -879,13 +921,10 @@ function snapshotPath(role: string, run: number) {
 
 // Starts a reserved job; false (and the reservation undone) when the queue
 // could not be persisted, so nothing runs that the file does not know.
-async function start($: EngineInterface, job: QueuedJob, role: Role, run: number): Promise<boolean> {
-  let eff: ReturnType<typeof effective>
+async function start($: EngineInterface, job: QueuedJob, role: Role, run: number, defs: Record<string, RoleDef>): Promise<boolean> {
+  // the roles file was read strictly before the reservation (N137, N162)
+  const eff = effective(role, defs[role.name])
   try {
-    // a roles file that exists but cannot be read keeps the job queued: its
-    // owns and tools are unknown (N137)
-    eff = effective(role, (await loadRoleDefs($, { isStrict: true }))[role.name])
-    job.startedAt = await iso($)
     await save($)
     await writeQueue($)
   } catch (err) {
@@ -1214,7 +1253,16 @@ function liveLog($: EngineInterface, role: string, run: number, id: BackendId, i
       }
       // a live.log a later run of this role began (in any session) is left
       // alone (N144)
-      const head = /^# \S+ · run (\d+) · /.exec(String(await $.fs.read(path).catch(() => '')))
+      // only a confirmed missing live.log counts as empty; one that cannot be
+      // checked or read is left alone, and the packet says why (N164)
+      let current = ''
+      try {
+        if (await $.fs.exists(path)) current = String(await $.fs.read(path))
+      } catch (err) {
+        problem = `live.log could not be read (${message(err)})`
+        return
+      }
+      const head = /^# \S+ · run (\d+) · /.exec(current)
       if (head && Number(head[1]) > run) {
         problem = 'a later run holds it'
         return

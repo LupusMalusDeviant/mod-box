@@ -544,8 +544,16 @@ export function quotedValue(text: string, at: number): { end: number; open: stri
       if (c === '\\') {
         const d = text[i + 1]
         if (d === undefined) break
-        c = d === '\\' ? '\\' : d === '"' ? '"' : 'x'
-        width = 2
+        // an outer escape is read whole first, \uXXXX too (N160)
+        const hex = d === 'u' ? /^[0-9A-Fa-f]{4}/.exec(text.slice(i + 2, i + 6))?.[0] : undefined
+        if (hex) {
+          const code = String.fromCharCode(parseInt(hex, 16))
+          c = code === '\\' || code === '"' ? code : 'x'
+          width = 6
+        } else {
+          c = d === '\\' ? '\\' : d === '"' ? '"' : 'x'
+          width = 2
+        }
       } else if (c === '"' || c === '\n' || c === '\r') {
         // a plain quote or a line end ends the outer string: no closing here
         return { end: i, open: '\\"', isClosed: false }

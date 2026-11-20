@@ -1464,6 +1464,113 @@ describe('werkbank, Nachtrag 2i (ninth Codex review)', () => {
     expect(r).not.toContain('half run')
   })
 
+  test('N160: a \\u005c before a quote in once-escaped JSON does not end the value', { options: WB }, async ($: any, on: any) => {
+    const w = world(on)
+    w.play('quoted-unicode-escape')
+    if (!(await w.start($))) return
+    await w.send($, { role: 'coder', task: 't' })
+    await w.until(() => w.submitted.length === 1)
+    const log = w.files.get('.relay/runs/coder/live.log') ?? ''
+    expect(log).not.toContain('opaque0head0x17')
+    expect(log).not.toContain('opaque0tail0x18')
+    expect(log).toContain('keep0me0x19')
+  })
+
+  test('N161: an earlier run never writes over a full.md a later run wrote first', { options: { ...WB, keepRuns: 1 } }, async ($: any, on: any) => {
+    const later = '# coder · run 2\n\n## Answer\n\nrun two answer\n'
+    const w = world(on, {
+      files: {
+        '.relay/queue.json': JSON.stringify(runningJob(1)),
+        '.relay/runs/coder/001.packet.json': JSON.stringify({ run: 1, backend: 'werkbank', usage: {}, status: 'done', summary: 'run one' }),
+        '.relay/runs/coder/001.full.md': later,
+      },
+      store: { 'roles:/w': { coder: { name: 'coder', runs: 1, isBusy: true } } },
+    })
+    await w.clock.set(10 * 60_000)
+    if (!(await w.start($))) return
+    await w.until(() => w.submitted.length === 1)
+    expect(w.submitted[0]).toContain('run 1 interrupted')
+    expect(w.files.get('.relay/runs/coder/001.full.md')).toBe(later)
+    expect(w.submitted[0]).toContain('Not stored: a later run holds this slot')
+  })
+
+  test('N162: a heartbeat during the roles file check writes no job as running', { options: WB }, async ($: any, on: any) => {
+    const w = world(on, { files: { '.relay/roles.json': '{}' } })
+    if (!(await w.start($))) return
+    let isDelayed = false
+    // the first roles file check after the job is queued waits five minutes
+    w.io.existsDelay = (p: string) => (p === '.relay/roles.json' && !isDelayed && w.queueFile().jobs.length > 0 ? ((isDelayed = true), 5 * 60_000) : 0)
+    const sent = w.send($, { role: 'coder', task: 't' })
+    expect(await w.until(() => isDelayed)).toBe(true)
+    // heartbeats while the roles file check waits
+    for (let i = 0; i < 4; i++) {
+      await w.clock.advance(60_000)
+      expect(w.queueFile().jobs.map((j: { state: string }) => j.state)).toEqual(['queued'])
+    }
+    expect(isDelayed).toBe(true)
+    await w.clock.advance(2 * 60_000)
+    await sent
+    await w.until(() => w.submitted.length === 1)
+    expect(w.spawns).toHaveLength(1)
+  })
+
+  test('N163: a restart delivers nothing before the run number is stored', { options: WB }, async ($: any, on: any) => {
+    const w = world(on, {
+      files: { '.relay/queue.json': JSON.stringify(runningJob(1)), '.relay/runs/coder/undelivered-1.md': `<!-- relay job j_1 length ${kept.length} -->\n${kept}` },
+    })
+    // the first save that holds the coder role (its run number) fails
+    let isFailed = false
+    w.io.failStoreSet = (v: unknown) => (!isFailed && JSON.stringify(v).includes('"coder"') ? (isFailed = true) : false)
+    await w.clock.set(10 * 60_000)
+    if (!(await w.start($))) return
+    await w.until(() => false, 20)
+    expect(isFailed).toBe(true)
+    expect(w.submitted).toHaveLength(0)
+    expect(w.queueFile().jobs.map((j: { id: string }) => j.id)).toEqual(['j_1'])
+    expect(w.files.get('.relay/runs/coder/undelivered-1.md')).toContain('run one did it')
+    expect(await w.status($)).toContain('the run number could not be stored')
+  })
+
+  test('N164: an unreadable live.log is not written over, and the packet says why', { options: WB }, async ($: any, on: any) => {
+    const later = '# coder · run 2 · werkbank · started 1970-01-01T00:00:00.000Z\nrun two line\n'
+    const w = world(on, { files: { '.relay/runs/coder/live.log': later } })
+    w.io.failRead = (p: string) => p === '.relay/runs/coder/live.log'
+    if (!(await w.start($))) return
+    await w.send($, { role: 'coder', task: 't' })
+    await w.until(() => w.submitted.length === 1)
+    expect(w.files.get('.relay/runs/coder/live.log')).toBe(later)
+    expect(w.submitted[0]).toContain('live.log could not be read')
+  })
+
+  test('N165: with writeCheck off a werkbank run has no write check', { options: { ...WB, writeCheck: 'off' } }, async ($: any, on: any) => {
+    const w = world(on)
+    w.play('write-outside')
+    if (!(await w.start($))) return
+    await w.send($, { role: 'coder', task: 't', owns: ['src/'] })
+    await w.until(() => w.submitted.length === 1)
+    expect(w.submitted[0]).not.toContain('wrote outside owns')
+    expect(w.submitted[0]).toContain('Status: done')
+    expect(JSON.parse(w.files.get('.relay/runs/coder/001.packet.json')!).write_check).toBeUndefined()
+  })
+
+  test('N165: a parallel werkbank run does not take over a local worker\'s outside write', { options: { maxParallel: 2 } }, async ($: any, on: any) => {
+    const w = world(on)
+    w.play('held', 'held')
+    if (!(await w.start($))) return
+    await w.send($, { role: 'remote', task: 'R', owns: ['src/'], backend: 'werkbank' })
+    await w.send($, { role: 'local', task: 'L', owns: ['docs/'] })
+    expect(await w.until(() => w.heldCount() === 2)).toBe(true)
+    // the local worker writes in src/, which the werkbank role owns
+    w.git.status.push({ code: '??', path: 'src/x.ts', hash: 'h1' })
+    w.releaseOne()
+    expect(await w.until(() => w.submitted.length === 1)).toBe(true)
+    w.releaseHeld()
+    expect(await w.until(() => w.submitted.length === 2)).toBe(true)
+    const local = w.submitted.find(s => s.startsWith('[relay] local'))!
+    expect(local).toContain('wrote outside owns: src/x.ts')
+    expect(local).not.toContain('probably by remote')
+  })
+
   test('N112: worker_status shows no worktree for werkbank', { options: WB }, async ($: any, on: any) => {
     const w = world(on)
     if (!(await w.start($))) return

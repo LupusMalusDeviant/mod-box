@@ -134,6 +134,9 @@ export type Scenario =
   // werkbank-relay: once-escaped JSON on stderr, a key value with a quote
   // inside and an Authorization value ending in a backslash (N156)
   | 'quoted-escaped-json'
+  // werkbank-relay: once-escaped JSON on stderr whose key value holds a
+  // \ before a quote (N160)
+  | 'quoted-unicode-escape'
 
 export type Call = { argv: string[]; cwd?: string; env: Record<string, string>; input?: string; attachment?: string; protocolFile?: string }
 
@@ -204,7 +207,7 @@ export function fakeWorld(
   init: { files?: Record<string, string>; store?: Record<string, unknown>; isGit?: boolean; caseInsensitive?: boolean; env?: Record<string, string> } = {},
 ) {
   const clock = mock.clock(on)
-  mock.store(on, init.store)
+  const store = new Map<string, unknown>(Object.entries(init.store ?? {}))
   const files = new Map<string, string>(Object.entries(init.files ?? {}))
   const spawns: Call[] = []
   const runs: Call[] = []
@@ -238,6 +241,8 @@ export function fakeWorld(
   const links = new Map<string, string>()
   const io = {
     failRead: (_path: string) => false,
+    // $.store.set rejects this value (N163)
+    failStoreSet: (_value: unknown) => false,
     // fs.exists itself fails for this path (N115); a string is its error (N125)
     failExists: (_path: string): boolean | string => false,
     // clock ms an fs.exists waits before it answers (N126)
@@ -263,6 +268,13 @@ export function fakeWorld(
   const isDir = (p: string) =>
     p === '/w' || p === '' || [...files.keys()].some(k => (init.caseInsensitive ? k.toLowerCase().startsWith(`${p.toLowerCase()}/`) : k.startsWith(`${p}/`)))
 
+  // the plugin store, kept here so a write can fail (N163)
+  on('store.get', (_$: any, e: any) => ({ value: structuredClone(store.get(String(e.key))) }))
+  on('store.set', (_$: any, e: any) => {
+    if (io.failStoreSet(e.value)) return { deny: 'the store could not be written' }
+    store.set(String(e.key), structuredClone(e.value))
+    return { value: undefined }
+  })
   on('session.id', () => ({ value: 's1' }))
   on('session.start', (_$: any, e: any) => ({ sessionId: 's1', cwd: e.cwd }))
   on('env.get', (_$: any, e: any) => (envAsked.push(String(e.name)), { value: init.env?.[String(e.name)] }))
@@ -537,6 +549,12 @@ export function fakeWorld(
       if (scenario === 'quoted-escaped-json') {
         yield { stream: 'stderr', text: '{"detail":"{\\"api_key\\": \\"opaque0head\\\\\\"opaque0tail0x13\\", \\"next\\": 1}"}\n' }
         yield { stream: 'stderr', text: '{"detail":"{\\"Authorization\\": \\"opaque0auth0x14\\\\\\\\\\", \\"sibling\\": \\"keep0me0x15\\"}"}\n' }
+        yield { stream: 'stdout', text: JSON.stringify({ jobId: WERKBANK_JOB, state: 'done', answer: PACKET(), sessionId: 'fsn1-5:9b1f', branch: `agent/relay/${role}`, commits: [], changedFiles: [] }) }
+        return { value: { code: 0, signal: null } }
+      }
+      if (scenario === 'quoted-unicode-escape') {
+        const bs = '\\'
+        yield { stream: 'stderr', text: `{"detail":"{${bs}"api_key${bs}": ${bs}"opaque0head0x17${bs}u005c${bs}"opaque0tail0x18${bs}", ${bs}"next${bs}": ${bs}"keep0me0x19${bs}"}"}\n` }
         yield { stream: 'stdout', text: JSON.stringify({ jobId: WERKBANK_JOB, state: 'done', answer: PACKET(), sessionId: 'fsn1-5:9b1f', branch: `agent/relay/${role}`, commits: [], changedFiles: [] }) }
         return { value: { code: 0, signal: null } }
       }
