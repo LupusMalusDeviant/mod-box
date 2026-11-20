@@ -169,6 +169,12 @@ export type Scenario =
   // werkbank-relay: the job id as a whole number, and as a fraction (N183)
   | 'numeric-job'
   | 'fraction-job'
+  // werkbank-relay: a credential name escaped as w on stderr (N185)
+  | 'escaped-name'
+  // werkbank-relay: a packet with an extra numeric password field (N187)
+  | 'packet-numeric-password'
+  // werkbank-relay: a key marker on stderr, then it hangs (N190)
+  | 'key-then-hang'
 
 export type Call = { argv: string[]; cwd?: string; env: Record<string, string>; input?: string; attachment?: string; protocolFile?: string }
 
@@ -605,6 +611,23 @@ export function fakeWorld(
       if (scenario === 'long-branch-job') {
         yield { stream: 'stdout', text: JSON.stringify({ jobId: `job0x25\n${'j'.repeat(300)}`, state: 'done', answer: PACKET(), sessionId: 'fsn1-5:9b1f', branch: `branch0x26\n${'b'.repeat(300)}`, commits: [WERKBANK_COMMIT], changedFiles: [] }) }
         return { value: { code: 0, signal: null } }
+      }
+      if (scenario === 'escaped-name') {
+        yield { stream: 'stderr', text: '{"pass\\u0077ord": "opaque0pw0x28"}\n' }
+        yield { stream: 'stdout', text: JSON.stringify({ jobId: WERKBANK_JOB, state: 'done', answer: PACKET(), sessionId: 'fsn1-5:9b1f', branch: `agent/relay/${role}`, commits: [], changedFiles: [] }) }
+        return { value: { code: 0, signal: null } }
+      }
+      if (scenario === 'packet-numeric-password') {
+        const answer = ['## Work', 'Done.', '```relay', '{"status":"done","summary":"Did it.","facts":["fact0x27"],"sections":["Work"],"password":123}', '```'].join('\n')
+        yield { stream: 'stdout', text: JSON.stringify({ jobId: WERKBANK_JOB, state: 'done', answer, sessionId: 'fsn1-5:9b1f', branch: `agent/relay/${role}`, commits: [], changedFiles: [] }) }
+        return { value: { code: 0, signal: null } }
+      }
+      if (scenario === 'key-then-hang') {
+        yield { stream: 'stderr', text: `${KEY_LINES[0]}\n` }
+        for (;;) {
+          await clock.sleep(60_000)
+          yield { stream: 'stderr', text: 'running auf fsn1-5\n' }
+        }
       }
       if (scenario === 'numeric-job' || scenario === 'fraction-job') {
         yield { stream: 'stdout', text: JSON.stringify({ jobId: scenario === 'numeric-job' ? 4711 : 1.5, state: 'done', answer: PACKET(), sessionId: 'fsn1-5:9b1f', branch: `agent/relay/${role}`, commits: [WERKBANK_COMMIT], changedFiles: [] }) }

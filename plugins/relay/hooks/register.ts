@@ -69,6 +69,7 @@ import {
   mayOwn,
   newJobId,
   newToken,
+  isRunNumber,
   parseQueue,
   ROLE_NAME,
   serializeQueue,
@@ -364,7 +365,7 @@ async function recover($: EngineInterface) {
   for (const job of dead) {
     // the role comes from the job and keeps its run number before anything
     // is delivered, known to the roles file or not (N158)
-    if (job.run !== undefined && Number.isSafeInteger(job.run) && job.run >= 1) {
+    if (isRunNumber(job.run)) {
       const role = (roles[job.role] ??= { name: job.role, runs: job.run, isBusy: false })
       if (role.runs < job.run) role.runs = job.run
       // nothing is delivered before the run number is stored; the job, its
@@ -912,6 +913,12 @@ async function pumpOnce($: EngineInterface) {
     const role = job && roles[job.role]
     if (!isOwner || !job || !role || running >= Math.max(1, config.maxParallel)) break
     const run = role.runs + 1
+    // a next run number outside the safe range starts nothing (N188)
+    if (!isRunNumber(run)) {
+      dispatchError = `${role.name} has no safe next run number (${role.runs} runs counted)`
+      notices.push(redact(`relay did not start ${role.name}: ${dispatchError}; the job stays queued.`))
+      break
+    }
     role.isBusy = true
     role.runs = run
     running++
@@ -1212,9 +1219,10 @@ async function spawnRun(
     // a read error stops the child like the timeout does, before its slot
     // under maxParallel is given back (N180)
     // (a stream that already failed may refuse the stop; that is no new error)
+    // the stop is waited for before the slot is given back (N186)
     if (!proc.isTimedOut && !proc.isStoppedByLimit) {
       try {
-        child.return(undefined as never).catch(() => undefined)
+        await child.return(undefined as never)
       } catch {
         // already ended
       }
@@ -1359,7 +1367,9 @@ function liveLog($: EngineInterface, role: string, run: number, id: BackendId, i
       return problem
     },
     async close(outcome: RunOutcome, proc: ProcessResult) {
-      const state = proc.isTimedOut ? 'stopped (timeout)' : proc.isStoppedByLimit ? 'stopped (token limit)' : outcome.error
+      // a stopped run names a key marker too (N190)
+      const keyNote = keyFilter.isOpen || proc.isKeySeen ? '; answer hidden: a private key marker was in the output' : ''
+      const state = proc.isTimedOut ? `stopped (timeout)${keyNote}` : proc.isStoppedByLimit ? `stopped (token limit)${keyNote}` : outcome.error
             ? // any key marker in either stream or in the error itself hides
               // the error text, closed or not (N101, N121)
               keyFilter.isOpen || proc.isKeySeen || hasKeyBegin(outcome.error.message)
@@ -2150,7 +2160,7 @@ export const register: Register = (on, options) => {
     }
     if (loaded?.isBroken) notices.push(loaded.isFromBackup ? 'queue.json was broken; relay read queue.json.bak instead.' : 'queue.json was broken and had no usable backup; the queue starts empty.')
     else if (loaded?.isFromBackup) notices.push('queue.json was empty or missing; relay read queue.json.bak instead.')
-    if (loaded?.dropped) notices.push(`relay left out ${loaded.dropped} job(s) from the queue with an invalid role name or run number.`)
+    if (loaded?.dropped) notices.push(`relay left out ${loaded.dropped} job(s) from the queue with an invalid role name, run number or id.`)
     if (loaded) adopt(loaded)
     else {
       queue = emptyQueue()

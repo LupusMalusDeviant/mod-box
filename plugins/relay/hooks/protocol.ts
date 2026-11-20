@@ -523,14 +523,27 @@ const KEY_SEP = String.raw`(?:\\u0022|\\?["'])?\s*[:=]\s*`
 // name and separator, the value read by quotedValue (N156)
 const KEY_HEAD = new RegExp(String.raw`\b(${KEY_NAME})(${KEY_SEP})`, 'gi')
 // an unquoted value; quoted ones were replaced before (N156)
-const KEY_VALUE = new RegExp(String.raw`\b(${KEY_NAME})(${KEY_SEP})([^\s"'&,;\\]+)`, 'gi')
+// it ends before } ] ) too, so JSON around it stays whole (N187)
+const KEY_VALUE = new RegExp(String.raw`\b(${KEY_NAME})(${KEY_SEP})([^\s"'&,;\\}\])]+)`, 'gi')
 // `"Authorization": "x"`, `Authorization: "x"`, also once escaped, with \"
 // or " (N142, N149, N166)
 const AUTH_HEAD = /((?:\\u0022|\\?["'])?(?<![A-Za-z])(?:proxy-)?authorization(?:\\u0022|\\?["'])?\s*[:=]\s*)/gi
 
 function redactKeyValue(match: string, name: string, sep: string, value: string): string {
   if (isCounterName(name) && isCount(value)) return match
-  return `${name}${sep}${SECRET}`
+  // after a quoted JSON name the value becomes a string quoted the same way,
+  // so the JSON stays valid (N187)
+  const quote = sep.startsWith('\\u0022') ? '\\u0022' : sep.startsWith('\\"') ? '\\"' : sep.startsWith('"') ? '"' : ''
+  return `${name}${sep}${quote}${SECRET}${quote}`
+}
+
+// \uXXXX for a letter, digit, _ . or - is written as that character first,
+// also with more backslashes before it, so an escaped name is seen (N185)
+function decodeNameEscapes(text: string): string {
+  return text.replace(/\\+u00([2-7][0-9A-Fa-f])/g, (m, hex: string) => {
+    const c = String.fromCharCode(parseInt(hex, 16))
+    return /[A-Za-z0-9_.-]/.test(c) ? c : m
+  })
 }
 
 // Where a quoted value that starts at `at` ends, read character by character:
@@ -646,7 +659,7 @@ function redactKeys(text: string): string {
 }
 
 export function redact(text: string): string {
-  let out = redactKeys(text)
+  let out = redactKeys(decodeNameEscapes(text))
   // quoted values first, read with their escapes (N156)
   out = redactQuoted(out, AUTH_HEAD)
   out = redactQuoted(out, KEY_HEAD, (name, value) => isCounterName(name) && isCount(value))

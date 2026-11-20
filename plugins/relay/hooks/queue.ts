@@ -1,5 +1,6 @@
 // The queue on disk (contract 0001, section 7). Pure functions only.
 import type { BackendId } from './backends.ts'
+import { redact } from './protocol.ts'
 
 export type QueuedJob = {
   id: string
@@ -46,8 +47,20 @@ export function newJobId(): string {
 // The names a role may have; they become folder and file names (N81).
 export const ROLE_NAME = /^[a-z0-9][a-z0-9_-]{0,31}$/
 
-// A job from the file whose role or run could steer a path elsewhere (N81).
-const isSafeJob = (j: QueuedJob) => typeof j.role === 'string' && ROLE_NAME.test(j.role) && (j.run === undefined || (Number.isInteger(j.run) && j.run > 0))
+// A run number: a whole number from 1 in the safe range (N188).
+export const isRunNumber = (v: unknown): v is number => typeof v === 'number' && Number.isSafeInteger(v) && v >= 1
+
+// A job id as relay makes them, which no redaction changes (N189).
+const JOB_ID = /^j_[A-Za-z0-9_-]{1,40}$/
+
+// A job from the file whose role, run or id could steer a path elsewhere or
+// carry a credential into a file (N81, N188, N189).
+const isSafeJob = (j: QueuedJob) =>
+  typeof j.role === 'string' &&
+  ROLE_NAME.test(j.role) &&
+  (j.run === undefined || isRunNumber(j.run)) &&
+  JOB_ID.test(j.id) &&
+  redact(j.id) === j.id
 
 // The queue in the text plus the number of jobs dropped as unsafe;
 // undefined when the text is not a queue file.
