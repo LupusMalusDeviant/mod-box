@@ -32,6 +32,7 @@ import {
   baseName,
   eventTexts,
   hasKeyBegin,
+  credentialValueCarry,
   REDACTED_KEY_LINE,
   compareSnapshots,
   extractSection,
@@ -238,9 +239,22 @@ async function readText($: EngineInterface, path: string) {
   return String(await $.fs.read(path))
 }
 
+// Both queue files are checked like relay's other files before every read
+// and write: a link or a place outside the project locks them (N197).
+async function checkQueueFile($: EngineInterface, name: 'queue.json' | 'queue.json.bak') {
+  const path = relayPath(name)
+  const why = await storageProblem($, path)
+  if (why) throw new Error(why)
+  return path
+}
+
+async function readQueueFile($: EngineInterface, name: 'queue.json' | 'queue.json.bak') {
+  return readText($, await checkQueueFile($, name))
+}
+
 async function readQueue($: EngineInterface) {
-  const text = await readText($, relayPath('queue.json'))
-  const loaded = loadQueue(text, await readText($, relayPath('queue.json.bak')))
+  const text = await readQueueFile($, 'queue.json')
+  const loaded = loadQueue(text, await readQueueFile($, 'queue.json.bak'))
   return { ...loaded, text }
 }
 
@@ -258,8 +272,11 @@ async function writeQueueText($: EngineInterface) {
   await ensureGitignore($)
   const text = serializeQueue(queue)
   if (text === lastQueueText) return
-  if (lastBackupText !== undefined) await $.fs.write(relayPath('queue.json.bak'), lastBackupText)
-  await $.fs.write(relayPath('queue.json'), text)
+  // both files are checked before either is written (N197)
+  const main = await checkQueueFile($, 'queue.json')
+  const backup = lastBackupText !== undefined ? await checkQueueFile($, 'queue.json.bak') : undefined
+  if (backup !== undefined && lastBackupText !== undefined) await $.fs.write(backup, lastBackupText)
+  await $.fs.write(main, text)
   lastQueueText = text
   lastBackupText = text
 }
@@ -275,7 +292,7 @@ function stepDown(who: string) {
 // Before each write: is the file still ours? Another session's fresh claim
 // wins, and this one steps down instead of overwriting it.
 async function fence($: EngineInterface) {
-  const text = await readText($, relayPath('queue.json'))
+  const text = await readQueueFile($, 'queue.json')
   if (text === undefined || text === lastQueueText) return
   const owner = parseQueue(text)?.owner
   if (!owner || owner.token === ownerToken) return
@@ -320,7 +337,7 @@ async function claimQueue($: EngineInterface) {
       return
     }
     await $.clock.sleep(CLAIM_SETTLE_MS)
-    const disk = parseQueue(await readText($, relayPath('queue.json')))
+    const disk = parseQueue(await readQueueFile($, 'queue.json'))
     if (disk?.owner?.token !== ownerToken) {
       if (disk) queue = disk
       notices.push(`Session ${disk?.owner?.session ?? 'unknown'} claimed this project's relay queue at the same time; this session only reads it.`)
@@ -1277,10 +1294,12 @@ function liveLog($: EngineInterface, role: string, run: number, id: BackendId, i
   const lines = [`# ${role} · run ${run} · ${id} · started ${new Date().toISOString()}`]
   // A private key over several lines never reaches the log (N51).
   const keyFilter = privateKeyFilter()
+  // a credential list left open by one line is replaced in the next ones (N198)
+  const carry = credentialValueCarry()
   // After the first key marker the log takes no more lines (N134).
   let isSealed = false
   const seal = () => {
-    if (isSealed || id === 'claude') return
+    if (isSealed) return
     isSealed = true
     lines.push(REDACTED_KEY_LINE)
     void flushSoon()
@@ -1354,9 +1373,14 @@ function liveLog($: EngineInterface, role: string, run: number, id: BackendId, i
   })
   return {
     line(raw: string, isHeld = false) {
-      if (id === 'claude') return
       // the raw line and every decoded text of its event, before any cut (N83)
       const seen = [raw, ...eventTexts(raw)].join('\n')
+      // Claude's output stays out of the log; a key marker in it still
+      // seals the log with its one line (N203)
+      if (id === 'claude') {
+        if (isHeld || hasKeyBegin(seen)) seal()
+        return
+      }
       const kept = keyFilter(seen)
       if (kept === undefined) return
       // from the first key marker on (any stream, also in an unfinished
@@ -1364,15 +1388,19 @@ function liveLog($: EngineInterface, role: string, run: number, id: BackendId, i
       // more of the run but its end line (N101, N128, N134)
       if (isHeld || hasKeyBegin(seen)) seal()
       if (isSealed) return
-      const text = kept === seen ? liveLine(id, raw) : kept
+      // the carry reads the raw line, before liveLine cuts and redacts it (N198)
+      const text = kept === seen ? liveLine(id, carry(raw)) : kept
       if (!text) return
       lines.push(redact(text))
       void flushSoon()
     },
     // a line of the stream not shown: it moves the key state and seals (N114, N134)
     other(raw: string) {
-      if (id === 'claude') return
       const seen = [raw, ...eventTexts(raw)].join('\n')
+      if (id === 'claude') {
+        if (hasKeyBegin(seen)) seal()
+        return
+      }
       keyFilter(seen)
       if (hasKeyBegin(seen)) seal()
     },
@@ -1383,6 +1411,8 @@ function liveLog($: EngineInterface, role: string, run: number, id: BackendId, i
     },
     async close(outcome: RunOutcome, proc: ProcessResult) {
       // a stopped run names a key marker too (N190)
+      // a marker seen anywhere in the run seals the log before its end line (N203)
+      if (proc.isKeySeen) seal()
       const keyNote = keyFilter.isOpen || proc.isKeySeen ? '; answer hidden: a private key marker was in the output' : ''
       const state = proc.isTimedOut ? `stopped (timeout)${keyNote}` : proc.isStoppedByLimit ? `stopped (token limit)${keyNote}` : outcome.error
             ? // any key marker in either stream or in the error itself hides
@@ -2175,7 +2205,7 @@ export const register: Register = (on, options) => {
     }
     if (loaded?.isBroken) notices.push(loaded.isFromBackup ? 'queue.json was broken; relay read queue.json.bak instead.' : 'queue.json was broken and had no usable backup; the queue starts empty.')
     else if (loaded?.isFromBackup) notices.push('queue.json was empty or missing; relay read queue.json.bak instead.')
-    if (loaded?.dropped) notices.push(`relay left out ${loaded.dropped} job(s) from the queue with an invalid role name, run number or id.`)
+    if (loaded?.dropped) notices.push(`relay left out ${loaded.dropped} job(s) from the queue with an invalid role name, run number, id or field.`)
     if (loaded) adopt(loaded)
     else {
       queue = emptyQueue()

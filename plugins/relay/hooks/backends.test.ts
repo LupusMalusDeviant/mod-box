@@ -643,6 +643,15 @@ describe('werkbank: write check and rules', () => {
     expect(p('src/a.ts')?.isFileListMalformed).toBe(true)
     expect(p(['a', 'b'])?.changedFiles).toEqual(['a', 'b'])
     expect(p(['a', 'b'])?.isFileListMalformed).toBeUndefined()
+    // N202: no file name has a NUL
+    expect(p([`src/file${String.fromCharCode(0)}`])?.isFileListMalformed).toBe(true)
+  })
+
+  test('N200: only a whole counter name keeps its number', () => {
+    expect(redact('access_tokenSecret=123456')).not.toContain('123456')
+    expect(redact('secret_tokens=123456')).not.toContain('123456')
+    expect(redact('access_tokens: 123456')).not.toContain('123456')
+    expect(redact('max_tokens=4096, input_tokens: 12, maxTokensPerRun=5000, token_count=7')).toBe('max_tokens=4096, input_tokens: 12, maxTokensPerRun=5000, token_count=7')
   })
 
   test('the outside write turns done into partial', () => {

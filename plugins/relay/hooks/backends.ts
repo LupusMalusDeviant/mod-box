@@ -670,10 +670,11 @@ const werkbank: Backend = {
         branch: exact(str(json.branch)) ?? '',
         commits,
         ...(rawCommits.length > commits.length ? { malformedCommits: rawCommits.length - commits.length } : {}),
-        // A list with anything but non-empty strings is malformed, never a short list (N49).
+        // A list with anything but non-empty strings is malformed, never a short list (N49);
+        // a name with a NUL, which no file can have, too (N202).
         ...(json.changedFiles === undefined
           ? {}
-          : Array.isArray(json.changedFiles) && json.changedFiles.every(x => typeof x === 'string' && x !== '')
+          : Array.isArray(json.changedFiles) && json.changedFiles.every(x => typeof x === 'string' && x !== '' && !x.includes('\0'))
             ? { changedFiles: json.changedFiles as string[] }
             : { isFileListMalformed: true as const }),
         ...(v

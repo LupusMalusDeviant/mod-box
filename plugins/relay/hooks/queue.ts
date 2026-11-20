@@ -1,5 +1,5 @@
 // The queue on disk (contract 0001, section 7). Pure functions only.
-import type { BackendId } from './backends.ts'
+import { BACKEND_IDS, type BackendId } from './backends.ts'
 import { redact } from './protocol.ts'
 
 export type QueuedJob = {
@@ -65,6 +65,32 @@ const isSafeJob = (j: QueuedJob) =>
   redact(j.id) === j.id &&
   redact(j.id.slice(2)) === j.id.slice(2)
 
+const isOptionalText = (v: unknown) => v === undefined || typeof v === 'string'
+
+// The fields relay reads from a job have their types; a job with one of
+// another type is left out and counted (N201).
+const hasSchemaFields = (j: QueuedJob) =>
+  typeof j.enqueuedAt === 'string' &&
+  isOptionalText(j.model) &&
+  isOptionalText(j.startedAt) &&
+  (j.backend === undefined || BACKEND_IDS.includes(j.backend)) &&
+  (j.delivery === undefined || j.delivery === 'stored')
+
+// A job with only the fields of the schema; anything else in the file is
+// not carried into the next write or the backup (N201).
+const toSchema = (j: QueuedJob): QueuedJob => ({
+  id: j.id,
+  role: j.role,
+  task: j.task,
+  ...(j.model !== undefined ? { model: j.model } : {}),
+  enqueuedAt: j.enqueuedAt,
+  state: j.state,
+  ...(j.run !== undefined ? { run: j.run } : {}),
+  ...(j.startedAt !== undefined ? { startedAt: j.startedAt } : {}),
+  backend: j.backend ?? 'claude',
+  ...(j.delivery !== undefined ? { delivery: j.delivery } : {}),
+})
+
 // The queue in the text plus the number of jobs dropped as unsafe;
 // undefined when the text is not a queue file.
 function readQueueText(text: string | undefined): { queue: QueueFile; dropped: number } | undefined {
@@ -78,10 +104,14 @@ function readQueueText(text: string | undefined): { queue: QueueFile; dropped: n
         // counted (N93, N196)
         !!j && typeof j.task === 'string' && (j.state === 'queued' || j.state === 'running'),
     )
-    const safe = jobs.filter(isSafeJob)
+    const safe = jobs.filter(j => isSafeJob(j) && hasSchemaFields(j))
+    const o = v.owner
+    // only the owner's own fields are kept (N201)
     const owner =
-      v.owner && typeof v.owner.session === 'string' && typeof v.owner.heartbeatAt === 'string' ? v.owner : undefined
-    return { queue: { version: 1, ...(owner ? { owner } : {}), jobs: safe.map(j => ({ ...j, backend: j.backend ?? 'claude' })) }, dropped: jobs.length - safe.length }
+      o && typeof o.session === 'string' && typeof o.heartbeatAt === 'string'
+        ? { session: o.session, heartbeatAt: o.heartbeatAt, ...(typeof o.token === 'string' ? { token: o.token } : {}) }
+        : undefined
+    return { queue: { version: 1, ...(owner ? { owner } : {}), jobs: safe.map(toSchema) }, dropped: jobs.length - safe.length }
   } catch {
     return undefined
   }

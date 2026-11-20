@@ -182,6 +182,19 @@ export type Scenario =
   | 'json-unquoted-credentials'
   // werkbank-relay: a packet with a password list (N192)
   | 'packet-password-list'
+  // werkbank-relay: a password list over several stderr lines (N198)
+  | 'pretty-password-list'
+  // werkbank-relay: a packet with a password list over several lines (N198)
+  | 'packet-pretty-list'
+  // werkbank-relay: once-escaped JSON whose password list has ] in an element (N198)
+  | 'escaped-bracket-list'
+  // werkbank-relay: a key opener with a hyphen escaped four times, the body
+  // on the next stderr line (N199)
+  | 'key-deep-escape'
+  // werkbank-relay: a changed file name with a NUL in it (N202)
+  | 'nul-file'
+  // claude: an answer with a private key marker (N203)
+  | 'claude-key'
 
 export type Call = { argv: string[]; cwd?: string; env: Record<string, string>; input?: string; attachment?: string; protocolFile?: string }
 
@@ -464,6 +477,7 @@ export function fakeWorld(
     if (cli === 'claude') {
       if (scenario === 'error') return yield* out(JSON.stringify({ is_error: true, subtype: 'error_max_budget_usd', result: answer, session_id: 'c-1', num_turns: 2, total_cost_usd: 2 }), 0)
       if (scenario === 'session-not-found') return yield* out('', 1, 'No conversation found with session ID')
+      if (scenario === 'claude-key') return yield* out(JSON.stringify({ result: [KEY_LINES[0], KEY_BODY, KEY_LINES[1]].join('\n'), session_id: 'c-1', num_turns: 1, total_cost_usd: 0.1 }), 0)
       if (scenario === 'leak-error') return yield* out('', 1, `${leakErr}\n${leakStderr}`)
       return yield* out(JSON.stringify({ result: answer, session_id: argv[argv.indexOf('--session-id') + 1] || argv[argv.indexOf('--resume') + 1], num_turns: 3, total_cost_usd: 0.1 }), 0)
     }
@@ -644,6 +658,32 @@ export function fakeWorld(
       if (scenario === 'packet-password-list') {
         const answer = ['## Work', 'Done.', '```relay', '{"status":"done","summary":"Did it.","facts":["fact0x30"],"sections":["Work"],"password":[572913,{"a":"]"}]}', '```'].join('\n')
         yield { stream: 'stdout', text: JSON.stringify({ jobId: WERKBANK_JOB, state: 'done', answer, sessionId: 'fsn1-5:9b1f', branch: `agent/relay/${role}`, commits: [], changedFiles: [] }) }
+        return { value: { code: 0, signal: null } }
+      }
+      if (scenario === 'pretty-password-list') {
+        yield { stream: 'stderr', text: ['{"password": [', '  "opaque0pw0x31",', '  {"inner": "opaque0pw0x32"}', '], "next": 1}', 'after0x33', ''].join('\n') }
+        yield { stream: 'stdout', text: JSON.stringify({ jobId: WERKBANK_JOB, state: 'done', answer: PACKET(), sessionId: 'fsn1-5:9b1f', branch: `agent/relay/${role}`, commits: [], changedFiles: [] }) }
+        return { value: { code: 0, signal: null } }
+      }
+      if (scenario === 'packet-pretty-list') {
+        const answer = ['## Work', 'Done.', '```relay', '{"status":"done","summary":"Did it.","facts":["fact0x34"],"sections":["Work"],"password":[', '  "opaque0pw0x35",', '  5', ']}', '```'].join('\n')
+        yield { stream: 'stdout', text: JSON.stringify({ jobId: WERKBANK_JOB, state: 'done', answer, sessionId: 'fsn1-5:9b1f', branch: `agent/relay/${role}`, commits: [], changedFiles: [] }) }
+        return { value: { code: 0, signal: null } }
+      }
+      if (scenario === 'escaped-bracket-list') {
+        const bs = String.fromCharCode(92)
+        yield { stream: 'stderr', text: `{"detail":"{${bs}"password${bs}":[${bs}"a]opaque0x36${bs}",${bs}"opaque0x37${bs}"],${bs}"next${bs}":1}"}\n` }
+        yield { stream: 'stdout', text: JSON.stringify({ jobId: WERKBANK_JOB, state: 'done', answer: PACKET(), sessionId: 'fsn1-5:9b1f', branch: `agent/relay/${role}`, commits: [], changedFiles: [] }) }
+        return { value: { code: 0, signal: null } }
+      }
+      if (scenario === 'key-deep-escape') {
+        const deep = KEY_LINES[0].replace(/-/g, `${String.fromCharCode(92).repeat(8)}u002d`)
+        yield { stream: 'stderr', text: `${deep}\n${KEY_BODY}\n` }
+        yield { stream: 'stdout', text: JSON.stringify({ jobId: WERKBANK_JOB, state: 'done', answer: PACKET(), sessionId: 'fsn1-5:9b1f', branch: `agent/relay/${role}`, commits: [], changedFiles: [] }) }
+        return { value: { code: 0, signal: null } }
+      }
+      if (scenario === 'nul-file') {
+        yield { stream: 'stdout', text: JSON.stringify({ jobId: WERKBANK_JOB, state: 'done', answer: PACKET(), sessionId: 'fsn1-5:9b1f', branch: `agent/relay/${role}`, commits: [WERKBANK_COMMIT], changedFiles: [`src/file${String.fromCharCode(0)}`] }) }
         return { value: { code: 0, signal: null } }
       }
       if (scenario === 'key-then-hang') {

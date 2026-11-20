@@ -403,12 +403,17 @@ export function decodedView(text: string): { decoded: string; map: number[] } {
   return view
 }
 
+// The text key markers are looked for in: read as redact() reads it, name
+// escapes written out first, then decoded, so the live filter sees every
+// marker redact() sees (N199).
+const markerText = (text: string) => decodedView(decodeNameEscapes(text)).decoded
+
 // The kind of key left open after the markers of `text` (read decoded),
 // starting from `openKind`; only an END of the same kind closes (N62, N70, N94).
 export function keyStateAfter(text: string, openKind: string | undefined): string | undefined {
   // no marker can hide in a text without PRIVATE or an escape
   if (!/PRIVATE|\\u/i.test(text)) return openKind
-  for (const m of decodedView(text).decoded.matchAll(KEY_MARKER)) {
+  for (const m of markerText(text).matchAll(KEY_MARKER)) {
     if (openKind === undefined) {
       if (m[1] === 'BEGIN') openKind = m[2]
     } else if (m[1] === 'END' && m[2] === openKind) openKind = undefined
@@ -419,7 +424,7 @@ export function keyStateAfter(text: string, openKind: string | undefined): strin
 // Whether a BEGIN … PRIVATE KEY marker is in the text, read decoded (N101).
 export function hasKeyBegin(text: string): boolean {
   if (!/PRIVATE|\\u/i.test(text)) return false
-  return /-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----/.test(decodedView(text).decoded)
+  return /-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----/.test(markerText(text))
 }
 
 // The filter, and whether a key is open after the lines it saw (N101).
@@ -508,8 +513,25 @@ export function safeRelayDir(value: string): { dir: string; note?: string } {
 const SECRET = '[redacted]'
 
 // A field name that counts tokens rather than holding one (max_tokens,
-// input tokens, maxTokensPerRun): its numeric value stays readable.
-const isCounterName = (name: string) => /tokens|token[_-]?(?:count|limit|budget|usage|used)|max[_-]?tokens?/i.test(name)
+// input tokens, maxTokensPerRun): its numeric value stays readable. The
+// name is read in whole words; a credential word anywhere in it rules the
+// exception out, so access_tokenSecret is no counter (N200).
+const COUNTER_AFTER_TOKEN = new Set(['count', 'limit', 'budget', 'usage', 'used'])
+const CREDENTIAL_WORDS = new Set(['secret', 'password', 'passwd', 'key', 'apikey', 'credential', 'session', 'access', 'private', 'auth', 'bearer'])
+function isCounterName(name: string): boolean {
+  const words = name
+    .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
+    .split(/[\s_.-]+/)
+    .filter(Boolean)
+    .map(w => w.toLowerCase())
+  if (words.some(w => CREDENTIAL_WORDS.has(w))) return false
+  return words.some(
+    (w, i) =>
+      w === 'tokens' ||
+      (w === 'token' && COUNTER_AFTER_TOKEN.has(words[i + 1] ?? '')) ||
+      (w === 'max' && (words[i + 1] === 'token' || words[i + 1] === 'tokens')),
+  )
+}
 const isCount = (value: string) => /^[\d.,]+[kKmMbB]?$/.test(value)
 
 // key=value / key: value / "key": "value" for names that hold credentials.
@@ -602,29 +624,92 @@ export function quotedValue(text: string, at: number): Quoted | undefined {
   return { start, stop: text.length, end: text.length, isClosed: false }
 }
 
+// Reads a JSON list or object from `from` on, starting at bracket depth
+// `depth`, over line breaks too: `end` is just after the bracket that brings
+// the depth back to 0, undefined when the text ends first. Strings inside are
+// read by quotedValue at the level of the name's quote `q`, so no bracket in
+// one counts (N198).
+function scanJson(text: string, from: number, q: string, depth: number): { end?: number; depth: number } {
+  const opensString = (i: number) =>
+    q === '"' ? text[i] === '"' : q === '\\"' ? text.startsWith('\\"', i) : text.slice(i, i + q.length).toLowerCase() === q.toLowerCase()
+  for (let i = from; i < text.length; ) {
+    if (opensString(i)) {
+      const v = quotedValue(text, i)
+      if (!v?.isClosed) return { depth }
+      i = v.end
+      continue
+    }
+    const d = text[i]
+    if (d === '[' || d === '{') depth++
+    else if ((d === ']' || d === '}') && --depth <= 0) return { end: i + 1, depth: 0 }
+    // at the plain level a backslash outside a string escapes nothing JSON
+    // knows; it is passed over with the next character
+    else if (d === '\\' && q === '"') {
+      i += 2
+      continue
+    }
+    i++
+  }
+  return { depth }
+}
+
 // Where an unquoted JSON value that starts at `at` ends: a list or object up
-// to its matching bracket (brackets inside strings do not count; without
-// one, the line end), else a scalar up to , } ] ) or space (N192).
-function jsonValueEnd(text: string, at: number): number {
+// to its matching bracket (scanJson), else a scalar up to , } ] ) or space
+// (N192). Without a matching bracket in the whole text, the value runs to the
+// line end (N198).
+function jsonValueEnd(text: string, at: number, q: string): number {
   const c = text[at]
   if (c !== '[' && c !== '{') {
     const scalar = /^[^\s,}\])"'\\]+/.exec(text.slice(at))
     return scalar ? at + scalar[0].length : at
   }
-  let depth = 0
-  let isInString = false
-  for (let i = at; i < text.length; i++) {
-    const d = text[i]
-    if (d === '\n' || d === '\r') return i
-    if (d === '\\') {
-      i++
-      continue
+  const r = scanJson(text, at, q, 0)
+  if (r.end !== undefined) return r.end
+  const lineEnd = text.slice(at).search(/[\r\n]/)
+  return lineEnd < 0 ? text.length : at + lineEnd
+}
+
+// A credential list or object left open at the end of a text: its depth and
+// the quote level it is read at, or undefined (N198).
+type OpenValue = { depth: number; q: string }
+function openValueAfter(text: string): OpenValue | undefined {
+  const t = decodeNameEscapes(text)
+  let first: (OpenValue & { at: number }) | undefined
+  for (const head of [AUTH_HEAD, KEY_HEAD]) {
+    head.lastIndex = 0
+    for (let m = head.exec(t); m; m = head.exec(t)) {
+      if (m[0].length === 0) head.lastIndex++
+      const at = m.index + m[0].length
+      const q = nameQuote(m[0])
+      if (q === undefined || quotedValue(t, at) || (t[at] !== '[' && t[at] !== '{')) continue
+      const r = scanJson(t, at, q, 0)
+      if (r.end === undefined && (!first || at < first.at)) first = { depth: r.depth, q, at }
     }
-    if (d === '"') isInString = !isInString
-    else if (!isInString && (d === '[' || d === '{')) depth++
-    else if (!isInString && (d === ']' || d === '}') && --depth === 0) return i + 1
   }
-  return text.length
+  return first && { depth: first.depth, q: first.q }
+}
+
+// For text read line by line (live.log): a credential list or object that a
+// line leaves open is replaced in the following lines too, up to its closing
+// bracket. Returns the line as it may be passed on to redact() (N198).
+export function credentialValueCarry(): (line: string) => string {
+  let open: OpenValue | undefined
+  return (line: string) => {
+    let head = ''
+    let rest = line
+    if (open) {
+      const r = scanJson(line, 0, open.q, open.depth)
+      if (r.end === undefined) {
+        open = { depth: r.depth, q: open.q }
+        return SECRET
+      }
+      head = SECRET
+      rest = line.slice(r.end)
+      open = undefined
+    }
+    open = openValueAfter(rest)
+    return head + rest
+  }
 }
 
 // The quote that closed a JSON name before its separator, if any (N187, N192).
@@ -644,7 +729,7 @@ function redactQuoted(text: string, head: RegExp, keep?: (name: string, value: s
     const v = at >= last ? quotedValue(text, at) : undefined
     const q = !v && at >= last ? nameQuote(m[0]) : undefined
     if (q !== undefined) {
-      const end = jsonValueEnd(text, at)
+      const end = jsonValueEnd(text, at, q)
       if (end > at && !keep?.(m[1] ?? '', text.slice(at, end))) {
         out += `${text.slice(last, at)}${q}${SECRET}${q}`
         last = end

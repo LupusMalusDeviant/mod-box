@@ -491,7 +491,7 @@ describe('werkbank, Nachtrag 2e (fifth Codex review)', () => {
     if (!(await w.start($))) return
     await w.until(() => false, 30)
     expect(w.files.get(outside)).toBe('KEEP')
-    expect(await w.status($)).toContain('relay left out 1 job(s) from the queue with an invalid role name, run number or id.')
+    expect(await w.status($)).toContain('relay left out 1 job(s) from the queue with an invalid role name, run number, id or field.')
   })
 
   test('N82: a werkbankBin that looks like a credential runs neither the job nor the version probe', { options: { ...WB, werkbankBin: '/opt/apikey=sample-secret/werkbank-relay' } }, async ($: any, on: any) => {
@@ -1876,7 +1876,7 @@ describe('werkbank, Nachtrag 2i (ninth Codex review)', () => {
     await w.clock.set(10 * 60_000)
     if (!(await w.start($))) return
     await w.until(() => false, 20)
-    expect(await w.status($)).toContain('relay left out 1 job(s) from the queue with an invalid role name, run number or id.')
+    expect(await w.status($)).toContain('relay left out 1 job(s) from the queue with an invalid role name, run number, id or field.')
     for (const [path, text] of w.files) if (path !== '.relay/queue.json.bak') expect(String(text)).not.toContain(SECRETS.token)
   })
 
@@ -1979,6 +1979,118 @@ describe('werkbank, Nachtrag 2i (ninth Codex review)', () => {
     const w = world(on, { files: { '.relay/queue.json': JSON.stringify({ version: 1, jobs: [{ ...base, id: null }, { ...base, id: 7 }, { ...base }] }) } })
     if (!(await w.start($))) return
     expect(await w.status($)).toContain('relay left out 3 job(s)')
+  })
+
+  test('N197: a linked queue.json.bak is neither read nor written, and the queue is not worked', { options: WB }, async ($: any, on: any) => {
+    const base = { role: 'coder', task: 't', enqueuedAt: '1970-01-01T00:00:00.000Z', state: 'queued', backend: 'werkbank' }
+    const bak = JSON.stringify({ version: 1, jobs: [{ ...base, id: 'j_ok' }, { ...base, id: 'j_bad', role: '../x' }] })
+    const w = world(on, { files: { '.relay/queue.json.bak': bak } })
+    w.links.set('.relay/queue.json.bak', '/elsewhere/.relay/queue.json.bak')
+    if (!(await w.start($))) return
+    await w.until(() => false, 20)
+    expect(await w.status($)).toContain('outside the project')
+    const r = await w.send($, { role: 'coder', task: 'next' })
+    expect(JSON.stringify(r)).toContain('relay takes no tasks')
+    expect(w.files.get('.relay/queue.json.bak')).toBe(bak)
+    expect(w.spawns).toHaveLength(0)
+  })
+
+  test('N197: a queue.json.bak that turns into a link is not written', { options: WB }, async ($: any, on: any) => {
+    const w = world(on)
+    if (!(await w.start($))) return
+    await w.send($, { role: 'coder', task: 'first' })
+    await w.until(() => w.submitted.length === 1)
+    const before = w.files.get('.relay/queue.json.bak')
+    w.links.set('.relay/queue.json.bak', '/elsewhere/.relay/queue.json.bak')
+    const r = await w.send($, { role: 'coder', task: 'second' })
+    expect(JSON.stringify(r)).toContain('task not accepted')
+    expect(w.files.get('.relay/queue.json.bak')).toBe(before)
+  })
+
+  test('N198: a password list over several stderr lines stays out of live.log', { options: WB }, async ($: any, on: any) => {
+    const w = world(on)
+    w.play('pretty-password-list')
+    if (!(await w.start($))) return
+    await w.send($, { role: 'coder', task: 't' })
+    await w.until(() => w.submitted.length === 1)
+    const log = w.files.get('.relay/runs/coder/live.log') ?? ''
+    expect(log).not.toContain('opaque0pw0x31')
+    expect(log).not.toContain('opaque0pw0x32')
+    expect(log).toContain('after0x33')
+  })
+
+  test('N198: a packet with a password list over several lines stays valid', { options: WB }, async ($: any, on: any) => {
+    const w = world(on)
+    w.play('packet-pretty-list')
+    if (!(await w.start($))) return
+    await w.send($, { role: 'coder', task: 't' })
+    await w.until(() => w.submitted.length === 1)
+    expect(w.submitted[0]).toContain('Status: done')
+    expect(w.submitted[0]).toContain('fact0x34')
+    expect(w.submitted[0]).not.toContain('opaque0pw0x35')
+  })
+
+  test('N198: a ] inside an escaped list element does not end the list', { options: WB }, async ($: any, on: any) => {
+    const w = world(on)
+    w.play('escaped-bracket-list')
+    if (!(await w.start($))) return
+    await w.send($, { role: 'coder', task: 't' })
+    await w.until(() => w.submitted.length === 1)
+    const log = w.files.get('.relay/runs/coder/live.log') ?? ''
+    expect(log).not.toContain('opaque0x36')
+    expect(log).not.toContain('opaque0x37')
+  })
+
+  test('N199: a key opener escaped four times still keeps the key body out of live.log', { options: WB }, async ($: any, on: any) => {
+    const w = world(on)
+    w.play('key-deep-escape')
+    if (!(await w.start($))) return
+    await w.send($, { role: 'coder', task: 't' })
+    await w.until(() => w.submitted.length === 1)
+    expect(w.files.get('.relay/runs/coder/live.log') ?? '').not.toContain(KEY_BODY)
+  })
+
+  test('N200: a credential name holding a counter word is no counter', { options: WB }, async ($: any, on: any) => {
+    const w = world(on)
+    if (!(await w.start($))) return
+    await w.send($, { role: 'coder', task: 't', model: 'access_tokenSecret=123456' })
+    await w.until(() => w.submitted.length === 1)
+    expect(w.spawns).toHaveLength(0)
+    expect(w.submitted[0]).toContain('a value for --model looks like a credential')
+  })
+
+  test('N201: fields outside the schema are not carried on, a job with a bad field is counted', { options: WB }, async ($: any, on: any) => {
+    const base = { role: 'coder', task: 't', enqueuedAt: '1970-01-01T00:00:00.000Z', state: 'queued', backend: 'werkbank' }
+    const jobs = [{ ...base, id: 'j_a', unexpected: { note: 'opaque0x38' } }, { ...base, id: 'j_b', backend: 'nope' }]
+    const w = world(on, { files: { '.relay/queue.json': JSON.stringify({ version: 1, owner: { session: 'old', heartbeatAt: '1970-01-01T00:00:00.000Z', extra: 'opaque0x39' }, jobs }) } })
+    await w.clock.set(10 * 60_000)
+    if (!(await w.start($))) return
+    await w.until(() => w.spawns.length === 1)
+    expect(await w.status($)).toContain('relay left out 1 job(s)')
+    for (const path of ['.relay/queue.json', '.relay/queue.json.bak']) {
+      expect(w.files.get(path) ?? '').not.toContain('opaque0x38')
+      expect(w.files.get(path) ?? '').not.toContain('opaque0x39')
+    }
+  })
+
+  test('N202: a changed file name with a NUL leaves the write check incomplete', { options: WB }, async ($: any, on: any) => {
+    const w = world(on)
+    w.play('nul-file')
+    if (!(await w.start($))) return
+    await w.send($, { role: 'coder', task: 't', owns: ['src'] })
+    await w.until(() => w.submitted.length === 1)
+    expect(w.submitted[0]).toContain('⚠ write check incomplete')
+  })
+
+  test('N203: a Claude worker with a key marker gets the one marker line in live.log', async ($: any, on: any) => {
+    const w = world(on)
+    w.play('claude-key')
+    if (!(await w.start($))) return
+    await w.send($, { role: 'docs', task: 't' })
+    await w.until(() => w.submitted.length === 1)
+    const log = w.files.get('.relay/runs/docs/live.log') ?? ''
+    expect(log.split('[redacted private key]').length - 1).toBe(1)
+    expect(log).not.toContain(KEY_BODY)
   })
 
   test('N112: worker_status shows no worktree for werkbank', { options: WB }, async ($: any, on: any) => {
