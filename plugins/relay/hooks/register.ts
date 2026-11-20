@@ -354,11 +354,18 @@ async function recover($: EngineInterface) {
       const attachment = relayPath(`tmp/${name}`)
       if (await $.fs.exists(attachment).catch(() => false)) await clearTempFile($, attachment)
     }
-    // the kept message of this very job first, stored or not (N103)
+    // the kept message of this very job first, stored or not (N103); a kept
+    // file that is a link out means interrupted, without files (N118)
     const kept = await keptMessageOf($, job).catch(() => undefined)
-    const why = await (kept !== undefined ? deliverKept($, job, kept) : job.delivery === 'stored' ? deliverStored($, job) : reportInterrupted($, job)).catch(
-      err => `reporting failed (${message(err)})`,
-    )
+    const why = await (
+      typeof kept === 'object'
+        ? reportInterrupted($, job, redact(`the kept message was not read: ${kept.unsafe}`), { noFiles: 'its stored files are not safe to use' })
+        : kept !== undefined
+          ? deliverKept($, job, kept)
+          : job.delivery === 'stored'
+            ? deliverStored($, job)
+            : reportInterrupted($, job)
+    ).catch(err => `reporting failed (${message(err)})`)
     // A reported job left the queue in deliver; the rest stay and are shown.
     if (why) unreported.set(job.id, why)
   }
@@ -512,7 +519,14 @@ async function storageProblem($: EngineInterface, rel: string): Promise<string |
   const parts = rel.replace(/\\/g, '/').split('/').filter(Boolean)
   for (let i = 1; i <= parts.length; i++) {
     const p = parts.slice(0, i).join('/')
-    if (!(await $.fs.exists(p).catch(() => false))) return undefined
+    // only a confirmed "missing" lets relay create it; a failed query locks (N115)
+    let isThere: boolean
+    try {
+      isThere = await $.fs.exists(p)
+    } catch (err) {
+      return `${p} could not be checked (${message(err)})`
+    }
+    if (!isThere) return undefined
     const st = await $.fs.stat(p, { resolve: true }).catch(() => undefined)
     if (!st?.realPath) return `${p} could not be resolved`
     // Each part is spelled as on disk, so case does not decide here.
@@ -984,6 +998,9 @@ async function spawnRun(
   let errRest = ''
   // whether the child printed anything at all (N71)
   let sawOutput = false
+  // one key state over stdout and stderr, in the order they arrive (N114)
+  const keys = privateKeyFilter()
+  const track = (line: string) => void keys([line, ...eventTexts(line)].join('\n'))
   try {
     for (;;) {
       const step = await child.next()
@@ -997,10 +1014,13 @@ async function spawnRun(
       if (chunk.text) sawOutput = true
       if (chunk.stream === 'stderr') {
         proc.stderr += chunk.text
-        if (isLiveErr) {
-          const errLines = (errRest + chunk.text).split('\n')
-          errRest = errLines.pop() ?? ''
-          for (const line of errLines) live.line(line)
+        const errLines = (errRest + chunk.text).split('\n')
+        errRest = errLines.pop() ?? ''
+        for (const line of errLines) {
+          track(line)
+          // the stream not shown still moves live.log's key state (N114)
+          if (isLiveErr) live.line(line)
+          else live.other(line)
         }
         continue
       }
@@ -1008,7 +1028,9 @@ async function spawnRun(
       const lines = (rest + chunk.text).split('\n')
       rest = lines.pop() ?? ''
       for (const line of lines) {
+        track(line)
         if (!isLiveErr) live.line(line)
+        else live.other(line)
         if (onLine) usage = onLine(line, usage)
       }
       if (config.maxTokensPerRun > 0 && onLine && totalTokens(usage) > config.maxTokensPerRun && !proc.isStoppedByLimit) {
@@ -1022,7 +1044,14 @@ async function spawnRun(
       proc.streamError = redact(String(err)).slice(0, 300)
     }
   }
-  if (isLiveErr ? errRest : rest) live.line(isLiveErr ? errRest : rest)
+  for (const [last, isShown] of [[errRest, isLiveErr], [rest, !isLiveErr]] as const) {
+    if (!last) continue
+    track(last)
+    if (isShown) live.line(last)
+    else live.other(last)
+  }
+  // a key still open at the end: its answer is passed on nowhere (N114)
+  proc.isKeyOpen = keys.isOpen
   timer?.cancel()
   return { sawOutput }
 }
@@ -1100,6 +1129,11 @@ function liveLog($: EngineInterface, role: string, run: number, id: BackendId, i
       if (!text) return
       lines.push(redact(text))
       void flushSoon()
+    },
+    // a line of the stream not shown: it only moves the key state (N114)
+    other(raw: string) {
+      if (id === 'claude') return
+      keyFilter([raw, ...eventTexts(raw)].join('\n'))
     },
     // why live.log is not written, once known (N88)
     get problem() {
@@ -1218,6 +1252,8 @@ function headMeta(r: RunResult): string {
 // are passed on nowhere, since a key may open in one stream and go on in
 // another (N107).
 const KEY_HIDDEN = "(text hidden: the run's output contains a private key marker)"
+// a whole relay block, as parsePacket looks for it (N117)
+const RELAY_FENCE = /```relay\s*\n[\s\S]*?```/
 function withoutKeyTexts(r: RunResult): RunResult {
   const { outcome, proc } = r
   const texts = [proc.stderr, outcome.answer, outcome.error?.message, outcome.remote?.reason]
@@ -1237,9 +1273,13 @@ async function finish($: EngineInterface, raw: RunResult) {
   const r = withoutKeyTexts(raw)
   const { role, run, outcome, proc } = r
   // the whole answer is redacted before its packet is read: a key opened in
-  // the prose may go on in the packet (N107)
-  const answer = redact(outcome.answer)
-  let packet = parsePacket(answer)
+  // the prose may go on in the packet (N107); a key still open at the end of
+  // the output hides the answer entirely (N114)
+  const answer = proc.isKeyOpen ? '' : redact(outcome.answer)
+  // a relay block the redaction destroyed is a missing packet, never a bare
+  // JSON object from the prose (N117)
+  const isFenceLost = RELAY_FENCE.test(outcome.answer) && !RELAY_FENCE.test(answer)
+  let packet = isFenceLost ? undefined : parsePacket(answer)
   let compressedBy: string | undefined
   let compressError: string | undefined
   const remote = r.notStarted ? undefined : outcome.remote
@@ -1255,6 +1295,7 @@ async function finish($: EngineInterface, raw: RunResult) {
       compressedBy = c.by
     }
   }
+  if (proc.isKeyOpen) packet = failedPacket('answer hidden: a private key opened in the output is still open')
   const isGone = outcome.error?.kind === 'session-not-found'
   // A werkbank job that did not end done and left no packet: partial, since
   // commits may be on its branch; failed only when the job failed (N37, N54).
@@ -1430,7 +1471,8 @@ async function attemptDelivery($: EngineInterface, d: Delivery): Promise<boolean
         // every file is checked itself right before it is written (N99), and
         // never into a slot a later run holds, on any attempt (N110)
         for (const [path, text] of d.files) {
-          const why = isRotatedOut(d.role, d.run) ? 'a later run holds this slot' : await storageProblem($, path)
+          // the slot is checked again after the awaited path check (N116)
+          const why = (await storageProblem($, path)) ?? (isRotatedOut(d.role, d.run) ? 'a later run holds this slot' : undefined)
           if (why) warnings.add(why)
           else await $.fs.write(path, text)
         }
@@ -1515,10 +1557,12 @@ const RESTART_MARK = ' · delivered after a restart'
 // The kept message of this job, without its id line; undefined when the file
 // is missing, empty, unsafe, carries another (or no) job id or is not as
 // long as its id line says (N103, N111).
-async function keptMessageOf($: EngineInterface, job: QueuedJob): Promise<string | undefined> {
+async function keptMessageOf($: EngineInterface, job: QueuedJob): Promise<string | { unsafe: string } | undefined> {
   if (job.run === undefined) return undefined
   const path = undeliveredPath(job.role, job.run)
-  if (await storageProblem($, path)) return undefined
+  // a link out is no missing file: the run is reported as interrupted (N118)
+  const unsafe = await storageProblem($, path)
+  if (unsafe) return { unsafe }
   const text = String(await $.fs.read(path).catch(() => ''))
   const nl = text.indexOf('\n')
   const body = text.slice(nl + 1)
@@ -1866,7 +1910,7 @@ export const register: Register = (on, options) => {
     let out = text
     if (input.section) {
       const found = extractSection(text, input.section)
-      if (!found) return { result: `No section "${input.section}" in ${role.name} run ${run}.` }
+      if (!found) return { result: redact(`No section "${input.section}" in ${role.name} run ${run}.`) }
       out = found
     }
     const max = input.maxChars ?? 12000

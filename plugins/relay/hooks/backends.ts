@@ -116,6 +116,8 @@ export type ProcessResult = {
   // the error that broke reading its output
   signal?: string
   streamError?: string
+  // a private key opened in the output is still open at its end (N114)
+  isKeyOpen?: boolean
   isTimedOut: boolean
   isStoppedByLimit: boolean
 }

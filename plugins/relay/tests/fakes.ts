@@ -90,6 +90,13 @@ export type Scenario =
   // werkbank-relay: a key opens in the answer's prose and goes on in the
   // packet's summary (N107)
   | 'key-into-packet'
+  // codex: a key opens on stderr, its body is an error event on stdout (N114)
+  | 'key-stderr-event'
+  // werkbank-relay: a key opens on stderr, its body is in the answer (N114)
+  | 'key-stderr-answer'
+  // werkbank-relay: a JSON example in the prose, then a key around the relay
+  // block; the redaction removes the block (N117)
+  | 'key-fence-example'
 
 export type Call = { argv: string[]; cwd?: string; env: Record<string, string>; input?: string; attachment?: string; protocolFile?: string }
 
@@ -194,6 +201,10 @@ export function fakeWorld(
   const links = new Map<string, string>()
   const io = {
     failRead: (_path: string) => false,
+    // fs.exists itself fails for this path (N115)
+    failExists: (_path: string) => false,
+    // clock ms an fs.stat waits before it answers (N116)
+    statDelay: (_path: string) => 0,
     failWrite: (_path: string) => false,
     // clock ms a write waits before it lands
     writeDelay: (_path: string) => 0,
@@ -228,10 +239,13 @@ export function fakeWorld(
   }))
   on('fs.exists', (_$: any, e: any) => {
     const p = rel(e.path)
+    if (io.failExists(p)) return { deny: 'EACCES: permission denied, access' }
     return { value: has(p) || isDir(p) || links.has(p) || (p === '.git' && git.isRepo) }
   })
-  on('fs.stat', (_$: any, e: any) => {
+  on('fs.stat', async (_$: any, e: any) => {
     const p = rel(e.path)
+    const wait = io.statDelay(p)
+    if (wait > 0) await clock.sleep(wait)
     const link = links.get(p)
     if (link) return { value: { kind: 'dir', size: 0, mtimeMs: 0, isLink: true, ...(e.resolve ? { realPath: link } : {}) } }
     if (!has(p) && !isDir(p)) return { deny: 'ENOENT: no such file or directory' }
@@ -373,6 +387,11 @@ export function fakeWorld(
       if (scenario === 'key-fields-event') {
         yield { stream: 'stdout', text: jsonl({ type: 'item.completed', item: { a: KEY_LINES[0], id: 'k2', type: 'command_execution', command: KEY_BODY, z: KEY_LINES[1] } }) }
       }
+      if (scenario === 'key-stderr-event') {
+        yield { stream: 'stderr', text: `${KEY_LINES[0]}\n` }
+        yield { stream: 'stdout', text: jsonl({ type: 'error', message: KEY_BODY }) }
+        return { value: { code: 1, signal: null } }
+      }
       if (scenario === 'error-signal') {
         yield { stream: 'stdout', text: jsonl({ type: 'error', message: 'stream disconnected before completion' }) }
         return { value: { code: null, signal: 'SIGTERM' } }
@@ -453,6 +472,7 @@ export function fakeWorld(
         return { value: { code: null, signal: 'SIGTERM' } }
       }
       if (scenario === 'key-lines') yield { stream: 'stderr', text: `verifying\n${KEY_LINES[0]}\n${KEY_BODY}\n${KEY_LINES[1]}\nverify done\n` }
+      if (scenario === 'key-stderr-answer') yield { stream: 'stderr', text: `queued\n${KEY_LINES[0]}\n` }
       if (scenario === 'progress-quiet') {
         yield { stream: 'stderr', text: 'queued\nrunning auf fsn1-5\n' }
         await new Promise<void>(r => held.push(r))
@@ -496,7 +516,11 @@ export function fakeWorld(
                       ? ['## Work', '```relay', JSON.stringify({ status: 'done', decisions: [KEY_LINES[0]], summary: KEY_BODY, risks: [KEY_LINES[1], 'nothing else'], sections: ['Work'] }), '```'].join('\n')
                       : scenario === 'key-into-packet'
                         ? ['## Work', KEY_LINES[0], '```relay', JSON.stringify({ status: 'done', summary: KEY_BODY, sections: ['Work'] }), '```'].join('\n')
-                        : answer,
+                        : scenario === 'key-stderr-answer'
+                          ? PACKET(KEY_BODY)
+                          : scenario === 'key-fence-example'
+                            ? ['Example: {"status":"done","summary":"example only"}', KEY_LINES[0], '```relay', JSON.stringify({ status: 'failed', summary: 'the real packet' }), '```', KEY_LINES[1], 'after the key'].join('\n')
+                            : answer,
         sessionId: scenario === 'session-moved' ? 'fsn1-4:fresh2' : scenario === 'session-token' ? WERKBANK_TOKEN_SESSION : (arg('--session') ?? 'fsn1-5:9b1f'),
         usage: { costUsd: 0.42, turns: 6, inputTokens: 12000, outputTokens: 3100, model: 'claude-opus-5-5' },
         branch: `agent/relay/${role}`,

@@ -787,7 +787,7 @@ describe('werkbank, Nachtrag 2i (ninth Codex review)', () => {
     jobs: [{ id: 'j_1', role: 'coder', task: 't', enqueuedAt: '1970-01-01T00:00:00.000Z', state: 'running', run, backend: 'werkbank', ...(delivery ? { delivery } : {}) }],
   })
   const kept = '[relay] coder · run 1 finished (werkbank)\nStatus: done\nrun one did it'
-  const HIDDEN = "(text hidden: the run's output contains a private key marker)"
+  const KEY_STILL_OPEN = 'answer hidden: a private key opened in the output is still open'
 
   test('N107: a key opened on stderr whose body is the error reaches neither packet.json nor the message', { options: WB }, async ($: any, on: any) => {
     const w = world(on)
@@ -797,7 +797,8 @@ describe('werkbank, Nachtrag 2i (ninth Codex review)', () => {
     await w.until(() => w.submitted.length === 1)
     expect(w.submitted[0]).not.toContain(KEY_BODY)
     expect(w.files.get('.relay/runs/coder/001.packet.json')).not.toContain(KEY_BODY)
-    expect(w.submitted[0]).toContain(HIDDEN)
+    // since N114 the key still open at the end hides the whole answer
+    expect(w.submitted[0]).toContain(KEY_STILL_OPEN)
     // the kind of the error stays
     expect(w.submitted[0]).toContain('error (cli)')
   })
@@ -880,6 +881,103 @@ describe('werkbank, Nachtrag 2i (ninth Codex review)', () => {
     await w.until(() => w.submitted.length === 1)
     expect(w.submitted[0]).not.toContain('run one did it')
     expect(w.submitted[0]).toContain('run 1 interrupted')
+  })
+
+  test('N114: a key opened on stderr keeps its body in a codex error event out of live.log', { options: WB }, async ($: any, on: any) => {
+    const w = world(on)
+    w.play('key-stderr-event')
+    if (!(await w.start($))) return
+    await w.send($, { role: 'cx', task: 't', backend: 'codex' })
+    await w.until(() => w.submitted.length === 1)
+    expect(w.files.get('.relay/runs/cx/live.log')).not.toContain(KEY_BODY)
+    expect(w.submitted[0]).not.toContain(KEY_BODY)
+  })
+
+  test('N114: a key opened on stderr hides the werkbank answer that holds its body', { options: WB }, async ($: any, on: any) => {
+    const w = world(on)
+    w.play('key-stderr-answer')
+    if (!(await w.start($))) return
+    await w.send($, { role: 'coder', task: 't' })
+    await w.until(() => w.submitted.length === 1)
+    expect(w.submitted[0]).not.toContain(KEY_BODY)
+    expect(w.files.get('.relay/runs/coder/001.packet.json')).not.toContain(KEY_BODY)
+    expect(w.files.get('.relay/runs/coder/001.full.md')).not.toContain(KEY_BODY)
+    expect(w.submitted[0]).toContain(KEY_STILL_OPEN)
+    expect(w.submitted[0]).toContain('Status: failed')
+  })
+
+  test('N115: a failed existence query keeps worker_expand from reading a linked full.md', { options: WB }, async ($: any, on: any) => {
+    const w = world(on, {
+      files: { '.relay/runs/coder/001.full.md': 'what the link target holds' },
+      store: { 'roles:/w': { coder: { name: 'coder', runs: 1, isBusy: false } } },
+    })
+    w.links.set('.relay/runs/coder/001.full.md', '/home/u/.netrc')
+    w.io.failExists = (p: string) => p === '.relay/runs/coder/001.full.md'
+    if (!(await w.start($))) return
+    const r = String((await $.tool.call({ tool: 'mcp__relay__worker_expand', role: 'coder', run: 1 })).result)
+    expect(r).not.toContain('what the link target holds')
+    expect(r).toContain('could not be checked')
+  })
+
+  test('N116: a delivery whose path check waits does not overwrite the later run in its slot', { options: { ...WB, keepRuns: 1 } }, async ($: any, on: any) => {
+    const w = world(on)
+    let isFirst = true
+    // run 1's first check of its full.md waits a minute; run 2 runs meanwhile
+    w.io.statDelay = (p: string) => (p === '.relay/runs/coder/001.full.md' && w.files.has(p) === false && isFirst ? ((isFirst = false), 60_000) : 0)
+    if (!(await w.start($))) return
+    await w.send($, { role: 'coder', task: 'task one' })
+    await w.send($, { role: 'coder', task: 'task two' })
+    for (let i = 0; i < 10 && w.submitted.length < 2; i++) await w.clock.advance(30_000)
+    await w.until(() => w.submitted.length === 2)
+    expect(w.files.get('.relay/runs/coder/001.full.md')).toContain('task two')
+  })
+
+  test('N117: a relay block removed by the redaction leaves no packet from a JSON example', { options: WB }, async ($: any, on: any) => {
+    const w = world(on)
+    w.play('key-fence-example')
+    if (!(await w.start($))) return
+    await w.send($, { role: 'coder', task: 't' })
+    await w.until(() => w.submitted.length === 1)
+    expect(w.submitted[0]).not.toContain('example only')
+  })
+
+  test('N118: a kept message that is a link out means interrupted, with or without delivery stored', { options: WB }, async ($: any, on: any) => {
+    const w = world(on, {
+      files: { '.relay/queue.json': JSON.stringify(runningJob(1)), '.relay/runs/coder/undelivered-1.md': `<!-- relay job j_1 length ${kept.length} -->\n${kept}` },
+      store: { 'roles:/w': { coder: { name: 'coder', runs: 1, isBusy: true } } },
+    })
+    w.links.set('.relay/runs/coder/undelivered-1.md', '/home/u/x.md')
+    await w.clock.set(10 * 60_000)
+    if (!(await w.start($))) return
+    await w.until(() => w.submitted.length === 1)
+    expect(w.submitted[0]).not.toContain('run one did it')
+    expect(w.submitted[0]).toContain('run 1 interrupted')
+    expect(w.submitted[0]).toContain('the kept message was not read')
+  })
+
+  test('N118: with delivery stored and a safe packet.json, a linked kept message still means interrupted', { options: WB }, async ($: any, on: any) => {
+    const envelope = { run: 1, backend: 'werkbank', usage: {}, status: 'done', summary: 'stored packet', decisions: [], facts: [], artifacts: [], open_questions: [], needs_from_main: [], risks: [], next_suggested: [], sections: [] }
+    const w = world(on, {
+      files: { '.relay/queue.json': JSON.stringify(runningJob(1, 'stored')), '.relay/runs/coder/001.packet.json': JSON.stringify(envelope) },
+      store: { 'roles:/w': { coder: { name: 'coder', runs: 1, isBusy: true } } },
+    })
+    w.links.set('.relay/runs/coder/undelivered-1.md', '/home/u/x.md')
+    await w.clock.set(10 * 60_000)
+    if (!(await w.start($))) return
+    await w.until(() => w.submitted.length === 1)
+    expect(w.submitted[0]).toContain('run 1 interrupted')
+    expect(w.submitted[0]).toContain('the kept message was not read')
+  })
+
+  test('N119: worker_expand redacts a section name it did not find', { options: WB }, async ($: any, on: any) => {
+    const w = world(on, {
+      files: { '.relay/runs/coder/001.full.md': '# coder · run 1\n\n## Work\n\nDone.\n' },
+      store: { 'roles:/w': { coder: { name: 'coder', runs: 1, isBusy: false } } },
+    })
+    if (!(await w.start($))) return
+    const r = String((await $.tool.call({ tool: 'mcp__relay__worker_expand', role: 'coder', run: 1, section: `token=${SECRETS.token}` })).result)
+    expect(r).toContain('No section')
+    expect(r).not.toContain(SECRETS.token)
   })
 
   test('N112: worker_status shows no worktree for werkbank', { options: WB }, async ($: any, on: any) => {
