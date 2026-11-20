@@ -600,7 +600,8 @@ describe('werkbank, Nachtrag 2g (seventh Codex review)', () => {
     await w.until(() => w.submitted.length === 1)
     expect(w.submitted[0]).not.toContain(KEY_BODY)
     expect(w.files.get('.relay/runs/coder/001.packet.json')).not.toContain(KEY_BODY)
-    expect(w.submitted[0]).toContain('nothing else')
+    // since N120 any key marker hides the whole answer
+    expect(w.submitted[0]).toContain('answer hidden: the output contains a private key marker')
   })
 
   test('N96: a live.log turned into a link after its last flush is still named in the report', { options: { ...WB, maxParallel: 1 } }, async ($: any, on: any) => {
@@ -685,7 +686,8 @@ describe('werkbank, Nachtrag 2h (eighth Codex review)', () => {
     await w.until(() => w.submitted.length === 1)
     expect(w.submitted[0]).not.toContain(KEY_BODY)
     expect(w.files.get('.relay/runs/coder/001.packet.json')).not.toContain(KEY_BODY)
-    expect(w.submitted[0]).toContain('nothing else')
+    // since N120 any key marker hides the whole answer
+    expect(w.submitted[0]).toContain('answer hidden: the output contains a private key marker')
   })
 
   test('N101: a codex event with a whole key over three fields never reaches live.log', { options: WB }, async ($: any, on: any) => {
@@ -707,7 +709,7 @@ describe('werkbank, Nachtrag 2h (eighth Codex review)', () => {
     await w.until(() => w.submitted.length === 1)
     const live = w.files.get('.relay/runs/coder/live.log')!
     expect(live).not.toContain(KEY_BODY)
-    expect(live).toContain('error (text hidden: a private key is open)')
+    expect(live).toContain('error (text hidden: a private key marker was in the output)')
   })
 
   test('N102: an interrupted run whose slot a later run holds leaves those files alone', { options: { ...WB, keepRuns: 1 } }, async ($: any, on: any) => {
@@ -787,7 +789,8 @@ describe('werkbank, Nachtrag 2i (ninth Codex review)', () => {
     jobs: [{ id: 'j_1', role: 'coder', task: 't', enqueuedAt: '1970-01-01T00:00:00.000Z', state: 'running', run, backend: 'werkbank', ...(delivery ? { delivery } : {}) }],
   })
   const kept = '[relay] coder · run 1 finished (werkbank)\nStatus: done\nrun one did it'
-  const KEY_STILL_OPEN = 'answer hidden: a private key opened in the output is still open'
+  // since N120 the marker alone hides the answer
+  const KEY_STILL_OPEN = 'answer hidden: the output contains a private key marker'
 
   test('N107: a key opened on stderr whose body is the error reaches neither packet.json nor the message', { options: WB }, async ($: any, on: any) => {
     const w = world(on)
@@ -921,14 +924,17 @@ describe('werkbank, Nachtrag 2i (ninth Codex review)', () => {
 
   test('N116: a delivery whose path check waits does not overwrite the later run in its slot', { options: { ...WB, keepRuns: 1 } }, async ($: any, on: any) => {
     const w = world(on)
-    let isFirst = true
-    // run 1's first check of its full.md waits a minute; run 2 runs meanwhile
-    w.io.statDelay = (p: string) => (p === '.relay/runs/coder/001.full.md' && w.files.has(p) === false && isFirst ? ((isFirst = false), 60_000) : 0)
+    let isDelayed = false
+    // run 1's existence query for its full.md (the check before its first
+    // write) waits a minute; run 2 may run meanwhile (N126)
+    w.io.existsDelay = (p: string) => (p === '.relay/runs/coder/001.full.md' && !isDelayed ? ((isDelayed = true), 60_000) : 0)
     if (!(await w.start($))) return
     await w.send($, { role: 'coder', task: 'task one' })
     await w.send($, { role: 'coder', task: 'task two' })
     for (let i = 0; i < 10 && w.submitted.length < 2; i++) await w.clock.advance(30_000)
     await w.until(() => w.submitted.length === 2)
+    // the delay really happened
+    expect(isDelayed).toBe(true)
     expect(w.files.get('.relay/runs/coder/001.full.md')).toContain('task two')
   })
 
@@ -977,6 +983,70 @@ describe('werkbank, Nachtrag 2i (ninth Codex review)', () => {
     if (!(await w.start($))) return
     const r = String((await $.tool.call({ tool: 'mcp__relay__worker_expand', role: 'coder', run: 1, section: `token=${SECRETS.token}` })).result)
     expect(r).toContain('No section')
+    expect(r).not.toContain(SECRETS.token)
+  })
+
+  test('N120: a key opened and closed on stderr around the answer hides the answer', { options: WB }, async ($: any, on: any) => {
+    const w = world(on)
+    w.play('key-closed-around-answer')
+    if (!(await w.start($))) return
+    await w.send($, { role: 'coder', task: 't' })
+    await w.until(() => w.submitted.length === 1)
+    expect(w.submitted[0]).not.toContain(KEY_BODY)
+    expect(w.files.get('.relay/runs/coder/001.packet.json')).not.toContain(KEY_BODY)
+    expect(w.files.get('.relay/runs/coder/001.full.md')).not.toContain(KEY_BODY)
+    expect(w.submitted[0]).toContain(KEY_STILL_OPEN)
+  })
+
+  test('N121: a closed key around a codex error event keeps the body out of the whole live.log', { options: WB }, async ($: any, on: any) => {
+    const w = world(on)
+    w.play('key-closed-around-event')
+    if (!(await w.start($))) return
+    await w.send($, { role: 'cx', task: 't', backend: 'codex' })
+    await w.until(() => w.submitted.length === 1)
+    const live = w.files.get('.relay/runs/cx/live.log')!
+    expect(live).not.toContain(KEY_BODY)
+    expect(live).toContain('error (text hidden: a private key marker was in the output)')
+    expect(w.submitted[0]).not.toContain(KEY_BODY)
+  })
+
+  test('N122: a credential option split from its value in werkbankBin runs nothing', { options: { ...WB, werkbankBin: '["werkbank-relay","--token","opaque0value0x7"]' } }, async ($: any, on: any) => {
+    const w = world(on)
+    if (!(await w.start($))) return
+    await w.send($, { role: 'coder', task: 't' })
+    await w.until(() => w.submitted.length === 1)
+    expect(w.spawns).toHaveLength(0)
+    expect(w.runs.some((r: { argv: string[] }) => r.argv.includes('opaque0value0x7'))).toBe(false)
+    expect(w.submitted[0]).toContain('werkbankBin looks like it contains a credential')
+    expect(w.submitted[0]).not.toContain('opaque0value0x7')
+  })
+
+  test('N123: an example relay block is no packet when the redaction removed the real one', { options: WB }, async ($: any, on: any) => {
+    const w = world(on)
+    w.play('key-example-block')
+    if (!(await w.start($))) return
+    await w.send($, { role: 'coder', task: 't' })
+    await w.until(() => w.submitted.length === 1)
+    expect(w.submitted[0]).not.toContain('example only')
+    expect(w.submitted[0]).not.toContain('Status: done')
+  })
+
+  test('N124: a queue write that fails after the delivery keeps the kept message', { options: WB }, async ($: any, on: any) => {
+    const w = world(on)
+    if (!(await w.start($))) return
+    w.io.failWrite = (p: string) => p === '.relay/queue.json' && w.submitted.length >= 1
+    await w.send($, { role: 'coder', task: 't' })
+    await w.until(() => w.submitted.length === 1)
+    await w.clock.settle()
+    expect(w.files.get('.relay/runs/coder/undelivered-1.md')).toMatch(/^<!-- relay job \S+ length \d+ -->\n/)
+  })
+
+  test('N125: worker_send redacts a refusal whose path check failed with a credential in its error', { options: WB }, async ($: any, on: any) => {
+    const w = world(on)
+    w.io.failExists = (p: string) => (p === '.relay' ? `EACCES: token=${SECRETS.token}` : false)
+    if (!(await w.start($))) return
+    const r = String((await w.send($, { role: 'coder', task: 't' })).result)
+    expect(r).toContain('relay takes no tasks in this session')
     expect(r).not.toContain(SECRETS.token)
   })
 

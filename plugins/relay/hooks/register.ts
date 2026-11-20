@@ -1000,7 +1000,12 @@ async function spawnRun(
   let sawOutput = false
   // one key state over stdout and stderr, in the order they arrive (N114)
   const keys = privateKeyFilter()
-  const track = (line: string) => void keys([line, ...eventTexts(line)].join('\n'))
+  let isKeySeen = false
+  const track = (line: string) => {
+    const seen = [line, ...eventTexts(line)].join('\n')
+    if (hasKeyBegin(seen)) isKeySeen = true
+    keys(seen)
+  }
   try {
     for (;;) {
       const step = await child.next()
@@ -1052,6 +1057,8 @@ async function spawnRun(
   }
   // a key still open at the end: its answer is passed on nowhere (N114)
   proc.isKeyOpen = keys.isOpen
+  // any key marker at all: the answer is passed on nowhere (N120)
+  proc.isKeySeen = isKeySeen || keys.isOpen
   timer?.cancel()
   return { sawOutput }
 }
@@ -1141,8 +1148,10 @@ function liveLog($: EngineInterface, role: string, run: number, id: BackendId, i
     },
     async close(outcome: RunOutcome, proc: ProcessResult) {
       const state = proc.isTimedOut ? 'stopped (timeout)' : proc.isStoppedByLimit ? 'stopped (token limit)' : outcome.error
-            ? keyFilter.isOpen
-              ? 'error (text hidden: a private key is open)'
+            ? // any key marker in either stream or in the error itself hides
+              // the error text, closed or not (N101, N121)
+              keyFilter.isOpen || proc.isKeySeen || hasKeyBegin(outcome.error.message)
+              ? 'error (text hidden: a private key marker was in the output)'
               : `error: ${outcome.error.message}`
             : 'finished'
       lines.push(redact(`# ${state} · ${new Date().toISOString()}`))
@@ -1253,7 +1262,8 @@ function headMeta(r: RunResult): string {
 // another (N107).
 const KEY_HIDDEN = "(text hidden: the run's output contains a private key marker)"
 // a whole relay block, as parsePacket looks for it (N117)
-const RELAY_FENCE = /```relay\s*\n[\s\S]*?```/
+const RELAY_FENCE = /```relay\s*\n[\s\S]*?```/g
+const fencesIn = (text: string) => [...text.matchAll(RELAY_FENCE)].length
 function withoutKeyTexts(r: RunResult): RunResult {
   const { outcome, proc } = r
   const texts = [proc.stderr, outcome.answer, outcome.error?.message, outcome.remote?.reason]
@@ -1275,10 +1285,12 @@ async function finish($: EngineInterface, raw: RunResult) {
   // the whole answer is redacted before its packet is read: a key opened in
   // the prose may go on in the packet (N107); a key still open at the end of
   // the output hides the answer entirely (N114)
-  const answer = proc.isKeyOpen ? '' : redact(outcome.answer)
+  const answer = proc.isKeySeen ? '' : redact(outcome.answer)
   // a relay block the redaction destroyed is a missing packet, never a bare
-  // JSON object from the prose (N117)
-  const isFenceLost = RELAY_FENCE.test(outcome.answer) && !RELAY_FENCE.test(answer)
+  // JSON object from the prose (N117);
+  // fewer relay blocks after the redaction: no packet, not even an earlier
+  // example block (N117, N123)
+  const isFenceLost = fencesIn(answer) < fencesIn(outcome.answer)
   let packet = isFenceLost ? undefined : parsePacket(answer)
   let compressedBy: string | undefined
   let compressError: string | undefined
@@ -1295,7 +1307,7 @@ async function finish($: EngineInterface, raw: RunResult) {
       compressedBy = c.by
     }
   }
-  if (proc.isKeyOpen) packet = failedPacket('answer hidden: a private key opened in the output is still open')
+  if (proc.isKeySeen) packet = failedPacket('answer hidden: the output contains a private key marker')
   const isGone = outcome.error?.kind === 'session-not-found'
   // A werkbank job that did not end done and left no packet: partial, since
   // commits may be on its branch; failed only when the job failed (N37, N54).
@@ -1509,17 +1521,23 @@ async function attemptDelivery($: EngineInterface, d: Delivery): Promise<boolean
     }
     return false
   }
-  // delivered: the kept message is cleared, checked like any relay file (N97)
-  if (d.hasUndelivered && !(await storageProblem($, undeliveredPath(d.role.name, d.run)))) {
-    await $.fs.write(undeliveredPath(d.role.name, d.run), '').catch(() => undefined)
-  }
   const i = pendingDeliveries.indexOf(d)
   if (i >= 0) pendingDeliveries.splice(i, 1)
   unreported.delete(d.job.id)
   queue.jobs = queue.jobs.filter(j => j.id !== d.job.id)
-  await writeQueue($).catch(err => {
-    if (!(err instanceof NotOwnerError)) notices.push(`relay could not write the queue after ${d.role.name} run ${d.run} (${message(err)}).`)
-  })
+  // the queue first: only once the job is gone from it is the kept message
+  // cleared, so a crash in between delivers twice, never "interrupted" (N124)
+  const isQueueWritten = await writeQueue($).then(
+    () => true,
+    err => {
+      if (!(err instanceof NotOwnerError)) notices.push(`relay could not write the queue after ${d.role.name} run ${d.run} (${message(err)}).`)
+      return false
+    },
+  )
+  // delivered: the kept message is cleared, checked like any relay file (N97)
+  if (isQueueWritten && d.hasUndelivered && !(await storageProblem($, undeliveredPath(d.role.name, d.run)))) {
+    await $.fs.write(undeliveredPath(d.role.name, d.run), '').catch(() => undefined)
+  }
   return true
 }
 
@@ -1933,7 +1951,7 @@ export const register: Register = (on, options) => {
     }
     await claim
     if (!isOwner) {
-      if (queueError) return { result: `relay takes no tasks in this session: ${queueError}. Fix the file (or its permissions) and reload the plugin.` }
+      if (queueError) return { result: redact(`relay takes no tasks in this session: ${queueError}. Fix the file (or its permissions) and reload the plugin.`) }
       const fresh = await readQueue($).catch(() => undefined)
       if (fresh && mayOwn(fresh.queue, session, await $.clock.now())) {
         return { result: 'The session that worked this project\'s queue is gone; reload the plugin (or start a new session) to take it over.' }

@@ -97,6 +97,14 @@ export type Scenario =
   // werkbank-relay: a JSON example in the prose, then a key around the relay
   // block; the redaction removes the block (N117)
   | 'key-fence-example'
+  // werkbank-relay: BEGIN on stderr, the body in the answer, END on stderr
+  // after it (N120)
+  | 'key-closed-around-answer'
+  // codex: BEGIN on stderr, the body as an error event, END on stderr (N121)
+  | 'key-closed-around-event'
+  // werkbank-relay: an example relay block marked done, then a key around the
+  // real one (N123)
+  | 'key-example-block'
 
 export type Call = { argv: string[]; cwd?: string; env: Record<string, string>; input?: string; attachment?: string; protocolFile?: string }
 
@@ -201,8 +209,10 @@ export function fakeWorld(
   const links = new Map<string, string>()
   const io = {
     failRead: (_path: string) => false,
-    // fs.exists itself fails for this path (N115)
-    failExists: (_path: string) => false,
+    // fs.exists itself fails for this path (N115); a string is its error (N125)
+    failExists: (_path: string): boolean | string => false,
+    // clock ms an fs.exists waits before it answers (N126)
+    existsDelay: (_path: string) => 0,
     // clock ms an fs.stat waits before it answers (N116)
     statDelay: (_path: string) => 0,
     failWrite: (_path: string) => false,
@@ -237,9 +247,12 @@ export function fakeWorld(
   on('model.complete', () => io.failModel ? { deny: 'model unavailable' } : ({
     value: { isAnswered: true, text: JSON.stringify({ status: 'done', summary: 'Built by haiku.' }), usage: { input_tokens: 1, output_tokens: 1, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 } },
   }))
-  on('fs.exists', (_$: any, e: any) => {
+  on('fs.exists', async (_$: any, e: any) => {
     const p = rel(e.path)
-    if (io.failExists(p)) return { deny: 'EACCES: permission denied, access' }
+    const wait = io.existsDelay(p)
+    if (wait > 0) await clock.sleep(wait)
+    const failed = io.failExists(p)
+    if (failed) return { deny: typeof failed === 'string' ? failed : 'EACCES: permission denied, access' }
     return { value: has(p) || isDir(p) || links.has(p) || (p === '.git' && git.isRepo) }
   })
   on('fs.stat', async (_$: any, e: any) => {
@@ -387,6 +400,12 @@ export function fakeWorld(
       if (scenario === 'key-fields-event') {
         yield { stream: 'stdout', text: jsonl({ type: 'item.completed', item: { a: KEY_LINES[0], id: 'k2', type: 'command_execution', command: KEY_BODY, z: KEY_LINES[1] } }) }
       }
+      if (scenario === 'key-closed-around-event') {
+        yield { stream: 'stderr', text: `${KEY_LINES[0]}\n` }
+        yield { stream: 'stdout', text: jsonl({ type: 'error', message: KEY_BODY }) }
+        yield { stream: 'stderr', text: `${KEY_LINES[1]}\n` }
+        return { value: { code: 1, signal: null } }
+      }
       if (scenario === 'key-stderr-event') {
         yield { stream: 'stderr', text: `${KEY_LINES[0]}\n` }
         yield { stream: 'stdout', text: jsonl({ type: 'error', message: KEY_BODY }) }
@@ -463,6 +482,12 @@ export function fakeWorld(
       if (scenario === 'key-open-error') {
         return yield* out(JSON.stringify({ error: { kind: 'cli', message: KEY_BODY } }), 2, `queued\n${KEY_LINES[0]}\n`)
       }
+      if (scenario === 'key-closed-around-answer') {
+        yield { stream: 'stderr', text: `queued\n${KEY_LINES[0]}\n` }
+        yield { stream: 'stdout', text: JSON.stringify({ jobId: WERKBANK_JOB, state: 'done', answer: PACKET(KEY_BODY), sessionId: 'fsn1-5:9b1f', branch: `agent/relay/${role}`, commits: [], changedFiles: [] }) }
+        yield { stream: 'stderr', text: `${KEY_LINES[1]}\n` }
+        return { value: { code: 0, signal: null } }
+      }
       if (scenario === 'failed-signal') {
         yield { stream: 'stdout', text: JSON.stringify({ jobId: WERKBANK_JOB, state: 'failed', answer: '', sessionId: 'fsn1-5:9b1f', branch: `agent/relay/${role}`, commits: [], changedFiles: [], error: { kind: 'repo', message: 'the repo is gone' } }) }
         return { value: { code: null, signal: 'SIGTERM' } }
@@ -520,7 +545,9 @@ export function fakeWorld(
                           ? PACKET(KEY_BODY)
                           : scenario === 'key-fence-example'
                             ? ['Example: {"status":"done","summary":"example only"}', KEY_LINES[0], '```relay', JSON.stringify({ status: 'failed', summary: 'the real packet' }), '```', KEY_LINES[1], 'after the key'].join('\n')
-                            : answer,
+                            : scenario === 'key-example-block'
+                              ? ['For example:', '```relay', '{"status":"done","summary":"example only"}', '```', KEY_LINES[0], '```relay', JSON.stringify({ status: 'failed', summary: 'the real packet' }), '```', KEY_LINES[1]].join('\n')
+                              : answer,
         sessionId: scenario === 'session-moved' ? 'fsn1-4:fresh2' : scenario === 'session-token' ? WERKBANK_TOKEN_SESSION : (arg('--session') ?? 'fsn1-5:9b1f'),
         usage: { costUsd: 0.42, turns: 6, inputTokens: 12000, outputTokens: 3100, model: 'claude-opus-5-5' },
         branch: `agent/relay/${role}`,
