@@ -1,6 +1,6 @@
 # Vertrag 0001: relay mit Backends je Rolle
 
-**Status:** abgenommen am 3. November 2026 (E1–E11 wie empfohlen, herdr gestrichen) · **Stand:** 13. November 2026, Nachtrag 1 (Abschnitt 14 und 14.1, N1–N28) abgenommen am 13. November 2026; Nachtrag 2 (Abschnitt 15, N29–N47, Backend `werkbank`) sowie Nachträge 2a (15.4, N48–N57) , 2b (15.5, N58–N67) und 2c (15.6, N68–N72) abgenommen am 18. November 2026; Nachtrag 2d (15.7, N73–N80) abgenommen am 19. November 2026; Nachtrag 2e (15.8, N81–N86) und 2f (15.9, N87–N93) abgenommen am 19. November 2026; Nachtrag 2g (15.10, N94–N98) abgenommen am 19. November 2026; Nachtrag 2h (15.11, N99–N106) , 2i (15.12, N107–N113), 2j (15.13, N114–N119), 2k (15.14, N120–N126), 2l (15.15, N127–N133), 2m (15.16, N134–N140), 2n (15.17, N141–N147), 2o (15.18, N148–N154), 2p (15.19, N155–N159), 2q (15.20, N160–N165), 2r (15.21, N166–N169), 2s (15.22, N170–N172), 2t (15.23, N173–N177) und 2u (15.24, N178–N181) abgenommen am 20. November 2026 · **Betrifft:** `plugins/relay` (heute 0.3.0)
+**Status:** abgenommen am 3. November 2026 (E1–E11 wie empfohlen, herdr gestrichen) · **Stand:** 13. November 2026, Nachtrag 1 (Abschnitt 14 und 14.1, N1–N28) abgenommen am 13. November 2026; Nachtrag 2 (Abschnitt 15, N29–N47, Backend `werkbank`) sowie Nachträge 2a (15.4, N48–N57) , 2b (15.5, N58–N67) und 2c (15.6, N68–N72) abgenommen am 18. November 2026; Nachtrag 2d (15.7, N73–N80) abgenommen am 19. November 2026; Nachtrag 2e (15.8, N81–N86) und 2f (15.9, N87–N93) abgenommen am 19. November 2026; Nachtrag 2g (15.10, N94–N98) abgenommen am 19. November 2026; Nachtrag 2h (15.11, N99–N106) , 2i (15.12, N107–N113), 2j (15.13, N114–N119), 2k (15.14, N120–N126), 2l (15.15, N127–N133), 2m (15.16, N134–N140), 2n (15.17, N141–N147), 2o (15.18, N148–N154), 2p (15.19, N155–N159), 2q (15.20, N160–N165), 2r (15.21, N166–N169), 2s (15.22, N170–N172), 2t (15.23, N173–N177), 2u (15.24, N178–N181) und 2v (15.25, N182–N184) abgenommen am 20. November 2026 · **Betrifft:** `plugins/relay` (heute 0.3.0)
 
 Heute startet relay jeden Worker als `claude -p`. Künftig wählt jede Rolle ihr **Backend**: `claude`, `codex` oder `opencode`. Über opencode erreicht relay auch Ollama und OpenRouter. Warteschlange, Timeout, `owns`, Relay-Pakete und die drei Werkzeuge bleiben gleich. Neu sind die Backend-Schnittstelle, eine Schreibprüfung nach jedem Lauf, die gleich für alle Backends greift, Token-Angaben im Paket, Ollama als Ersatz-Verdichter und eine Warteschlange, die auf der Platte liegt.
 
@@ -648,7 +648,7 @@ Ein zweites Codex-Review (Stand `63ba3bf`) fand 14 weitere Befunde (6 hoch, 8 mi
 |---|---|---|
 | W-P1 | Nachtrag 2 abnehmen | [braucht Nutzer/Unreal/Hardware] |
 | W-P2 | Backend, Einstellungen, Fake, Tests nach 15.1 und 15.2; README und Skill `relay-orchestrator` um werkbank ergänzen; Fassung 0.5.0 | [Claude-prüfbar] |
-| W-P3 | Echter Lauf mit dem gebauten `werkbank-relay.exe` gegen den Leitstand: Fassung (N46), JSON-Felder wie im Fake, Abbruch bei Timeout (N45) | [braucht Nutzer/Unreal/Hardware] |
+| W-P3 | Echter Lauf mit dem gebauten `werkbank-relay.exe` gegen den Leitstand: Fassung (N46), JSON-Felder wie im Fake (`jobId` als Text oder ganze Zahl, N183), Abbruch bei Timeout (N45), Stopp nach einem Lesefehler (N180) | [braucht Nutzer/Unreal/Hardware] |
 
 **Stand 18. November 2026:** W-P1 erledigt (abgenommen), W-P2 in relay 0.5.0 gebaut und mit `claude plugin test plugins/relay` geprüft (neue Datei `tests/werkbank.test.ts`, reine Fälle in `hooks/backends.test.ts`). Offen ist W-P3. Ein unterbrochener werkbank-Lauf (Neustart des Plugins) wird wie jeder andere als `interrupted` gemeldet; seine Schreibprüfung findet keinen Schnappschuss und heißt `incomplete` (bisheriges Verhalten aus 7.2, unverändert; ersetzt durch N53).
 
@@ -1046,3 +1046,20 @@ Ein zweites Codex-Review (Stand `63ba3bf`) fand 14 weitere Befunde (6 hoch, 8 mi
 - **N179 und N181:** die Fälle aus der Tabelle. Sie dürfen auch mit `0a4e6f0` bestehen.
 
 **Stand (20. November 2026):** N178–N181 umgesetzt. `claude plugin test plugins/relay`: 289 pass, 0 fail. Mit `0a4e6f0` schlägt genau der N178-Fall fehl (288 pass, 1 fail). Die Fälle zu N179 und N181 bestehen auch dort. N180 stoppt das Kind im `catch` von `spawnRun`. Lehnt ein Strom, der schon gescheitert ist, das Stoppen ab, gilt das nicht als neuer Fehler. Ob der Prozess wirklich endet, lässt sich nur am Code und an der echten Plugin-API prüfen, nicht im Fake (siehe oben).
+
+### 15.25 Nachtrag 2v (20. November 2026): Befunde aus dem zweiundzwanzigsten Review (`c270e77...0442e03`)
+
+**Status: abgenommen am 20. November 2026** (N182–N184 wie vorgeschlagen). Codex hatte wieder sein Nutzungslimit erreicht. Deshalb hat eine unabhängige, schreibgeschützte Claude-Sitzung das zweiundzwanzigste Review gemacht. Sie fand 3 niedrige Befunde, keinen hohen und keinen mittleren. Einer davon ist rein kosmetisch. Alle werden als echt eingestuft. Entschieden vom Nutzer am 20. November 2026: alle als Nachtrag 2v beheben.
+
+| Nr. | Änderung | Ersetzt / ergänzt | Befund |
+|---|---|---|---|
+| N182 | **Die Warnung aus N44 gilt auch für einen Worker ohne Zeitlimit.** Ist `runTimeoutMin` gleich 0 (kein Limit für den Worker) und `werkbankTimeoutMin` größer als 0, warnt relay ebenfalls: „runTimeoutMin is 0 (no limit for the worker on the server), but werkbankTimeoutMin (<n>) stops werkbank-relay after <n> min; the job may run on in the Leitstand.“ Die Warnung erscheint in `worker_status`. | N44, N45 | niedrig 1 |
+| N183 | **Eine `jobId` als Zahl gilt.** Meldet werkbank-relay die `jobId` als ganze Zahl (ganzzahlig, ab 0, im sicheren Zahlenbereich), nimmt relay sie als Text. Jede andere Zahl und jeder andere Typ gilt weiter als „keine jobId“ (N65, N90). Zusätzlich gehört „`jobId` als Text“ in die Prüfpunkte gegen Vertrag 0002 (W-P3). | N65, N90 | niedrig 2 |
+| N184 | **Der doppelte Kommentar zu N90 in `backends.ts` entfällt.** Am Verhalten ändert sich nichts. | N90 | niedrig 3 |
+
+**Tests:**
+- **N182:** `runTimeoutMin: 0` mit werkbank. `worker_status` zeigt die Warnung. Der Fall schlägt mit `0442e03` fehl.
+- **N183:** Ein Job mit `jobId: 4711` hat einen Branch-Hinweis mit `werkbank job 4711` und gilt nicht als ohne `jobId`. Ein Job mit `jobId: 1.5` gilt weiter als ohne `jobId`. Der erste Fall schlägt mit `0442e03` fehl.
+- **N184:** kein Test, denn am Verhalten ändert sich nichts.
+
+**Stand (20. November 2026):** N182–N184 umgesetzt. `claude plugin test plugins/relay`: 291 pass, 0 fail. Mit `0442e03` schlagen genau die 2 Fälle zu N182 und N183 fehl (289 pass, 2 fail). Die Zeile W-P3 in 15.1 nennt jetzt auch die `jobId` als Text oder ganze Zahl (N183) und den Stopp nach einem Lesefehler (N180).

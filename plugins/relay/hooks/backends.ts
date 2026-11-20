@@ -640,13 +640,14 @@ const werkbank: Backend = {
     const kind = e ? (Object.prototype.hasOwnProperty.call(WERKBANK_ERRORS, errKind) ? WERKBANK_ERRORS[errKind] : 'unknown') : undefined
     const errText = e ? cut(str(e.message) || `werkbank error (${str(e.kind) ?? 'unknown'})`) : undefined
     const sid = str(json.sessionId)
-    // only spaces is no job id (N90)
     // free text of the server: one line, at most 120 characters (N176)
     // nothing is trimmed: only exact values count as a state or the role's
     // branch (N178)
     const oneLine = (s: string | undefined) => (s === undefined ? undefined : cut(s.replace(/\s+/g, ' '), 120))
-    // only spaces is no job id (N90)
-    const jobId = str(json.jobId)?.trim() ? oneLine(str(json.jobId)) : undefined
+    // a whole number counts as the job id's text (N183); only spaces is no
+    // job id (N90)
+    const rawJobId = typeof json.jobId === 'number' && Number.isSafeInteger(json.jobId) && json.jobId >= 0 ? String(json.jobId) : str(json.jobId)
+    const jobId = rawJobId?.trim() ? oneLine(rawJobId) : undefined
     const state = oneLine(str(json.state)) ?? 'unknown'
     const strings = (v: unknown) => (Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : [])
     let remote: RemoteRun | undefined

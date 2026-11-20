@@ -2095,6 +2095,12 @@ export const register: Register = (on, options) => {
       `werkbankTimeoutMin (${config.werkbankTimeoutMin}) is not above runTimeoutMin (${config.runTimeoutMin}): relay may stop a werkbank run before the worker on the server ends it.`,
     )
   }
+  // a worker without a limit outlives any werkbankTimeoutMin (N182)
+  if (config.werkbankTimeoutMin > 0 && config.runTimeoutMin === 0) {
+    configNotes.push(
+      `runTimeoutMin is 0 (no limit for the worker on the server), but werkbankTimeoutMin (${config.werkbankTimeoutMin}) stops werkbank-relay after ${config.werkbankTimeoutMin} min; the job may run on in the Leitstand.`,
+    )
+  }
 
   on('session.start', async ($, e, next) => {
     const started = await next(e)

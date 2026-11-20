@@ -166,6 +166,9 @@ export type Scenario =
   | 'long-branch-job'
   // werkbank-relay: one stderr line, then the read fails (N181)
   | 'read-error-after-output'
+  // werkbank-relay: the job id as a whole number, and as a fraction (N183)
+  | 'numeric-job'
+  | 'fraction-job'
 
 export type Call = { argv: string[]; cwd?: string; env: Record<string, string>; input?: string; attachment?: string; protocolFile?: string }
 
@@ -601,6 +604,10 @@ export function fakeWorld(
       }
       if (scenario === 'long-branch-job') {
         yield { stream: 'stdout', text: JSON.stringify({ jobId: `job0x25\n${'j'.repeat(300)}`, state: 'done', answer: PACKET(), sessionId: 'fsn1-5:9b1f', branch: `branch0x26\n${'b'.repeat(300)}`, commits: [WERKBANK_COMMIT], changedFiles: [] }) }
+        return { value: { code: 0, signal: null } }
+      }
+      if (scenario === 'numeric-job' || scenario === 'fraction-job') {
+        yield { stream: 'stdout', text: JSON.stringify({ jobId: scenario === 'numeric-job' ? 4711 : 1.5, state: 'done', answer: PACKET(), sessionId: 'fsn1-5:9b1f', branch: `agent/relay/${role}`, commits: [WERKBANK_COMMIT], changedFiles: [] }) }
         return { value: { code: 0, signal: null } }
       }
       if (scenario === 'read-error-after-output') {

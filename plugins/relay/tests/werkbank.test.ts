@@ -1804,6 +1804,25 @@ describe('werkbank, Nachtrag 2i (ninth Codex review)', () => {
     expect(w.submitted[0]).toContain('the file list werkbank reported is not shown')
   })
 
+  test('N182: runTimeoutMin 0 with werkbank is warned about', { options: { ...WB, runTimeoutMin: 0 } }, async ($: any, on: any) => {
+    const w = world(on)
+    if (!(await w.start($))) return
+    expect(await w.status($)).toContain('runTimeoutMin is 0 (no limit for the worker on the server), but werkbankTimeoutMin (60) stops werkbank-relay after 60 min')
+  })
+
+  test('N183: a whole-number job id counts, a fraction does not', { options: WB }, async ($: any, on: any) => {
+    const w = world(on)
+    w.play('numeric-job', 'fraction-job')
+    if (!(await w.start($))) return
+    await w.send($, { role: 'coder', task: 'a' })
+    await w.until(() => w.submitted.length === 1)
+    expect(w.submitted[0]).toContain('werkbank job 4711')
+    expect(w.submitted[0]).not.toContain('reported no jobId')
+    await w.send($, { role: 'coder', task: 'b' })
+    await w.until(() => w.submitted.length === 2)
+    expect(w.submitted[1]).toContain('werkbank-relay reported no jobId')
+  })
+
   test('N112: worker_status shows no worktree for werkbank', { options: WB }, async ($: any, on: any) => {
     const w = world(on)
     if (!(await w.start($))) return
