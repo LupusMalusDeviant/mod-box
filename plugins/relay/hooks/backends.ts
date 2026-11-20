@@ -89,6 +89,8 @@ export type RemoteRun = {
   changedFiles?: string[]
   // the list held something other than non-empty strings (N49)
   isFileListMalformed?: true
+  // the list was hidden after a key marker, but held files (N172)
+  hadChangedFiles?: true
   verify?: RemoteVerify
   // why the job did not end done (error.message), redacted and cut
   reason?: string
@@ -481,8 +483,10 @@ function opencodeStep(e: Record<string, unknown>): Usage {
 // The Leitstand takes a task of at most this many UTF-8 bytes.
 export const WERKBANK_MAX_TASK_BYTES = 16 * 1024
 
-// Job states that end the run as partial (commits may be on the branch) and
-// the ones that end it failed; any other state that is not done counts as partial.
+// The job states of N37. Of these, the ones that end the run failed; the
+// others that are not done end it partial (commits may be on the branch).
+// A missing state or any other value ends it failed (N171).
+export const WERKBANK_STATES: readonly string[] = ['done', 'red', 'needs-approval', 'timed-out', 'limit', 'failed', 'cancelled']
 export const WERKBANK_FAILED_STATES: readonly string[] = ['failed', 'cancelled']
 
 const WERKBANK_ERRORS: Record<string, RunError['kind']> = {
@@ -677,7 +681,8 @@ const werkbank: Backend = {
     // failure, no jobId, a failed job, a done job with an error. A nonzero
     // exit is always an error (N48); a done job needs a confirmed exit 0 (N61).
     const answer = str(json.answer) ?? ''
-    const isPartialState = !!remote && state !== 'done' && !WERKBANK_FAILED_STATES.includes(state)
+    // an unknown state is no partial one: its JSON error stays the run's (N171)
+    const isPartialState = !!remote && state !== 'done' && WERKBANK_STATES.includes(state) && !WERKBANK_FAILED_STATES.includes(state)
     const jsonError: RunError | undefined = kind && errText && !isPartialState ? { kind, message: errText } : undefined
     const fromJson = jsonError ?? (isErrorMalformed ? { kind: 'cli' as const, message: 'werkbank-relay sent a malformed error field' } : undefined)
     // a signal or broken stream after a JSON error is kept beside it (N85)
@@ -728,7 +733,8 @@ export function remoteEndLine(r: RemoteRun): string | undefined {
   return `werkbank job ${r.jobId} ended ${r.state}${kind}${why ? `: ${why}` : ''}`
 }
 
-export const isRemoteFailed = (r: RemoteRun) => WERKBANK_FAILED_STATES.includes(r.state)
+// failed or cancelled, or a state relay does not know (N171)
+export const isRemoteFailed = (r: RemoteRun) => WERKBANK_FAILED_STATES.includes(r.state) || !WERKBANK_STATES.includes(r.state)
 
 export const BACKENDS: Record<BackendId, Backend> = { claude, codex, opencode, werkbank }
 

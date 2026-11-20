@@ -143,6 +143,11 @@ export type Scenario =
   // werkbank-relay: a failed job whose usage.model holds a line break and a
   // Status: done line (N168)
   | 'multiline-model'
+  // werkbank-relay: a job in a state relay does not know, with an error (N171)
+  | 'unknown-state'
+  // werkbank-relay: a key marker on stderr, changed files, no valid commit id
+  // (N172)
+  | 'key-files-no-commit'
 
 export type Call = { argv: string[]; cwd?: string; env: Record<string, string>; input?: string; attachment?: string; protocolFile?: string }
 
@@ -569,6 +574,15 @@ export function fakeWorld(
         yield { stream: 'stderr', text: `{"detail":"{${q}password${q}: ${q}opaque0pw0x20${q}, ${q}next${q}: ${q}keep0me0x21${q}}"}\n` }
         yield { stream: 'stderr', text: `{"detail":"{${q}Authorization${q}: ${q}Bearer opaque0auth0x22${q}, ${q}sibling${q}: 1}"}\n` }
         yield { stream: 'stdout', text: JSON.stringify({ jobId: WERKBANK_JOB, state: 'done', answer: PACKET(), sessionId: 'fsn1-5:9b1f', branch: `agent/relay/${role}`, commits: [], changedFiles: [] }) }
+        return { value: { code: 0, signal: null } }
+      }
+      if (scenario === 'unknown-state') {
+        yield { stream: 'stdout', text: JSON.stringify({ jobId: WERKBANK_JOB, state: 'running', answer: '', sessionId: 'fsn1-5:9b1f', branch: `agent/relay/${role}`, commits: [], changedFiles: [], error: { kind: 'repo', message: 'the job is still running' } }) }
+        return { value: { code: 1, signal: null } }
+      }
+      if (scenario === 'key-files-no-commit') {
+        yield { stream: 'stderr', text: `${KEY_LINES[0]}\n` }
+        yield { stream: 'stdout', text: JSON.stringify({ jobId: WERKBANK_JOB, state: 'done', answer: 'x', sessionId: 'fsn1-5:9b1f', branch: `agent/relay/${role}`, commits: ['not-a-commit'], changedFiles: ['src/a.ts'] }) }
         return { value: { code: 0, signal: null } }
       }
       if (scenario === 'multiline-model') {

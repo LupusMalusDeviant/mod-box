@@ -3,6 +3,7 @@ import {
   BACKEND_IDS,
   BuildError,
   isRemoteFailed,
+  WERKBANK_STATES,
   liveStream,
   remoteEndLine,
   remoteVerifyLine,
@@ -1085,6 +1086,12 @@ async function start($: EngineInterface, job: QueuedJob, role: Role, run: number
         else if (!isRemote) check = await writeCheckOf($, eff.owns, work.dir, before, work.git, mine)
         // The files the job changed on its branch, against owns (N39).
         else if (outcome.remote) check = remoteWriteCheck(outcome.remote, eff.owns, await prefixOf($, work.dir))
+        // no JSON at all from a run that did start: the job may have been
+        // handed in and run on (N170); a JSON error without jobId or a start
+        // that never happened has no check (N39, N71)
+        else if (!notStarted && !hasJsonObject(proc.stdout) && (proc.stdout.trim() || proc.stderr.trim() || proc.exitCode !== undefined || proc.signal || proc.streamError || proc.isTimedOut)) {
+          check = notChecked(`the werkbank job may still be running on the server; its changes would be on agent/relay/${role.name}`)
+        }
       }
     } catch (err) {
       proc.stderr += `\n${String(err)}`
@@ -1455,8 +1462,8 @@ function headMeta(r: RunResult): string {
 // are passed on nowhere, since a key may open in one stream and go on in
 // another (N107).
 const KEY_HIDDEN = "(text hidden: the run's output contains a private key marker)"
-// the werkbank job states of N37 (N150)
-const KNOWN_REMOTE_STATES: readonly string[] = ['done', 'red', 'needs-approval', 'timed-out', 'limit', 'failed', 'cancelled']
+// the werkbank job states of N37 (N150, N171)
+const KNOWN_REMOTE_STATES = WERKBANK_STATES
 // a whole relay block, as parsePacket looks for it (N117)
 const RELAY_FENCE = /```relay\s*\n[\s\S]*?```/g
 const fencesIn = (text: string) => [...text.matchAll(RELAY_FENCE)].length
@@ -1488,6 +1495,8 @@ function withoutKeyTexts(r: RunResult): RunResult {
         branch: outcome.remote.branch === `agent/relay/${r.role.name}` ? outcome.remote.branch : KEY_HIDDEN,
         ...(outcome.remote.verify ? { verify: { ...outcome.remote.verify, ...(outcome.remote.verify.command !== undefined ? { command: KEY_HIDDEN } : {}) } } : {}),
         changedFiles: undefined,
+        // whether it reported changed files is kept, for its branch line (N172)
+        ...(outcome.remote.changedFiles?.length ? { hadChangedFiles: true as const } : {}),
       },
     },
     check: r.check && r.id === 'werkbank' ? notChecked('the run printed a private key marker, so the file list werkbank reported is not shown') : r.check,
@@ -1557,8 +1566,9 @@ async function finish($: EngineInterface, raw: RunResult) {
     // N37: why the job did not end done; N38: its verify command; N40: its branch.
     const end = remoteEndLine(remote)
     if (end) packet.risks.push(end)
-    // a state relay does not know (hidden after a key marker) is failed (N150)
-    if (isRemoteFailed(remote) || remote.state === 'unknown') packet.status = 'failed'
+    // a state relay does not know, missing or hidden after a key marker, is
+    // failed: isRemoteFailed says so (N150, N171)
+    if (isRemoteFailed(remote)) packet.status = 'failed'
     else if (remote.state !== 'done' && packet.status === 'done') packet.status = 'partial'
     // N48: a CLI error never leaves a job done, and is named
     if (outcome.error && !isRemoteFailed(remote)) {
@@ -1575,7 +1585,7 @@ async function finish($: EngineInterface, raw: RunResult) {
     if (remote.malformedCommits) packet.risks.push(`werkbank reported ${remote.malformedCommits} malformed commit id(s) (not shown)`)
     const shas = remote.commits.map(c => c.slice(0, 7))
     for (const sha of shas) packet.artifacts.push({ path: `commit ${sha}`, change: 'created', note: `on ${remote.branch || 'the werkbank branch'}` })
-    if (remote.commits.length || remote.changedFiles?.length) {
+    if (remote.commits.length || remote.changedFiles?.length || remote.hadChangedFiles) {
       packet.needs_from_main.push(
         `The changes are on branch ${remote.branch || '(not reported)'} (werkbank job ${remote.jobId}${shas.length ? `, commits ${shas.join(', ')}` : ''}); relay does not merge them.`,
       )
@@ -1788,6 +1798,16 @@ function isEnvelopeOf(text: string, run: number, backend: BackendId): boolean {
   try {
     const v = JSON.parse(text) as { run?: unknown; backend?: unknown }
     return v.run === run && v.backend === backend
+  } catch {
+    return false
+  }
+}
+
+// Whether werkbank-relay printed a JSON object, as its parse reads it (N170).
+function hasJsonObject(stdout: string): boolean {
+  try {
+    const v = JSON.parse(stdout.trim()) as unknown
+    return !!v && typeof v === 'object' && !Array.isArray(v)
   } catch {
     return false
   }
