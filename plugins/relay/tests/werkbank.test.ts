@@ -1216,6 +1216,97 @@ describe('werkbank, Nachtrag 2i (ninth Codex review)', () => {
     expect(w.files.get(path)).toBe('')
   })
 
+  test('N141: a key marker keeps a reported session id and model name out of reports and the next run', { options: WB }, async ($: any, on: any) => {
+    const w = world(on)
+    w.play('key-session-model')
+    if (!(await w.start($))) return
+    await w.send($, { role: 'coder', task: 'one' })
+    await w.until(() => w.submitted.length === 1)
+    expect(w.submitted[0]).not.toContain(KEY_BODY)
+    expect(w.files.get('.relay/runs/coder/001.packet.json')).not.toContain(KEY_BODY)
+    await w.send($, { role: 'coder', task: 'two' })
+    await w.until(() => w.submitted.length === 2)
+    expect(w.spawns[1]!.argv.join(' ')).not.toContain(KEY_BODY)
+  })
+
+  test('N142: a generic key= value in the model starts nothing', { options: WB }, async ($: any, on: any) => {
+    const w = world(on)
+    if (!(await w.start($))) return
+    await w.send($, { role: 'coder', task: 't', model: 'key=opaque0value0x7' })
+    await w.until(() => w.submitted.length === 1)
+    expect(w.spawns).toHaveLength(0)
+    expect(w.submitted[0]).not.toContain('opaque0value0x7')
+  })
+
+  test('N142: a quoted Authorization value on stderr stays out of live.log', { options: WB }, async ($: any, on: any) => {
+    const w = world(on)
+    w.play('quoted-auth')
+    if (!(await w.start($))) return
+    await w.send($, { role: 'coder', task: 't' })
+    await w.until(() => w.submitted.length === 1)
+    expect(w.files.get('.relay/runs/coder/live.log')).not.toContain('opaque0value0x8')
+  })
+
+  test('N143: a roles file whose roles is no object keeps the job queued', { options: WB }, async ($: any, on: any) => {
+    const w = world(on, { files: { '.relay/roles.json': '{"roles":"broken"}' } })
+    if (!(await w.start($))) return
+    await w.send($, { role: 'coder', task: 't' })
+    for (let i = 0; i < 3; i++) await w.clock.advance(60_000)
+    expect(w.spawns).toHaveLength(0)
+    expect(await w.status($)).toContain('roles is no JSON object')
+  })
+
+  test('N144: a live.log a later run began is not overwritten', { options: WB }, async ($: any, on: any) => {
+    const later = '# coder · run 5 · werkbank · started 2026-11-20T00:00:00.000Z\nlater run\n'
+    const w = world(on, { files: { '.relay/runs/coder/live.log': later } })
+    if (!(await w.start($))) return
+    await w.send($, { role: 'coder', task: 't' })
+    await w.until(() => w.submitted.length === 1)
+    expect(w.files.get('.relay/runs/coder/live.log')).toBe(later)
+    expect(w.submitted[0]).toContain('live.log was not written: a later run holds it')
+  })
+
+  test('N145: a slot whose packet.json names run 0.5 is not written', { options: { ...WB, keepRuns: 1 } }, async ($: any, on: any) => {
+    const odd = JSON.stringify({ run: 0.5, backend: 'werkbank', usage: {}, status: 'done', summary: 'odd' })
+    const w = world(on, { files: { '.relay/runs/coder/001.packet.json': odd } })
+    if (!(await w.start($))) return
+    await w.send($, { role: 'coder', task: 't' })
+    await w.until(() => w.submitted.length === 1)
+    expect(w.files.get('.relay/runs/coder/001.packet.json')).toBe(odd)
+    expect(w.submitted[0]).toContain('names no valid run')
+  })
+
+  test('N146: a queued job finds its role once the roles file is repaired', { options: WB }, async ($: any, on: any) => {
+    const waiting = {
+      version: 1,
+      owner: { session: 'old', heartbeatAt: '1970-01-01T00:00:00.000Z' },
+      jobs: [{ id: 'j_1', role: 'coder', task: 't', enqueuedAt: '1970-01-01T00:00:00.000Z', state: 'queued', backend: 'werkbank' }],
+    }
+    const w = world(on, { files: { '.relay/queue.json': JSON.stringify(waiting), '.relay/roles.json': '{ broken' } })
+    await w.clock.set(10 * 60_000)
+    if (!(await w.start($))) return
+    for (let i = 0; i < 2; i++) await w.clock.advance(60_000)
+    expect(w.spawns).toHaveLength(0)
+    w.files.set('.relay/roles.json', JSON.stringify({ roles: { coder: { owns: ['src'] } } }))
+    for (let i = 0; i < 3 && !w.spawns.length; i++) await w.clock.advance(60_000)
+    await w.until(() => w.spawns.length === 1)
+    expect(w.spawns).toHaveLength(1)
+  })
+
+  test('N147: worker_expand names a full.md that is a link when the packet is asked for', { options: WB }, async ($: any, on: any) => {
+    const w = world(on, {
+      files: {
+        '.relay/runs/coder/001.packet.json': JSON.stringify({ run: 1, backend: 'werkbank', usage: {}, status: 'done', summary: 'x' }),
+        '.relay/runs/coder/001.full.md': '# coder · run 1\n',
+      },
+      store: { 'roles:/w': { coder: { name: 'coder', runs: 1, isBusy: false } } },
+    })
+    w.links.set('.relay/runs/coder/001.full.md', '/home/u/x.md')
+    if (!(await w.start($))) return
+    const r = String((await $.tool.call({ tool: 'mcp__relay__worker_expand', role: 'coder', run: 1, section: 'packet' })).result)
+    expect(r).toContain('relay does not read .relay/runs/coder/001.full.md')
+  })
+
   test('N112: worker_status shows no worktree for werkbank', { options: WB }, async ($: any, on: any) => {
     const w = world(on)
     if (!(await w.start($))) return

@@ -117,6 +117,11 @@ export type Scenario =
   // werkbank-relay: a key marker in the answer, the body as verify.command
   // (N135)
   | 'key-verify-command'
+  // werkbank-relay: a key marker on stderr, the body in sessionId and
+  // usage.model (N141)
+  | 'key-session-model'
+  // werkbank-relay: a quoted Authorization value on stderr (N142)
+  | 'quoted-auth'
 
 export type Call = { argv: string[]; cwd?: string; env: Record<string, string>; input?: string; attachment?: string; protocolFile?: string }
 
@@ -497,6 +502,16 @@ export function fakeWorld(
       if (scenario === 'key-marker-error') {
         yield { stream: 'stdout', text: JSON.stringify({ jobId: WERKBANK_JOB, state: 'failed', answer: '', note: KEY_LINES[0], sessionId: 'fsn1-5:9b1f', branch: `agent/relay/${role}`, commits: [], changedFiles: [], error: { kind: 'repo', message: KEY_BODY } }) }
         return { value: { code: 1, signal: null } }
+      }
+      if (scenario === 'key-session-model') {
+        yield { stream: 'stderr', text: `${KEY_LINES[0]}\n` }
+        yield { stream: 'stdout', text: JSON.stringify({ jobId: WERKBANK_JOB, state: 'done', answer: 'done', sessionId: `fsn1-5:${KEY_BODY}`, usage: { inputTokens: 10, outputTokens: 5, model: KEY_BODY }, branch: `agent/relay/${role}`, commits: [], changedFiles: [] }) }
+        return { value: { code: 0, signal: null } }
+      }
+      if (scenario === 'quoted-auth') {
+        yield { stream: 'stderr', text: '{"Authorization": "opaque0value0x8"}\n' }
+        yield { stream: 'stdout', text: JSON.stringify({ jobId: WERKBANK_JOB, state: 'done', answer: PACKET(), sessionId: 'fsn1-5:9b1f', branch: `agent/relay/${role}`, commits: [], changedFiles: [] }) }
+        return { value: { code: 0, signal: null } }
       }
       if (scenario === 'key-split-fragment') {
         yield { stream: 'stdout', text: `${KEY_LINES[0]}\n` }

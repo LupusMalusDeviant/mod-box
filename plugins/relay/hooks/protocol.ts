@@ -517,7 +517,7 @@ const isCount = (value: string) => /^[\d.,]+[kKmMbB]?$/.test(value)
 // escapes inside, else up to the next separator. Numbers are redacted too,
 // except the count of a counter name (contract 0001, Nachtrag 1, N18).
 const KEY_VALUE =
-  /\b([A-Za-z0-9_.-]*(?:api[_-]?key|apikey|secret|token|passwd|password|access[_-]?key|private[_-]?key|credential|session[_-]?key)[A-Za-z0-9_.-]*)(\\?["']?\s*[:=]\s*)(\\"(?:[^"\\]|\\[^"])*\\"|"(?:[^"\\\r\n]|\\.)*"|'(?:[^'\\\r\n]|\\.)*'|[^\s"'&,;\\]+)/gi
+  /\b([A-Za-z0-9_.-]*(?:api[_-]?key|apikey|secret|token|passwd|password|access[_-]?key|private[_-]?key|credential|session[_-]?key|(?<![A-Za-z])key(?![A-Za-z]))[A-Za-z0-9_.-]*)(\\?["']?\s*[:=]\s*)(\\"(?:[^"\\]|\\[^"])*\\"|"(?:[^"\\\r\n]|\\.)*"|'(?:[^'\\\r\n]|\\.)*'|[^\s"'&,;\\]+)/gi
 
 function redactKeyValue(match: string, name: string, sep: string, value: string): string {
   if (isCounterName(name) && isCount(value)) return match
@@ -529,6 +529,9 @@ function redactKeyValue(match: string, name: string, sep: string, value: string)
 // packets, notices): replaced before they leave relay (contract 0001,
 // Nachtrag 1). Best effort by shape; it never makes text longer to read.
 const SECRET_PATTERNS: [RegExp, string | ((...args: string[]) => string)][] = [
+  // `"Authorization": "Bearer x"`, `Authorization: "x"`: the whole quoted
+  // value goes (N142)
+  [/(\\?["']?\b(?:proxy-)?authorization\\?["']?\s*[:=]\s*)(\\?["'])(?:(?!\2)[^\r\n])*\2/gi, `$1$2${SECRET}$2`],
   // `Authorization: Bearer x`, `Proxy-Authorization: Basic x`
   [/\b((?:proxy-)?authorization)(\s*[:=]\s*)(?:(bearer|basic|token|digest)\s+)?[^\s"'\\,;]+/gi, `$1$2$3 ${SECRET}`],
   [/\b(bearer|basic)\s+[A-Za-z0-9._~+/=-]{8,}/gi, `$1 ${SECRET}`],

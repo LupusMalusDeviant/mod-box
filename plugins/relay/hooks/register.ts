@@ -331,7 +331,13 @@ async function claimQueue($: EngineInterface) {
 async function beat($: EngineInterface) {
   if (!isOwner) return
   // a temp file that could not be cleared is tried again, whether or not the
-  // queue can be written (N132, N139)
+  // queue can be written (N132, N139), but only while no other session holds
+  // the queue now (N144)
+  const isStillOwner = await fence($).then(
+    () => true,
+    () => false,
+  )
+  if (!isStillOwner) return
   await retryTempClears($)
   queue.owner = { session, heartbeatAt: await iso($), token: ownerToken }
   const isWritten = await writeQueue($).then(
@@ -421,7 +427,8 @@ async function slotProblem($: EngineInterface, role: string, run: number): Promi
   if (!isThere) return undefined
   try {
     const stored = (JSON.parse(String(await $.fs.read(path))) as { run?: unknown }).run
-    if (typeof stored !== 'number') return 'the slot could not be checked (its packet.json names no run)'
+    // only a whole run number from 1 counts (N145)
+    if (typeof stored !== 'number' || !Number.isSafeInteger(stored) || stored < 1) return 'the slot could not be checked (its packet.json names no valid run)'
     return stored > run ? 'a later run holds this slot' : undefined
   } catch (err) {
     return `the slot could not be checked (${message(err)})`
@@ -445,6 +452,16 @@ async function loadRoleDefs($: EngineInterface, opts: { isStrict?: boolean } = {
       return {}
     }
     const map = (parsed.roles ?? parsed) as Record<string, Record<string, unknown>>
+    // before a start, the map and every rule that limits a worker must have
+    // its shape; else the job waits (N143)
+    if (opts.isStrict) {
+      const isObject = (v: unknown) => typeof v === 'object' && v !== null && !Array.isArray(v)
+      const isListish = (v: unknown) => v === undefined || typeof v === 'string' || (Array.isArray(v) && v.every(x => typeof x === 'string'))
+      const bad = !isObject(map)
+        ? 'roles is no JSON object'
+        : Object.entries(map).find(([, d]) => !isObject(d) || !isListish(d.owns) || !isListish(d.allowedTools) || !isListish(d.disallowedTools))?.[0]
+      if (bad) throw new RoleFileError(`the roles file ${config.rolesFile} could not be read (${isObject(map) ? `role "${bad}" has an invalid entry` : bad})`)
+    }
     const defs: Record<string, RoleDef> = {}
     for (const [name, d] of Object.entries(map)) {
       if (!ROLE_NAME.test(name) || typeof d !== 'object' || d === null) continue
@@ -820,6 +837,14 @@ function pump($: EngineInterface): Promise<void> {
 }
 
 async function pumpOnce($: EngineInterface) {
+  // a waiting job whose role is not in the store looks for it in the roles
+  // file again on every try, e.g. once that file is repaired (N146)
+  if (queued().some(j => !roles[j.role])) {
+    const defs = await loadRoleDefs($)
+    for (const j of queued()) {
+      if (!roles[j.role] && defs[j.role]) roles[j.role] = { name: j.role, runs: 0, isBusy: false }
+    }
+  }
   while (isOwner && running < Math.max(1, config.maxParallel)) {
     const job = queue.jobs.find(j => j.state === 'queued' && roles[j.role] && !roles[j.role]?.isBusy)
     const role = job && roles[job.role]
@@ -1173,6 +1198,13 @@ function liveLog($: EngineInterface, role: string, run: number, id: BackendId, i
         problem = why
         return
       }
+      // a live.log a later run of this role began (in any session) is left
+      // alone (N144)
+      const head = /^# \S+ · run (\d+) · /.exec(String(await $.fs.read(path).catch(() => '')))
+      if (head && Number(head[1]) > run) {
+        problem = 'a later run holds it'
+        return
+      }
       // a failed write is named like a link out (N104)
       await $.fs.write(path, `${lines.join('\n')}\n`).catch(err => {
         problem = `the write failed (${message(err)})`
@@ -1361,9 +1393,15 @@ function withoutKeyTexts(r: RunResult): RunResult {
   if (!proc.isKeySeen && !texts.some(t => t && hasKeyBegin(t))) return r
   return {
     ...r,
+    // a model name taken from the output goes too (N141)
+    model: outcome.usage.model !== undefined && r.model === outcome.usage.model ? '' : r.model,
     outcome: {
       ...outcome,
       error: outcome.error && { ...outcome.error, message: KEY_HIDDEN },
+      // no reported session id and no model name: the role keeps its own
+      // session or starts fresh; numbers stay (N141)
+      sessionId: undefined,
+      usage: { ...outcome.usage, model: undefined },
       // every free text of the werkbank job goes too; state, commit ids and
       // numbers stay; without its file list the write check is incomplete
       // (N135)
@@ -2037,7 +2075,8 @@ export const register: Register = (on, options) => {
     }
     if (input.section?.trim().toLowerCase() === 'packet') {
       const path = runPath(role.name, run, 'packet.json')
-      const no = await refused(path)
+      // either file of the slot that is unsafe is named itself (N147)
+      const no = (await refused(path)) ?? (await refused(runPath(role.name, run, 'full.md')))
       if (no) return no
       try {
         const raw = String(await $.fs.read(path))
@@ -2050,7 +2089,7 @@ export const register: Register = (on, options) => {
       return { result: `No stored packet for ${role.name} run ${run}.` }
     }
     const fullPath = runPath(role.name, run, 'full.md')
-    const no = await refused(fullPath)
+    const no = (await refused(fullPath)) ?? (await refused(runPath(role.name, run, 'packet.json')))
     if (no) return no
     let text: string
     try {
