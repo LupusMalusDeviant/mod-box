@@ -105,6 +105,12 @@ export type Scenario =
   // werkbank-relay: an example relay block marked done, then a key around the
   // real one (N123)
   | 'key-example-block'
+  // werkbank-relay: a key marker in a stdout field, the body as the error
+  // message (N127)
+  | 'key-marker-error'
+  // werkbank-relay: BEGIN on stdout without its line end, the body on stderr
+  // before the stdout line ends (N128)
+  | 'key-fragment'
 
 export type Call = { argv: string[]; cwd?: string; env: Record<string, string>; input?: string; attachment?: string; protocolFile?: string }
 
@@ -481,6 +487,16 @@ export function fakeWorld(
       }
       if (scenario === 'key-open-error') {
         return yield* out(JSON.stringify({ error: { kind: 'cli', message: KEY_BODY } }), 2, `queued\n${KEY_LINES[0]}\n`)
+      }
+      if (scenario === 'key-marker-error') {
+        yield { stream: 'stdout', text: JSON.stringify({ jobId: WERKBANK_JOB, state: 'failed', answer: '', note: KEY_LINES[0], sessionId: 'fsn1-5:9b1f', branch: `agent/relay/${role}`, commits: [], changedFiles: [], error: { kind: 'repo', message: KEY_BODY } }) }
+        return { value: { code: 1, signal: null } }
+      }
+      if (scenario === 'key-fragment') {
+        yield { stream: 'stdout', text: KEY_LINES[0] }
+        yield { stream: 'stderr', text: `${KEY_BODY}\n` }
+        yield { stream: 'stdout', text: `\n${KEY_LINES[1]}\n` }
+        return { value: { code: 2, signal: null } }
       }
       if (scenario === 'key-closed-around-answer') {
         yield { stream: 'stderr', text: `queued\n${KEY_LINES[0]}\n` }

@@ -339,6 +339,8 @@ async function beat($: EngineInterface) {
     },
   )
   if (!isWritten) return
+  // a temp file that could not be cleared is tried again (N132)
+  await retryTempClears($)
   // The queue can be written again: retry what waits on it (N15, N28).
   await retryDeliveries($)
   if (queued().length) await pump($)
@@ -399,6 +401,19 @@ function undeliveredPath(role: string, run: number) {
 
 function isRotatedOut(role: Role, run: number) {
   return config.keepRuns > 0 && run <= role.runs - config.keepRuns
+}
+
+// Whether the slot's packet.json belongs to a run after `run`; read only when
+// its path is safe (N108, N129).
+async function isSlotLater($: EngineInterface, role: string, run: number): Promise<boolean> {
+  const path = runPath(role, run, 'packet.json')
+  if (await storageProblem($, path)) return false
+  try {
+    const stored = (JSON.parse(String(await $.fs.read(path))) as { run?: unknown }).run
+    return typeof stored === 'number' && stored > run
+  } catch {
+    return false
+  }
 }
 
 async function loadRoleDefs($: EngineInterface): Promise<Record<string, RoleDef>> {
@@ -552,10 +567,28 @@ async function tempFilesProblem($: EngineInterface, inv: Invocation): Promise<st
 }
 
 // Writes exactly the path it checked (N81).
-async function clearTempFile($: EngineInterface, path: string) {
+// Returns why the file was not cleared; a failed write is tried again with
+// each heartbeat of this session, a path that is no longer safe never (N132).
+const uncleared = new Set<string>()
+async function clearTempFile($: EngineInterface, path: string): Promise<string | undefined> {
   const rel = tempRel(path)
-  if (await storageProblem($, rel)) return
-  await $.fs.write(rel, '').catch(() => undefined)
+  const unsafe = await storageProblem($, rel)
+  if (unsafe) {
+    uncleared.delete(rel)
+    return unsafe
+  }
+  try {
+    await $.fs.write(rel, '')
+    uncleared.delete(rel)
+    return undefined
+  } catch (err) {
+    uncleared.add(rel)
+    return message(err)
+  }
+}
+
+async function retryTempClears($: EngineInterface) {
+  for (const rel of [...uncleared]) await clearTempFile($, rel)
 }
 
 // The project's place in its repository, or undefined when git cannot say
@@ -923,7 +956,11 @@ async function start($: EngineInterface, job: QueuedJob, role: Role, run: number
           } finally {
             // The task file never outlives its run, whatever ended it (N25),
             // and is checked again before it is cleared (N52).
-            for (const f of inv.tempFiles ?? []) await clearTempFile($, f.path)
+            for (const f of inv.tempFiles ?? []) {
+              const failed = await clearTempFile($, f.path)
+              // named, and tried again with each heartbeat (N132)
+              if (failed) notes.push(`${tempRel(f.path)} could not be cleared (${failed})${uncleared.has(tempRel(f.path)) ? "; relay tries again with each heartbeat of this session" : ""}`)
+            }
           }
           outcome = backend.parse(proc)
           // only when the child printed nothing and ended with neither exit
@@ -1001,6 +1038,8 @@ async function spawnRun(
   // one key state over stdout and stderr, in the order they arrive (N114)
   const keys = privateKeyFilter()
   let isKeySeen = false
+  // an unfinished line with a key marker holds live.log back (N128)
+  const isFragmentKeyed = () => hasKeyBegin(rest) || hasKeyBegin(errRest)
   const track = (line: string) => {
     const seen = [line, ...eventTexts(line)].join('\n')
     if (hasKeyBegin(seen)) isKeySeen = true
@@ -1021,10 +1060,11 @@ async function spawnRun(
         proc.stderr += chunk.text
         const errLines = (errRest + chunk.text).split('\n')
         errRest = errLines.pop() ?? ''
+        const isHeld = isFragmentKeyed()
         for (const line of errLines) {
           track(line)
           // the stream not shown still moves live.log's key state (N114)
-          if (isLiveErr) live.line(line)
+          if (isLiveErr) live.line(line, isHeld)
           else live.other(line)
         }
         continue
@@ -1032,9 +1072,10 @@ async function spawnRun(
       proc.stdout += chunk.text
       const lines = (rest + chunk.text).split('\n')
       rest = lines.pop() ?? ''
+      const isHeld = isFragmentKeyed()
       for (const line of lines) {
         track(line)
-        if (!isLiveErr) live.line(line)
+        if (!isLiveErr) live.line(line, isHeld)
         else live.other(line)
         if (onLine) usage = onLine(line, usage)
       }
@@ -1049,7 +1090,9 @@ async function spawnRun(
       proc.streamError = redact(String(err)).slice(0, 300)
     }
   }
-  for (const [last, isShown] of [[errRest, isLiveErr], [rest, !isLiveErr]] as const) {
+  // a rest with a key marker first, so its key state applies to the other (N128)
+  const lastParts = [[errRest, isLiveErr], [rest, !isLiveErr]] as const
+  for (const [last, isShown] of [...lastParts].sort((x, y) => Number(hasKeyBegin(y[0])) - Number(hasKeyBegin(x[0])))) {
     if (!last) continue
     track(last)
     if (isShown) live.line(last)
@@ -1124,15 +1167,16 @@ function liveLog($: EngineInterface, role: string, run: number, id: BackendId, i
     return write()
   })
   return {
-    line(raw: string) {
+    line(raw: string, isHeld = false) {
       if (id === 'claude') return
       // the raw line and every decoded text of its event, before any cut (N83)
       const seen = [raw, ...eventTexts(raw)].join('\n')
       const kept = keyFilter(seen)
       if (kept === undefined) return
       // an event with a BEGIN marker anywhere is never shown, even when its
-      // key ends in the same event (N101)
-      const text = hasKeyBegin(seen) ? REDACTED_KEY_LINE : kept === seen ? liveLine(id, raw) : kept
+      // key ends in the same event (N101); nor is any line while an
+      // unfinished line holds a marker (N128)
+      const text = isHeld || hasKeyBegin(seen) ? REDACTED_KEY_LINE : kept === seen ? liveLine(id, raw) : kept
       if (!text) return
       lines.push(redact(text))
       void flushSoon()
@@ -1153,7 +1197,9 @@ function liveLog($: EngineInterface, role: string, run: number, id: BackendId, i
               keyFilter.isOpen || proc.isKeySeen || hasKeyBegin(outcome.error.message)
               ? 'error (text hidden: a private key marker was in the output)'
               : `error: ${outcome.error.message}`
-            : 'finished'
+            : proc.isKeySeen
+              ? 'failed (answer hidden: a private key marker was in the output)' // never "finished" (N133)
+              : 'finished'
       lines.push(redact(`# ${state} · ${new Date().toISOString()}`))
       isClosed = true
       trailing?.cancel()
@@ -1267,7 +1313,8 @@ const fencesIn = (text: string) => [...text.matchAll(RELAY_FENCE)].length
 function withoutKeyTexts(r: RunResult): RunResult {
   const { outcome, proc } = r
   const texts = [proc.stderr, outcome.answer, outcome.error?.message, outcome.remote?.reason]
-  if (!texts.some(t => t && hasKeyBegin(t))) return r
+  // the run-wide verdict counts too, not only these fields (N127)
+  if (!proc.isKeySeen && !texts.some(t => t && hasKeyBegin(t))) return r
   return {
     ...r,
     outcome: {
@@ -1456,16 +1503,18 @@ async function deliver(
 }
 
 async function notify($: EngineInterface, d: Delivery) {
+  // redacted where it leaves relay, whatever built it (N130)
+  const text = redact(d.text)
   if (config.notifyMode === 'note') {
     // A refused append or a dropped prompt is no delivery: it is retried.
-    const r = await $.session.append({ message: { type: 'user', content: [{ type: 'text', text: d.text }] } })
+    const r = await $.session.append({ message: { type: 'user', content: [{ type: 'text', text }] } })
     if (r?.deny) throw new Error(`the packet could not be appended (${r.deny})`)
     $.ui.toast(`relay: ${d.role.name} run ${d.run} ${d.status}`)
   } else if (config.notifyMode === 'toast') {
-    unread.push(d.text)
+    unread.push(text)
     $.ui.toast(`relay: ${d.role.name} run ${d.run} ${d.status} – worker_status shows it`)
   } else {
-    const r = await $.prompt.submit({ text: d.text })
+    const r = await $.prompt.submit({ text })
     if (r?.drop) throw new Error(`the packet prompt was dropped (${r.drop})`)
   }
 }
@@ -1484,7 +1533,11 @@ async function attemptDelivery($: EngineInterface, d: Delivery): Promise<boolean
         // never into a slot a later run holds, on any attempt (N110)
         for (const [path, text] of d.files) {
           // the slot is checked again after the awaited path check (N116)
-          const why = (await storageProblem($, path)) ?? (isRotatedOut(d.role, d.run) ? 'a later run holds this slot' : undefined)
+          // and the slot's packet.json may name a later run, written by any
+          // session (N129); the rotation check stays last, with no await after it
+          const why =
+            (await storageProblem($, path)) ??
+            ((await isSlotLater($, d.role.name, d.run)) || isRotatedOut(d.role, d.run) ? 'a later run holds this slot' : undefined)
           if (why) warnings.add(why)
           else await $.fs.write(path, text)
         }
@@ -1562,6 +1615,15 @@ function isEnvelopeOf(text: string, run: number, backend: BackendId): boolean {
   try {
     const v = JSON.parse(text) as { run?: unknown; backend?: unknown }
     return v.run === run && v.backend === backend
+  } catch {
+    return false
+  }
+}
+
+// Whether packet.json names this run (N131).
+function isEnvelopeRun(text: string, run: number): boolean {
+  try {
+    return (JSON.parse(text) as { run?: unknown }).run === run
   } catch {
     return false
   }
@@ -1896,7 +1958,11 @@ export const register: Register = (on, options) => {
     if (!role || role.runs === 0) return { result: `No runs for role "${input.role}".` }
     const run = input.run ?? (role.isBusy ? role.runs - 1 : role.runs)
     if (run < 1) return { result: `${role.name} has no finished run yet.` }
+    // no run that has not begun (N131)
+    if (run > role.runs) return { result: `${role.name} has no run ${run} yet (${role.runs} begun).` }
     if (isRotatedOut(role, run)) return { result: `${role.name} run ${run} was rotated out (keepRuns ${config.keepRuns}).` }
+    // a slot file that belongs to another run is never shown as this one (N131)
+    const otherRun = { result: `No stored report for ${role.name} run ${run} (the slot holds another run).` }
     // a report file is read only when it is no link out, like before its
     // write (N99, N108)
     const refused = async (path: string) => {
@@ -1908,7 +1974,9 @@ export const register: Register = (on, options) => {
       const no = await refused(path)
       if (no) return no
       try {
-        const packet = parsePacket(await $.fs.read(path))
+        const raw = String(await $.fs.read(path))
+        if (!isEnvelopeRun(raw, run)) return otherRun
+        const packet = parsePacket(raw)
         if (packet) return { result: redact(renderPacket(`[relay] ${role.name} · run ${run}`, packet, runPath(role.name, run, 'full.md'), 'full')) }
       } catch {
         // fall through
@@ -1925,6 +1993,7 @@ export const register: Register = (on, options) => {
     } catch {
       return { result: `No stored answer for ${role.name} run ${run}.` }
     }
+    if (!text.startsWith(`# ${role.name} · run ${run}\n`)) return otherRun
     let out = text
     if (input.section) {
       const found = extractSection(text, input.section)

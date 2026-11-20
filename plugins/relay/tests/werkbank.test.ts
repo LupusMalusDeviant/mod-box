@@ -1050,6 +1050,94 @@ describe('werkbank, Nachtrag 2i (ninth Codex review)', () => {
     expect(r).not.toContain(SECRETS.token)
   })
 
+  test('N127: a key marker in a stdout field hides the error message holding the body', { options: WB }, async ($: any, on: any) => {
+    const w = world(on)
+    w.play('key-marker-error')
+    if (!(await w.start($))) return
+    await w.send($, { role: 'coder', task: 't' })
+    await w.until(() => w.submitted.length === 1)
+    expect(w.submitted[0]).not.toContain(KEY_BODY)
+    expect(w.files.get('.relay/runs/coder/001.packet.json')).not.toContain(KEY_BODY)
+    expect(w.submitted[0]).toContain("(text hidden: the run's output contains a private key marker)")
+  })
+
+  test('N128: an unfinished stdout line with a key marker holds back a stderr line in live.log', { options: WB }, async ($: any, on: any) => {
+    const w = world(on)
+    w.play('key-fragment')
+    if (!(await w.start($))) return
+    await w.send($, { role: 'coder', task: 't' })
+    await w.until(() => w.submitted.length === 1)
+    expect(w.files.get('.relay/runs/coder/live.log')).not.toContain(KEY_BODY)
+  })
+
+  test('N129: a slot whose packet.json names a later run is not written', { options: { ...WB, keepRuns: 1 } }, async ($: any, on: any) => {
+    const later = JSON.stringify({ run: 2, backend: 'werkbank', usage: {}, status: 'done', summary: 'run two did it' })
+    const w = world(on, { files: { '.relay/runs/coder/001.packet.json': later, '.relay/runs/coder/001.full.md': '# coder · run 2' } })
+    if (!(await w.start($))) return
+    await w.send($, { role: 'coder', task: 't' })
+    await w.until(() => w.submitted.length === 1)
+    expect(w.files.get('.relay/runs/coder/001.packet.json')).toBe(later)
+    expect(w.files.get('.relay/runs/coder/001.full.md')).toBe('# coder · run 2')
+    expect(w.submitted[0]).toContain('Not stored: a later run holds this slot.')
+  })
+
+  test('N130: a message rebuilt from packet.json after a restart is redacted', { options: { ...WB, relayDir: `.relay_token=${SECRETS.token}` } }, async ($: any, on: any) => {
+    const dir = `.relay_token=${SECRETS.token}`
+    const envelope = { run: 1, backend: 'werkbank', usage: {}, status: 'done', summary: 'stored packet', decisions: [], facts: [], artifacts: [], open_questions: [], needs_from_main: [], risks: [], next_suggested: [], sections: [] }
+    const w = world(on, {
+      files: { [`${dir}/queue.json`]: JSON.stringify(runningJob(1, 'stored')), [`${dir}/runs/coder/001.packet.json`]: JSON.stringify(envelope) },
+      store: { 'roles:/w': { coder: { name: 'coder', runs: 1, isBusy: true } } },
+    })
+    await w.clock.set(10 * 60_000)
+    if (!(await w.start($))) return
+    await w.until(() => w.submitted.length === 1)
+    expect(w.submitted[0]).toContain('stored packet')
+    expect(w.submitted[0]).not.toContain(SECRETS.token)
+  })
+
+  test('N131: worker_expand does not show another run in the slot as the asked one', { options: { ...WB, keepRuns: 1 } }, async ($: any, on: any) => {
+    const stale = JSON.stringify({ run: 1, backend: 'werkbank', usage: {}, status: 'done', summary: 'run one did it' })
+    const w = world(on, {
+      files: { '.relay/runs/coder/001.packet.json': stale, '.relay/runs/coder/001.full.md': '# coder · run 1\n\n## Answer\n\nrun one did it\n' },
+      store: { 'roles:/w': { coder: { name: 'coder', runs: 2, isBusy: false } } },
+    })
+    if (!(await w.start($))) return
+    for (const section of [undefined, 'packet']) {
+      const r = String((await $.tool.call({ tool: 'mcp__relay__worker_expand', role: 'coder', run: 2, ...(section ? { section } : {}) })).result)
+      expect(r).not.toContain('run one did it')
+      expect(r).toContain('the slot holds another run')
+    }
+    const future = String((await $.tool.call({ tool: 'mcp__relay__worker_expand', role: 'coder', run: 5 })).result)
+    expect(future).toContain('has no run 5 yet')
+  })
+
+  test('N132: a protocol file that could not be cleared is named and cleared with a later heartbeat', { options: WB }, async ($: any, on: any) => {
+    const w = world(on)
+    const path = '.relay/tmp/coder-1.protocol.md'
+    let writes = 0
+    let isFull = true
+    w.io.failWrite = (p: string) => p === path && ++writes >= 2 && isFull
+    if (!(await w.start($))) return
+    await w.send($, { role: 'coder', task: 't' })
+    await w.until(() => w.submitted.length === 1)
+    expect(w.submitted[0]).toContain(`${path} could not be cleared`)
+    expect(w.files.get(path)).not.toBe('')
+    isFull = false
+    for (let i = 0; i < 5 && w.files.get(path) !== ''; i++) await w.clock.advance(60_000)
+    expect(w.files.get(path)).toBe('')
+  })
+
+  test('N133: a run with a key marker and exit 0 never ends live.log with finished', { options: WB }, async ($: any, on: any) => {
+    const w = world(on)
+    w.play('key-lines')
+    if (!(await w.start($))) return
+    await w.send($, { role: 'coder', task: 't' })
+    await w.until(() => w.submitted.length === 1)
+    const live = w.files.get('.relay/runs/coder/live.log')!
+    expect(live).toContain('# failed (answer hidden: a private key marker was in the output)')
+    expect(live).not.toContain('# finished')
+  })
+
   test('N112: worker_status shows no worktree for werkbank', { options: WB }, async ($: any, on: any) => {
     const w = world(on)
     if (!(await w.start($))) return
