@@ -1678,6 +1678,89 @@ describe('werkbank, Nachtrag 2i (ninth Codex review)', () => {
     expect(w.submitted[0]).toContain('The changes are on branch agent/relay/coder')
   })
 
+  test('N173: a run that never started says so, and names no job that may run on', { options: WB }, async ($: any, on: any) => {
+    const w = world(on)
+    w.play('no-start-read-error')
+    if (!(await w.start($))) return
+    await w.send($, { role: 'coder', task: 't' })
+    await w.until(() => w.submitted.length === 1)
+    expect(w.submitted[0]).toContain('could not start werkbank-relay')
+    expect(w.submitted[0]).not.toContain('may still be running on the server')
+  })
+
+  test('N174: a key marker keeps the N170 check of a run without JSON', { options: WB }, async ($: any, on: any) => {
+    const w = world(on)
+    w.play('key-no-json')
+    if (!(await w.start($))) return
+    await w.send($, { role: 'coder', task: 't' })
+    await w.until(() => w.submitted.length === 1)
+    expect(w.submitted[0]).toContain('the werkbank job may still be running on the server; its changes would be on agent/relay/coder')
+    expect(w.submitted[0]).not.toContain('the file list werkbank reported is not shown')
+  })
+
+  test('N175: an unusable file list and only invalid commit ids still name the branch', { options: WB }, async ($: any, on: any) => {
+    const w = world(on)
+    w.play('malformed-both')
+    if (!(await w.start($))) return
+    await w.send($, { role: 'coder', task: 't' })
+    await w.until(() => w.submitted.length === 1)
+    expect(w.submitted[0]).toContain('The changes are on branch agent/relay/coder')
+  })
+
+  test('N176: a long state over many lines is shown on one line and cut', { options: WB }, async ($: any, on: any) => {
+    const w = world(on)
+    w.play('long-state')
+    if (!(await w.start($))) return
+    await w.send($, { role: 'coder', task: 't' })
+    await w.until(() => w.submitted.length === 1)
+    const m = w.submitted[0]!
+    expect(m).toContain('odd0state x x')
+    expect(m).not.toContain('x\nx')
+    expect(m.length).toBeLessThan(2000)
+  })
+
+  test('N177: N170 also for a signal and for output without JSON', { options: WB }, async ($: any, on: any) => {
+    const w = world(on)
+    w.play('killed-early', 'not-json')
+    if (!(await w.start($))) return
+    await w.send($, { role: 'coder', task: 'a' })
+    await w.until(() => w.submitted.length === 1)
+    await w.send($, { role: 'coder', task: 'b' })
+    await w.until(() => w.submitted.length === 2)
+    for (const m of w.submitted) expect(m).toContain('the werkbank job may still be running on the server')
+  })
+
+  test('N177: with writeCheck off a run without JSON has no check', { options: { ...WB, writeCheck: 'off' } }, async ($: any, on: any) => {
+    const w = world(on)
+    w.play('not-json')
+    if (!(await w.start($))) return
+    await w.send($, { role: 'coder', task: 't' })
+    await w.until(() => w.submitted.length === 1)
+    expect(w.submitted[0]).not.toContain('may still be running on the server')
+    expect(w.submitted[0]).not.toContain('write check')
+  })
+
+  test('N177: a job without state is failed, and its error is named', { options: WB }, async ($: any, on: any) => {
+    const w = world(on)
+    w.play('no-state')
+    if (!(await w.start($))) return
+    await w.send($, { role: 'coder', task: 't' })
+    await w.until(() => w.submitted.length === 1)
+    expect(w.submitted[0]).toContain('Status: failed')
+    expect(w.submitted[0].split('\n')[0]).toContain('error (repo)')
+  })
+
+  test('N177: the N172 branch line shows no file name and no invalid commit id', { options: WB }, async ($: any, on: any) => {
+    const w = world(on)
+    w.play('key-files-no-commit')
+    if (!(await w.start($))) return
+    await w.send($, { role: 'coder', task: 't' })
+    await w.until(() => w.submitted.length === 1)
+    expect(w.submitted[0]).toContain('The changes are on branch agent/relay/coder')
+    expect(w.submitted[0]).not.toContain('src/a.ts')
+    expect(w.submitted[0]).not.toContain('not-a-commit')
+  })
+
   test('N112: worker_status shows no worktree for werkbank', { options: WB }, async ($: any, on: any) => {
     const w = world(on)
     if (!(await w.start($))) return

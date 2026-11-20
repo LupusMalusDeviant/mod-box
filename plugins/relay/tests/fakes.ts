@@ -148,6 +148,18 @@ export type Scenario =
   // werkbank-relay: a key marker on stderr, changed files, no valid commit id
   // (N172)
   | 'key-files-no-commit'
+  // werkbank-relay: the read fails at once, with no output (a missing
+  // executable, N173)
+  | 'no-start-read-error'
+  // werkbank-relay: a key marker on stderr, then output without JSON (N174)
+  | 'key-no-json'
+  // werkbank-relay: an unusable file list and only invalid commit ids (N175)
+  | 'malformed-both'
+  // werkbank-relay: a state of several thousand characters over many lines
+  // (N176)
+  | 'long-state'
+  // werkbank-relay: a job without state, with an error (N177)
+  | 'no-state'
 
 export type Call = { argv: string[]; cwd?: string; env: Record<string, string>; input?: string; attachment?: string; protocolFile?: string }
 
@@ -575,6 +587,23 @@ export function fakeWorld(
         yield { stream: 'stderr', text: `{"detail":"{${q}Authorization${q}: ${q}Bearer opaque0auth0x22${q}, ${q}sibling${q}: 1}"}\n` }
         yield { stream: 'stdout', text: JSON.stringify({ jobId: WERKBANK_JOB, state: 'done', answer: PACKET(), sessionId: 'fsn1-5:9b1f', branch: `agent/relay/${role}`, commits: [], changedFiles: [] }) }
         return { value: { code: 0, signal: null } }
+      }
+      if (scenario === 'no-start-read-error') return { deny: 'spawn werkbank-relay ENOENT' }
+      if (scenario === 'key-no-json') {
+        yield { stream: 'stderr', text: `${KEY_LINES[0]}\n` }
+        return yield* out('Unhandled exception. System.Exception: boom\n', 1, 'boom\n')
+      }
+      if (scenario === 'malformed-both') {
+        yield { stream: 'stdout', text: JSON.stringify({ jobId: WERKBANK_JOB, state: 'done', answer: PACKET(), sessionId: 'fsn1-5:9b1f', branch: `agent/relay/${role}`, commits: ['xyz'], changedFiles: ['src/a.ts', 3] }) }
+        return { value: { code: 0, signal: null } }
+      }
+      if (scenario === 'long-state') {
+        yield { stream: 'stdout', text: JSON.stringify({ jobId: WERKBANK_JOB, state: `odd0state\n${'x\n'.repeat(3000)}`, answer: '', sessionId: 'fsn1-5:9b1f', branch: `agent/relay/${role}`, commits: [], changedFiles: [] }) }
+        return { value: { code: 0, signal: null } }
+      }
+      if (scenario === 'no-state') {
+        yield { stream: 'stdout', text: JSON.stringify({ jobId: WERKBANK_JOB, answer: '', sessionId: 'fsn1-5:9b1f', branch: `agent/relay/${role}`, commits: [], changedFiles: [], error: { kind: 'repo', message: 'no state given' } }) }
+        return { value: { code: 1, signal: null } }
       }
       if (scenario === 'unknown-state') {
         yield { stream: 'stdout', text: JSON.stringify({ jobId: WERKBANK_JOB, state: 'running', answer: '', sessionId: 'fsn1-5:9b1f', branch: `agent/relay/${role}`, commits: [], changedFiles: [], error: { kind: 'repo', message: 'the job is still running' } }) }

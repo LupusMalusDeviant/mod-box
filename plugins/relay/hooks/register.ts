@@ -969,6 +969,9 @@ async function start($: EngineInterface, job: QueuedJob, role: Role, run: number
     let check: WriteCheck | undefined
     let inv: Invocation | undefined
     let notStarted: string | undefined
+    // one rule for "the child ran": output, an exit code, a signal or the
+    // timeout; a read error with no output is no start (N173)
+    let hasStarted = false
     let mine: Activity | undefined
     let passedSessionId: string | undefined
     const isRemote = id === 'werkbank'
@@ -1076,9 +1079,9 @@ async function start($: EngineInterface, job: QueuedJob, role: Role, run: number
             }
           }
           outcome = backend.parse(proc)
-          // only when the child printed nothing and ended with neither exit
-          // code nor signal: it never ran (N71)
-          if (!outcome.answer.trim() && !sawOutput && proc.exitCode === undefined && !proc.signal && outcome.error?.kind === 'cli') {
+          hasStarted = sawOutput || proc.exitCode !== undefined || !!proc.signal || proc.isTimedOut
+          // only when the child never ran (N71, N173)
+          if (!hasStarted && !outcome.answer.trim() && outcome.error?.kind === 'cli') {
             outcome.error.message += ` · could not start ${inv.argv[0]}; set ${id}Bin to the full path of the executable`
           }
         }
@@ -1089,7 +1092,7 @@ async function start($: EngineInterface, job: QueuedJob, role: Role, run: number
         // no JSON at all from a run that did start: the job may have been
         // handed in and run on (N170); a JSON error without jobId or a start
         // that never happened has no check (N39, N71)
-        else if (!notStarted && !hasJsonObject(proc.stdout) && (proc.stdout.trim() || proc.stderr.trim() || proc.exitCode !== undefined || proc.signal || proc.streamError || proc.isTimedOut)) {
+        else if (!notStarted && hasStarted && !hasJsonObject(proc.stdout)) {
           check = notChecked(`the werkbank job may still be running on the server; its changes would be on agent/relay/${role.name}`)
         }
       }
@@ -1499,7 +1502,9 @@ function withoutKeyTexts(r: RunResult): RunResult {
         ...(outcome.remote.changedFiles?.length ? { hadChangedFiles: true as const } : {}),
       },
     },
-    check: r.check && r.id === 'werkbank' ? notChecked('the run printed a private key marker, so the file list werkbank reported is not shown') : r.check,
+    // only a file list werkbank reported is replaced; any other check, the
+    // one of N170 say, stays (N174)
+    check: r.check && r.id === 'werkbank' && outcome.remote?.changedFiles ? notChecked('the run printed a private key marker, so the file list werkbank reported is not shown') : r.check,
     proc: { ...proc, stderr: proc.stderr.trim() ? KEY_HIDDEN : '' },
   }
 }
@@ -1585,7 +1590,8 @@ async function finish($: EngineInterface, raw: RunResult) {
     if (remote.malformedCommits) packet.risks.push(`werkbank reported ${remote.malformedCommits} malformed commit id(s) (not shown)`)
     const shas = remote.commits.map(c => c.slice(0, 7))
     for (const sha of shas) packet.artifacts.push({ path: `commit ${sha}`, change: 'created', note: `on ${remote.branch || 'the werkbank branch'}` })
-    if (remote.commits.length || remote.changedFiles?.length || remote.hadChangedFiles) {
+    // also when its file list or commit ids were unusable (N175)
+    if (remote.commits.length || remote.changedFiles?.length || remote.hadChangedFiles || remote.isFileListMalformed || remote.malformedCommits) {
       packet.needs_from_main.push(
         `The changes are on branch ${remote.branch || '(not reported)'} (werkbank job ${remote.jobId}${shas.length ? `, commits ${shas.join(', ')}` : ''}); relay does not merge them.`,
       )

@@ -641,8 +641,10 @@ const werkbank: Backend = {
     const errText = e ? cut(str(e.message) || `werkbank error (${str(e.kind) ?? 'unknown'})`) : undefined
     const sid = str(json.sessionId)
     // only spaces is no job id (N90)
-    const jobId = str(json.jobId)?.trim() || undefined
-    const state = str(json.state) ?? 'unknown'
+    // free text of the server: one line, at most 120 characters (N176)
+    const oneLine = (s: string | undefined) => (s === undefined ? undefined : cut(s.replace(/\s+/g, ' ').trim(), 120))
+    const jobId = oneLine(str(json.jobId)) || undefined
+    const state = oneLine(str(json.state)) ?? 'unknown'
     const strings = (v: unknown) => (Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : [])
     let remote: RemoteRun | undefined
     if (jobId) {
@@ -654,7 +656,7 @@ const werkbank: Backend = {
       remote = {
         jobId,
         state,
-        branch: str(json.branch) ?? '',
+        branch: oneLine(str(json.branch)) ?? '',
         commits,
         ...(rawCommits.length > commits.length ? { malformedCommits: rawCommits.length - commits.length } : {}),
         // A list with anything but non-empty strings is malformed, never a short list (N49).
