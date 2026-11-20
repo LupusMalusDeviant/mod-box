@@ -803,3 +803,17 @@ describe('werkbank: write check and rules', () => {
     expect(BACKENDS.werkbank.onLine).toBeUndefined()
   })
 })
+
+describe('codex and opencode, Nachtrag 2i (ninth Codex review)', () => {
+  test('N113: an error event keeps its kind beside a signal or a read error, on both backends', () => {
+    const cases = [
+      { id: 'codex' as const, stdout: jsonl({ type: 'turn.failed', error: { message: '401 Unauthorized: please login' } }), kind: 'auth', text: '401 Unauthorized: please login' },
+      { id: 'opencode' as const, stdout: jsonl({ type: 'error', error: { message: 'Model not found: x' } }), kind: 'model', text: 'Model not found: x' },
+    ]
+    for (const c of cases) {
+      const base = { stdout: c.stdout, stderr: '', isTimedOut: false, isStoppedByLimit: false }
+      expect(BACKENDS[c.id].parse({ ...base, signal: 'SIGTERM' }).error).toEqual({ kind: c.kind, message: `${c.text} · ended by signal SIGTERM` })
+      expect(BACKENDS[c.id].parse({ ...base, streamError: 'EPIPE' }).error).toEqual({ kind: c.kind, message: `${c.text} · reading the output failed: EPIPE` })
+    }
+  })
+})

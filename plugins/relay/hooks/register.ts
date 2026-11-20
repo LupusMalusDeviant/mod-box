@@ -1214,9 +1214,31 @@ function headMeta(r: RunResult): string {
   return [parts.join(' · '), ...tail].join(', ')
 }
 
-async function finish($: EngineInterface, r: RunResult) {
+// A run whose output shows a key marker anywhere: its error texts and stderr
+// are passed on nowhere, since a key may open in one stream and go on in
+// another (N107).
+const KEY_HIDDEN = "(text hidden: the run's output contains a private key marker)"
+function withoutKeyTexts(r: RunResult): RunResult {
+  const { outcome, proc } = r
+  const texts = [proc.stderr, outcome.answer, outcome.error?.message, outcome.remote?.reason]
+  if (!texts.some(t => t && hasKeyBegin(t))) return r
+  return {
+    ...r,
+    outcome: {
+      ...outcome,
+      error: outcome.error && { ...outcome.error, message: KEY_HIDDEN },
+      remote: outcome.remote && (outcome.remote.reason ? { ...outcome.remote, reason: KEY_HIDDEN } : outcome.remote),
+    },
+    proc: { ...proc, stderr: proc.stderr.trim() ? KEY_HIDDEN : '' },
+  }
+}
+
+async function finish($: EngineInterface, raw: RunResult) {
+  const r = withoutKeyTexts(raw)
   const { role, run, outcome, proc } = r
-  const answer = outcome.answer
+  // the whole answer is redacted before its packet is read: a key opened in
+  // the prose may go on in the packet (N107)
+  const answer = redact(outcome.answer)
   let packet = parsePacket(answer)
   let compressedBy: string | undefined
   let compressError: string | undefined
@@ -1360,12 +1382,14 @@ async function deliver(
   raw: Packet,
   rawHead: string,
   // a slot a later run holds: no files there, only the message (N102)
-  extra: { backend: BackendId; usage: Usage; noFiles?: boolean },
+  extra: { backend: BackendId; usage: Usage; noFiles?: string },
 ): Promise<boolean> {
   const packet = redactDeep(raw)
   const head = redact(rawHead)
-  const fullPath = extra.noFiles ? '(not stored: a later run holds this slot)' : runPath(role.name, run, 'full.md')
-  const files: [string, string][] = extra.noFiles ? [] : [
+  // a later run holds the slot (N102, N110) or a file there is unsafe (N108)
+  const noFiles = extra.noFiles ?? (isRotatedOut(role, run) ? 'a later run holds this slot' : undefined)
+  const fullPath = noFiles ? `(not stored: ${noFiles})` : runPath(role.name, run, 'full.md')
+  const files: [string, string][] = noFiles ? [] : [
     [fullPath, `# ${role.name} · run ${run}\n\n## Task\n\n${redact(job.task)}\n\n## Answer\n\n${redact(stripPacket(answer))}\n`],
     // the headline is kept for a delivery after a restart (N92)
     [runPath(role.name, run, 'packet.json'), JSON.stringify(redactDeep({ run, backend: extra.backend, usage: extra.usage, head, ...packet }), null, 2)],
@@ -1397,27 +1421,37 @@ async function attemptDelivery($: EngineInterface, d: Delivery): Promise<boolean
   try {
     if (!d.isStored) {
       await ensureGitignore($)
+      // Never written where a check fails; the notification still goes out,
+      // its warnings rebuilt on every attempt.
+      const warnings = new Set<string>()
       const escape = await storageProblem($, relayPath(`runs/${d.role.name}`))
-      if (escape) {
-        // Never written there; the notification still goes out.
-        d.text += `\nNot stored: ${escape}.`
-      } else {
-        // every file is checked itself right before it is written (N99)
+      if (escape) warnings.add(escape)
+      else {
+        // every file is checked itself right before it is written (N99), and
+        // never into a slot a later run holds, on any attempt (N110)
         for (const [path, text] of d.files) {
-          const why = await storageProblem($, path)
-          if (why) d.text += `\nNot stored: ${why}.`
+          const why = isRotatedOut(d.role, d.run) ? 'a later run holds this slot' : await storageProblem($, path)
+          if (why) warnings.add(why)
           else await $.fs.write(path, text)
         }
+      }
+      // redacted once its warnings are in: they may name a resolved path (N109)
+      const withWarnings = () => redact(d.text + [...warnings].map(w => `\nNot stored: ${w}.`).join(''))
+      let text = withWarnings()
+      if (!escape) {
         // the message itself, outside the rotation, until it is delivered,
-        // under its job's id (N97, N103)
+        // under its job's id and length (N97, N103, N111)
         const keptPath = undeliveredPath(d.role.name, d.run)
         const why = await storageProblem($, keptPath)
-        if (why) d.text += `\nNot stored: ${why}.`
-        else {
-          await $.fs.write(keptPath, `${jobLine(d.job.id)}\n${d.text}`)
+        if (why) {
+          warnings.add(why)
+          text = withWarnings()
+        } else {
+          await $.fs.write(keptPath, `${jobLine(d.job.id, text.length)}\n${text}`)
           d.hasUndelivered = true
         }
       }
+      d.text = text
       d.isStored = true
       // Durable: a restart now delivers the stored packet, not "interrupted".
       d.job.delivery = 'stored'
@@ -1473,20 +1507,22 @@ function isEnvelopeOf(text: string, run: number, backend: BackendId): boolean {
   }
 }
 
-// The first line of undelivered-<run>.md: whose message it is (N103).
-const jobLine = (id: string) => `<!-- relay job ${id} -->`
+// The first line of undelivered-<run>.md: whose message it is and how long,
+// so a partly written one is told apart (N103, N111).
+const jobLine = (id: string, length: number) => `<!-- relay job ${id} length ${length} -->`
 const RESTART_MARK = ' · delivered after a restart'
 
 // The kept message of this job, without its id line; undefined when the file
-// is missing, empty, unsafe or carries another (or no) job id (N103).
+// is missing, empty, unsafe, carries another (or no) job id or is not as
+// long as its id line says (N103, N111).
 async function keptMessageOf($: EngineInterface, job: QueuedJob): Promise<string | undefined> {
   if (job.run === undefined) return undefined
   const path = undeliveredPath(job.role, job.run)
   if (await storageProblem($, path)) return undefined
   const text = String(await $.fs.read(path).catch(() => ''))
   const nl = text.indexOf('\n')
-  if (nl < 0 || text.slice(0, nl) !== jobLine(job.id)) return undefined
   const body = text.slice(nl + 1)
+  if (nl < 0 || text.slice(0, nl) !== jobLine(job.id, body.length)) return undefined
   return body.trim() ? body : undefined
 }
 
@@ -1504,12 +1540,15 @@ async function deliverKept($: EngineInterface, job: QueuedJob, body: string): Pr
 async function deliverStored($: EngineInterface, job: QueuedJob): Promise<string | undefined> {
   const role = roles[job.role]
   const run = job.run ?? 0
-  // the kept message was looked for first, in recover (N97, N103)
+  // the kept message was looked for first, in recover (N97, N103); the
+  // stored packet is read only when it is no link out (N108)
+  const unsafe = role ? await storageProblem($, runPath(job.role, run, 'packet.json')) : undefined
+  if (unsafe) return reportInterrupted($, job, redact(`the stored report was not read: ${unsafe}`), { noFiles: 'its stored files are not safe to use' })
   const text = role ? String(await $.fs.read(runPath(job.role, run, 'packet.json')).catch(() => '')) : ''
   // packet.json only when it is this run's: a later run may have taken its
   // slot, whose files then stay as they are (N97, N102)
   if (role && text.trim() && !isEnvelopeOf(text, run, job.backend)) {
-    return reportInterrupted($, job, 'the stored report was overwritten by a later run (keepRuns)', { isSlotTaken: true })
+    return reportInterrupted($, job, 'the stored report was overwritten by a later run (keepRuns)', { noFiles: 'a later run holds this slot' })
   }
   const stored = role ? parsePacket(text) : undefined
   if (!role || !stored) return reportInterrupted($, job)
@@ -1524,7 +1563,7 @@ async function deliverStored($: EngineInterface, job: QueuedJob): Promise<string
 // as failed, with the write check against its snapshot, and never restart it.
 // Returns why it could not be reported yet, or undefined once it was (the job
 // then left the queue).
-async function reportInterrupted($: EngineInterface, job: QueuedJob, note?: string, opts: { isSlotTaken?: boolean } = {}): Promise<string | undefined> {
+async function reportInterrupted($: EngineInterface, job: QueuedJob, note?: string, opts: { noFiles?: string } = {}): Promise<string | undefined> {
   const defs = await loadRoleDefs($)
   let role = roles[job.role]
   if (!role && defs[job.role]) role = roles[job.role] = { name: job.role, runs: job.run ?? 0, isBusy: false }
@@ -1551,7 +1590,7 @@ async function reportInterrupted($: EngineInterface, job: QueuedJob, note?: stri
   let head = `[relay] ${role.name} · run ${run} interrupted (${job.backend})`
   if (packet.write_check?.outside.length) head += ` ⚠ wrote outside owns (${packet.write_check.outside.length})`
   if (packet.write_check?.incomplete?.length) head += ' ⚠ write check incomplete'
-  const isDone = await deliver($, role, run, job, '', packet, head, { backend: job.backend, usage: {}, noFiles: opts.isSlotTaken })
+  const isDone = await deliver($, role, run, job, '', packet, head, { backend: job.backend, usage: {}, noFiles: opts.noFiles })
   return isDone ? undefined : 'reporting failed (relay retries with the next heartbeat)'
 }
 
@@ -1573,7 +1612,8 @@ function roleLine(name: string, r: Role | undefined, def: RoleDef | undefined) {
     (r?.lastStatus ? `, last ${r.lastStatus}: ${r.lastSummary ?? ''}` : '') +
     ` · ${eff.backend}${versions[eff.backend] ? ` ${versions[eff.backend]}` : ''}` +
     (eff.model ? ` · ${eff.model}` : '') +
-    (eff.isolation === 'worktree' ? ' · worktree' : '') +
+    // only where the backend applies it (N112)
+    (eff.isolation === 'worktree' && !ignored.includes('isolation') ? ' · worktree' : '') +
     (eff.owns.length ? ` · owns ${eff.owns.join(', ')}` : '') +
     (total ? ` · total ${total}` : '') +
     (ignored.length ? ` · ignored: ${ignored.join(', ')}` : '')
@@ -1795,18 +1835,31 @@ export const register: Register = (on, options) => {
     const run = input.run ?? (role.isBusy ? role.runs - 1 : role.runs)
     if (run < 1) return { result: `${role.name} has no finished run yet.` }
     if (isRotatedOut(role, run)) return { result: `${role.name} run ${run} was rotated out (keepRuns ${config.keepRuns}).` }
+    // a report file is read only when it is no link out, like before its
+    // write (N99, N108)
+    const refused = async (path: string) => {
+      const why = await storageProblem($, path)
+      return why ? { result: redact(`relay does not read ${path} (${why}).`) } : undefined
+    }
     if (input.section?.trim().toLowerCase() === 'packet') {
+      const path = runPath(role.name, run, 'packet.json')
+      const no = await refused(path)
+      if (no) return no
       try {
-        const packet = parsePacket(await $.fs.read(runPath(role.name, run, 'packet.json')))
-        if (packet) return { result: renderPacket(`[relay] ${role.name} · run ${run}`, packet, runPath(role.name, run, 'full.md'), 'full') }
+        const packet = parsePacket(await $.fs.read(path))
+        if (packet) return { result: redact(renderPacket(`[relay] ${role.name} · run ${run}`, packet, runPath(role.name, run, 'full.md'), 'full')) }
       } catch {
         // fall through
       }
       return { result: `No stored packet for ${role.name} run ${run}.` }
     }
+    const fullPath = runPath(role.name, run, 'full.md')
+    const no = await refused(fullPath)
+    if (no) return no
     let text: string
     try {
-      text = await $.fs.read(runPath(role.name, run, 'full.md'))
+      // redacted before a section is looked for or the text is cut (N108)
+      text = redact(String(await $.fs.read(fullPath)))
     } catch {
       return { result: `No stored answer for ${role.name} run ${run}.` }
     }

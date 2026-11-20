@@ -87,6 +87,9 @@ export type Scenario =
   | 'key-open-error'
   // codex: an error event, then killed by SIGTERM (N106)
   | 'error-signal'
+  // werkbank-relay: a key opens in the answer's prose and goes on in the
+  // packet's summary (N107)
+  | 'key-into-packet'
 
 export type Call = { argv: string[]; cwd?: string; env: Record<string, string>; input?: string; attachment?: string; protocolFile?: string }
 
@@ -491,7 +494,9 @@ export function fakeWorld(
                     ? ['## Work', '```relay', JSON.stringify({ status: 'done', summary: 'Did it.', risks: [KEY_LINES[0], KEY_BODY, KEY_LINES[1], 'nothing else'], sections: ['Work'] }), '```'].join('\n')
                     : scenario === 'key-across-fields'
                       ? ['## Work', '```relay', JSON.stringify({ status: 'done', decisions: [KEY_LINES[0]], summary: KEY_BODY, risks: [KEY_LINES[1], 'nothing else'], sections: ['Work'] }), '```'].join('\n')
-                      : answer,
+                      : scenario === 'key-into-packet'
+                        ? ['## Work', KEY_LINES[0], '```relay', JSON.stringify({ status: 'done', summary: KEY_BODY, sections: ['Work'] }), '```'].join('\n')
+                        : answer,
         sessionId: scenario === 'session-moved' ? 'fsn1-4:fresh2' : scenario === 'session-token' ? WERKBANK_TOKEN_SESSION : (arg('--session') ?? 'fsn1-5:9b1f'),
         usage: { costUsd: 0.42, turns: 6, inputTokens: 12000, outputTokens: 3100, model: 'claude-opus-5-5' },
         branch: `agent/relay/${role}`,
