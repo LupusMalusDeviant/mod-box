@@ -1,6 +1,6 @@
 # Vertrag 0001: relay mit Backends je Rolle
 
-**Status:** abgenommen am 3. November 2026 (E1–E11 wie empfohlen, herdr gestrichen) · **Stand:** 13. November 2026, Nachtrag 1 (Abschnitt 14 und 14.1, N1–N28) abgenommen am 13. November 2026; Nachtrag 2 (Abschnitt 15, N29–N47, Backend `werkbank`) sowie Nachträge 2a (15.4, N48–N57) , 2b (15.5, N58–N67) und 2c (15.6, N68–N72) abgenommen am 18. November 2026; Nachtrag 2d (15.7, N73–N80) abgenommen am 19. November 2026; Nachtrag 2e (15.8, N81–N86) und 2f (15.9, N87–N93) abgenommen am 19. November 2026; Nachtrag 2g (15.10, N94–N98) abgenommen am 19. November 2026; Nachtrag 2h (15.11, N99–N106) , 2i (15.12, N107–N113), 2j (15.13, N114–N119), 2k (15.14, N120–N126), 2l (15.15, N127–N133), 2m (15.16, N134–N140), 2n (15.17, N141–N147), 2o (15.18, N148–N154), 2p (15.19, N155–N159), 2q (15.20, N160–N165), 2r (15.21, N166–N169), 2s (15.22, N170–N172) und 2t (15.23, N173–N177) abgenommen am 20. November 2026 · **Betrifft:** `plugins/relay` (heute 0.3.0)
+**Status:** abgenommen am 3. November 2026 (E1–E11 wie empfohlen, herdr gestrichen) · **Stand:** 13. November 2026, Nachtrag 1 (Abschnitt 14 und 14.1, N1–N28) abgenommen am 13. November 2026; Nachtrag 2 (Abschnitt 15, N29–N47, Backend `werkbank`) sowie Nachträge 2a (15.4, N48–N57) , 2b (15.5, N58–N67) und 2c (15.6, N68–N72) abgenommen am 18. November 2026; Nachtrag 2d (15.7, N73–N80) abgenommen am 19. November 2026; Nachtrag 2e (15.8, N81–N86) und 2f (15.9, N87–N93) abgenommen am 19. November 2026; Nachtrag 2g (15.10, N94–N98) abgenommen am 19. November 2026; Nachtrag 2h (15.11, N99–N106) , 2i (15.12, N107–N113), 2j (15.13, N114–N119), 2k (15.14, N120–N126), 2l (15.15, N127–N133), 2m (15.16, N134–N140), 2n (15.17, N141–N147), 2o (15.18, N148–N154), 2p (15.19, N155–N159), 2q (15.20, N160–N165), 2r (15.21, N166–N169), 2s (15.22, N170–N172), 2t (15.23, N173–N177) und 2u (15.24, N178–N181) abgenommen am 20. November 2026 · **Betrifft:** `plugins/relay` (heute 0.3.0)
 
 Heute startet relay jeden Worker als `claude -p`. Künftig wählt jede Rolle ihr **Backend**: `claude`, `codex` oder `opencode`. Über opencode erreicht relay auch Ollama und OpenRouter. Warteschlange, Timeout, `owns`, Relay-Pakete und die drei Werkzeuge bleiben gleich. Neu sind die Backend-Schnittstelle, eine Schreibprüfung nach jedem Lauf, die gleich für alle Backends greift, Token-Angaben im Paket, Ollama als Ersatz-Verdichter und eine Warteschlange, die auf der Platte liegt.
 
@@ -1028,3 +1028,21 @@ Ein zweites Codex-Review (Stand `63ba3bf`) fand 14 weitere Befunde (6 hoch, 8 mi
 - **N177:** die Fälle aus der Tabelle. Sie dürfen auch mit `62e7a44` bestehen.
 
 **Stand (20. November 2026):** N173–N177 umgesetzt. `claude plugin test plugins/relay`: 285 pass, 0 fail. Mit `62e7a44` schlagen genau die 4 Fälle zu N173–N176 fehl (281 pass, 4 fail). Die 4 Fälle zu N177 bestehen auch dort. Die Regel aus N173 steht an einer Stelle (`hasStarted`). Ein Lesefehler hängt seinen Text weiter an stderr an, macht den Lauf damit aber nicht zum gestarteten. Bei N176 wird der gekürzte Text vorher bereinigt (`cut`), danach endet er mit `…`.
+
+### 15.24 Nachtrag 2u (20. November 2026): Befunde aus dem einundzwanzigsten Review (`c270e77...0a4e6f0`)
+
+**Status: abgenommen am 20. November 2026** (N178–N181 wie vorgeschlagen). Codex hatte wieder sein Nutzungslimit erreicht. Deshalb hat eine unabhängige, schreibgeschützte Claude-Sitzung das einundzwanzigste Review gemacht. Sie fand 3 niedrige Befunde, keinen hohen und keinen mittleren, und dazu zwei Testlücken. Einer der Befunde ist ein kleiner Rückschritt durch N176. Alle werden als echt eingestuft. Entschieden vom Nutzer am 20. November 2026: alle als Nachtrag 2u beheben.
+
+| Nr. | Änderung | Ersetzt / ergänzt | Befund |
+|---|---|---|---|
+| N178 | **Nur exakte Werte zählen.** N176 wandelt Leerraum in ein Leerzeichen um, schneidet aber am Anfang und Ende nichts ab. Ein `state` wie `"done\n"` oder `" red"` ist damit kein Zustand aus N37 und gilt als `failed` (N171). Ein `branch` mit Leerraum am Rand gilt nicht als `agent/relay/<rolle>` (N135). Eine `jobId` nur aus Leerraum ist weiter keine (N90). | N176 | niedrig 1 |
+| N179 | **Tests für `branch` und `jobId` aus N176:** Ein Job, dessen `branch` und `jobId` Zeilenumbrüche haben und länger als 120 Zeichen sind, zeigt beide einzeilig und gekürzt, auch im Branch-Hinweis. | N176 | niedrig 2 |
+| N180 | **Ein Lesefehler stoppt den Kindprozess.** Bricht das Lesen der Ausgabe mit einem Fehler ab, beendet relay das Kind wie bei der Zeitüberschreitung, bevor es den Platz unter `maxParallel` freigibt. Ein werkbank-Job, den das Kind schon eingestellt hat, kann auf dem Server weiterlaufen, wie in N45. | N45, N47, N173 | niedrig 3 |
+| N181 | **Tests für die Grenzen aus N173 und N174:** Ein Lesefehler nach einer Ausgabe gilt als Start und zeigt den Hinweis aus N170, aber kein „could not start“. Eine Schlüssel-Marke mit gemeldeter Dateiliste ersetzt die Prüfung durch „the file list werkbank reported is not shown“. | N173, N174 | Testlücken |
+
+**Tests:**
+- **N178:** Ein Job mit `state: "done\n"` ist `failed`. Der Fall schlägt mit `0a4e6f0` fehl.
+- **N180:** Der Fake kann nicht beobachten, ob relay den Prozess nach einem Lesefehler noch stoppt: Sein Kind ist mit dem Fehler schon zu Ende. Ob `stop()` aufgerufen wird, lässt sich nur am Code prüfen. Das ist eine Lücke, die wir bewusst stehen lassen.
+- **N179 und N181:** die Fälle aus der Tabelle. Sie dürfen auch mit `0a4e6f0` bestehen.
+
+**Stand (20. November 2026):** N178–N181 umgesetzt. `claude plugin test plugins/relay`: 289 pass, 0 fail. Mit `0a4e6f0` schlägt genau der N178-Fall fehl (288 pass, 1 fail). Die Fälle zu N179 und N181 bestehen auch dort. N180 stoppt das Kind im `catch` von `spawnRun`. Lehnt ein Strom, der schon gescheitert ist, das Stoppen ab, gilt das nicht als neuer Fehler. Ob der Prozess wirklich endet, lässt sich nur am Code und an der echten Plugin-API prüfen, nicht im Fake (siehe oben).

@@ -642,8 +642,11 @@ const werkbank: Backend = {
     const sid = str(json.sessionId)
     // only spaces is no job id (N90)
     // free text of the server: one line, at most 120 characters (N176)
-    const oneLine = (s: string | undefined) => (s === undefined ? undefined : cut(s.replace(/\s+/g, ' ').trim(), 120))
-    const jobId = oneLine(str(json.jobId)) || undefined
+    // nothing is trimmed: only exact values count as a state or the role's
+    // branch (N178)
+    const oneLine = (s: string | undefined) => (s === undefined ? undefined : cut(s.replace(/\s+/g, ' '), 120))
+    // only spaces is no job id (N90)
+    const jobId = str(json.jobId)?.trim() ? oneLine(str(json.jobId)) : undefined
     const state = oneLine(str(json.state)) ?? 'unknown'
     const strings = (v: unknown) => (Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : [])
     let remote: RemoteRun | undefined

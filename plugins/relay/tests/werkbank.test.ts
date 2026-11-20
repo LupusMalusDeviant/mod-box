@@ -1761,6 +1761,49 @@ describe('werkbank, Nachtrag 2i (ninth Codex review)', () => {
     expect(w.submitted[0]).not.toContain('not-a-commit')
   })
 
+  test('N178: a state with a line break at its end is no known state', { options: WB }, async ($: any, on: any) => {
+    const w = world(on)
+    w.play('padded-state')
+    if (!(await w.start($))) return
+    await w.send($, { role: 'coder', task: 't' })
+    await w.until(() => w.submitted.length === 1)
+    expect(w.submitted[0]).toContain('Status: failed')
+  })
+
+  test('N179: a long branch and jobId over lines are shown on one line and cut', { options: WB }, async ($: any, on: any) => {
+    const w = world(on)
+    w.play('long-branch-job')
+    if (!(await w.start($))) return
+    await w.send($, { role: 'coder', task: 't' })
+    await w.until(() => w.submitted.length === 1)
+    const m = w.submitted[0]!
+    const line = m.split('\n').find(l => l.includes('The changes are on branch'))!
+    expect(line).toContain('branch0x26 bbb')
+    expect(line).toContain('job0x25 jjj')
+    expect(line).toContain('…')
+    expect(m).not.toContain('b'.repeat(200))
+    expect(m).not.toContain('j'.repeat(200))
+  })
+
+  test('N181: a read error after output counts as a start', { options: WB }, async ($: any, on: any) => {
+    const w = world(on)
+    w.play('read-error-after-output')
+    if (!(await w.start($))) return
+    await w.send($, { role: 'coder', task: 't' })
+    await w.until(() => w.submitted.length === 1)
+    expect(w.submitted[0]).toContain('the werkbank job may still be running on the server')
+    expect(w.submitted[0]).not.toContain('could not start')
+  })
+
+  test('N181: a key marker with a reported file list replaces the check', { options: WB }, async ($: any, on: any) => {
+    const w = world(on)
+    w.play('key-files-no-commit')
+    if (!(await w.start($))) return
+    await w.send($, { role: 'coder', task: 't' })
+    await w.until(() => w.submitted.length === 1)
+    expect(w.submitted[0]).toContain('the file list werkbank reported is not shown')
+  })
+
   test('N112: worker_status shows no worktree for werkbank', { options: WB }, async ($: any, on: any) => {
     const w = world(on)
     if (!(await w.start($))) return

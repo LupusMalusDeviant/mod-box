@@ -160,6 +160,12 @@ export type Scenario =
   | 'long-state'
   // werkbank-relay: a job without state, with an error (N177)
   | 'no-state'
+  // werkbank-relay: a done job whose state has a line break at its end (N178)
+  | 'padded-state'
+  // werkbank-relay: a job whose branch and jobId are long and span lines (N179)
+  | 'long-branch-job'
+  // werkbank-relay: one stderr line, then the read fails (N181)
+  | 'read-error-after-output'
 
 export type Call = { argv: string[]; cwd?: string; env: Record<string, string>; input?: string; attachment?: string; protocolFile?: string }
 
@@ -589,6 +595,18 @@ export function fakeWorld(
         return { value: { code: 0, signal: null } }
       }
       if (scenario === 'no-start-read-error') return { deny: 'spawn werkbank-relay ENOENT' }
+      if (scenario === 'padded-state') {
+        yield { stream: 'stdout', text: JSON.stringify({ jobId: WERKBANK_JOB, state: 'done\n', answer: PACKET(), sessionId: 'fsn1-5:9b1f', branch: `agent/relay/${role}`, commits: [], changedFiles: [] }) }
+        return { value: { code: 0, signal: null } }
+      }
+      if (scenario === 'long-branch-job') {
+        yield { stream: 'stdout', text: JSON.stringify({ jobId: `job0x25\n${'j'.repeat(300)}`, state: 'done', answer: PACKET(), sessionId: 'fsn1-5:9b1f', branch: `branch0x26\n${'b'.repeat(300)}`, commits: [WERKBANK_COMMIT], changedFiles: [] }) }
+        return { value: { code: 0, signal: null } }
+      }
+      if (scenario === 'read-error-after-output') {
+        yield { stream: 'stderr', text: 'queued\n' }
+        return { deny: 'the stream was reset' }
+      }
       if (scenario === 'key-no-json') {
         yield { stream: 'stderr', text: `${KEY_LINES[0]}\n` }
         return yield* out('Unhandled exception. System.Exception: boom\n', 1, 'boom\n')

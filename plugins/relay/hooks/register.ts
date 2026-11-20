@@ -1209,6 +1209,16 @@ async function spawnRun(
       }
     }
   } catch (err) {
+    // a read error stops the child like the timeout does, before its slot
+    // under maxParallel is given back (N180)
+    // (a stream that already failed may refuse the stop; that is no new error)
+    if (!proc.isTimedOut && !proc.isStoppedByLimit) {
+      try {
+        child.return(undefined as never).catch(() => undefined)
+      } catch {
+        // already ended
+      }
+    }
     // the read error's text goes into the key check like a line (N155)
     for (const line of String(err).split('\n')) {
       track(line)
