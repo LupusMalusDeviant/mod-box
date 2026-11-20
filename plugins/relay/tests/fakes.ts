@@ -111,6 +111,12 @@ export type Scenario =
   // werkbank-relay: BEGIN on stdout without its line end, the body on stderr
   // before the stdout line ends (N128)
   | 'key-fragment'
+  // werkbank-relay: stdout opens a key, stderr gets the body without its line
+  // end, stdout closes the key, then stderr ends the line (N134)
+  | 'key-split-fragment'
+  // werkbank-relay: a key marker in the answer, the body as verify.command
+  // (N135)
+  | 'key-verify-command'
 
 export type Call = { argv: string[]; cwd?: string; env: Record<string, string>; input?: string; attachment?: string; protocolFile?: string }
 
@@ -491,6 +497,17 @@ export function fakeWorld(
       if (scenario === 'key-marker-error') {
         yield { stream: 'stdout', text: JSON.stringify({ jobId: WERKBANK_JOB, state: 'failed', answer: '', note: KEY_LINES[0], sessionId: 'fsn1-5:9b1f', branch: `agent/relay/${role}`, commits: [], changedFiles: [], error: { kind: 'repo', message: KEY_BODY } }) }
         return { value: { code: 1, signal: null } }
+      }
+      if (scenario === 'key-split-fragment') {
+        yield { stream: 'stdout', text: `${KEY_LINES[0]}\n` }
+        yield { stream: 'stderr', text: KEY_BODY }
+        yield { stream: 'stdout', text: `${KEY_LINES[1]}\n` }
+        yield { stream: 'stderr', text: '\n' }
+        return { value: { code: 2, signal: null } }
+      }
+      if (scenario === 'key-verify-command') {
+        yield { stream: 'stdout', text: JSON.stringify({ jobId: WERKBANK_JOB, state: 'done', answer: `see ${KEY_LINES[0]}`, sessionId: 'fsn1-5:9b1f', branch: `agent/relay/${role}`, commits: [WERKBANK_COMMIT], changedFiles: ['src/a.ts'], verify: { command: KEY_BODY, exitCode: 0 } }) }
+        return { value: { code: 0, signal: null } }
       }
       if (scenario === 'key-fragment') {
         yield { stream: 'stdout', text: KEY_LINES[0] }

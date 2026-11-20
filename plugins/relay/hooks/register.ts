@@ -330,6 +330,9 @@ async function claimQueue($: EngineInterface) {
 
 async function beat($: EngineInterface) {
   if (!isOwner) return
+  // a temp file that could not be cleared is tried again, whether or not the
+  // queue can be written (N132, N139)
+  await retryTempClears($)
   queue.owner = { session, heartbeatAt: await iso($), token: ownerToken }
   const isWritten = await writeQueue($).then(
     () => true,
@@ -339,8 +342,6 @@ async function beat($: EngineInterface) {
     },
   )
   if (!isWritten) return
-  // a temp file that could not be cleared is tried again (N132)
-  await retryTempClears($)
   // The queue can be written again: retry what waits on it (N15, N28).
   await retryDeliveries($)
   if (queued().length) await pump($)
@@ -403,23 +404,46 @@ function isRotatedOut(role: Role, run: number) {
   return config.keepRuns > 0 && run <= role.runs - config.keepRuns
 }
 
-// Whether the slot's packet.json belongs to a run after `run`; read only when
-// its path is safe (N108, N129).
-async function isSlotLater($: EngineInterface, role: string, run: number): Promise<boolean> {
+// Why the slot may not be written for `run`, or undefined: only a confirmed
+// missing packet.json, or a readable one of this run or an earlier one, lets
+// relay write there; a later, unsafe, unreadable or invalid one does not
+// (N108, N129, N136).
+async function slotProblem($: EngineInterface, role: string, run: number): Promise<string | undefined> {
   const path = runPath(role, run, 'packet.json')
-  if (await storageProblem($, path)) return false
+  const unsafe = await storageProblem($, path)
+  if (unsafe) return unsafe
+  let isThere: boolean
+  try {
+    isThere = await $.fs.exists(path)
+  } catch (err) {
+    return `the slot could not be checked (${message(err)})`
+  }
+  if (!isThere) return undefined
   try {
     const stored = (JSON.parse(String(await $.fs.read(path))) as { run?: unknown }).run
-    return typeof stored === 'number' && stored > run
-  } catch {
-    return false
+    if (typeof stored !== 'number') return 'the slot could not be checked (its packet.json names no run)'
+    return stored > run ? 'a later run holds this slot' : undefined
+  } catch (err) {
+    return `the slot could not be checked (${message(err)})`
   }
 }
 
-async function loadRoleDefs($: EngineInterface): Promise<Record<string, RoleDef>> {
+// A roles file that exists but cannot be read or parsed (N137).
+class RoleFileError extends Error {}
+
+// Missing roles file: no definitions. With isStrict, a file that exists but
+// cannot be read or parsed throws instead of counting as empty (N137).
+async function loadRoleDefs($: EngineInterface, opts: { isStrict?: boolean } = {}): Promise<Record<string, RoleDef>> {
   try {
     if (!(await $.fs.exists(config.rolesFile))) return {}
-    const parsed = JSON.parse(await $.fs.read(config.rolesFile)) as Record<string, unknown>
+    let parsed: Record<string, unknown>
+    try {
+      parsed = JSON.parse(await $.fs.read(config.rolesFile)) as Record<string, unknown>
+      if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) throw new Error('no JSON object')
+    } catch (err) {
+      if (opts.isStrict) throw new RoleFileError(`the roles file ${config.rolesFile} could not be read (${message(err)})`)
+      return {}
+    }
     const map = (parsed.roles ?? parsed) as Record<string, Record<string, unknown>>
     const defs: Record<string, RoleDef> = {}
     for (const [name, d] of Object.entries(map)) {
@@ -436,7 +460,8 @@ async function loadRoleDefs($: EngineInterface): Promise<Record<string, RoleDef>
       }
     }
     return defs
-  } catch {
+  } catch (err) {
+    if (opts.isStrict) throw err instanceof RoleFileError ? err : new RoleFileError(`the roles file ${config.rolesFile} could not be checked (${message(err)})`)
     return {}
   }
 }
@@ -823,7 +848,9 @@ function snapshotPath(role: string, run: number) {
 async function start($: EngineInterface, job: QueuedJob, role: Role, run: number): Promise<boolean> {
   let eff: ReturnType<typeof effective>
   try {
-    eff = effective(role, (await loadRoleDefs($))[role.name])
+    // a roles file that exists but cannot be read keeps the job queued: its
+    // owns and tools are unknown (N137)
+    eff = effective(role, (await loadRoleDefs($, { isStrict: true }))[role.name])
     job.startedAt = await iso($)
     await save($)
     await writeQueue($)
@@ -836,7 +863,9 @@ async function start($: EngineInterface, job: QueuedJob, role: Role, run: number
     delete job.startedAt
     await save($).catch(() => undefined)
     dispatchError = err instanceof NotOwnerError ? 'another session took over the queue' : message(err)
-    if (!(err instanceof NotOwnerError)) {
+    if (err instanceof RoleFileError) {
+      notices.push(redact(`relay did not start ${role.name}: ${dispatchError}; the job stays queued and starts once the roles file can be read.`))
+    } else if (!(err instanceof NotOwnerError)) {
       notices.push(`relay could not persist the queue before starting ${role.name} (${dispatchError}); the job stays queued and starts once the queue can be written.`)
     }
     return false
@@ -1061,6 +1090,7 @@ async function spawnRun(
         const errLines = (errRest + chunk.text).split('\n')
         errRest = errLines.pop() ?? ''
         const isHeld = isFragmentKeyed()
+        if (isHeld) live.seal()
         for (const line of errLines) {
           track(line)
           // the stream not shown still moves live.log's key state (N114)
@@ -1073,6 +1103,7 @@ async function spawnRun(
       const lines = (rest + chunk.text).split('\n')
       rest = lines.pop() ?? ''
       const isHeld = isFragmentKeyed()
+      if (isHeld) live.seal()
       for (const line of lines) {
         track(line)
         if (!isLiveErr) live.line(line, isHeld)
@@ -1115,6 +1146,14 @@ function liveLog($: EngineInterface, role: string, run: number, id: BackendId, i
   const lines = [`# ${role} · run ${run} · ${id} · started ${new Date().toISOString()}`]
   // A private key over several lines never reaches the log (N51).
   const keyFilter = privateKeyFilter()
+  // After the first key marker the log takes no more lines (N134).
+  let isSealed = false
+  const seal = () => {
+    if (isSealed || id === 'claude') return
+    isSealed = true
+    lines.push(REDACTED_KEY_LINE)
+    void flushSoon()
+  }
   // Timed by the plugin's clock: at most every 2 seconds, and at the end.
   const now = () => $.clock.now().catch(() => Date.now())
   let flushedAt = 0
@@ -1173,19 +1212,24 @@ function liveLog($: EngineInterface, role: string, run: number, id: BackendId, i
       const seen = [raw, ...eventTexts(raw)].join('\n')
       const kept = keyFilter(seen)
       if (kept === undefined) return
-      // an event with a BEGIN marker anywhere is never shown, even when its
-      // key ends in the same event (N101); nor is any line while an
-      // unfinished line holds a marker (N128)
-      const text = isHeld || hasKeyBegin(seen) ? REDACTED_KEY_LINE : kept === seen ? liveLine(id, raw) : kept
+      // from the first key marker on (any stream, also in an unfinished
+      // line) live.log shows one [redacted private key] line and nothing
+      // more of the run but its end line (N101, N128, N134)
+      if (isHeld || hasKeyBegin(seen)) seal()
+      if (isSealed) return
+      const text = kept === seen ? liveLine(id, raw) : kept
       if (!text) return
       lines.push(redact(text))
       void flushSoon()
     },
-    // a line of the stream not shown: it only moves the key state (N114)
+    // a line of the stream not shown: it moves the key state and seals (N114, N134)
     other(raw: string) {
       if (id === 'claude') return
-      keyFilter([raw, ...eventTexts(raw)].join('\n'))
+      const seen = [raw, ...eventTexts(raw)].join('\n')
+      keyFilter(seen)
+      if (hasKeyBegin(seen)) seal()
     },
+    seal,
     // why live.log is not written, once known (N88)
     get problem() {
       return problem
@@ -1320,8 +1364,18 @@ function withoutKeyTexts(r: RunResult): RunResult {
     outcome: {
       ...outcome,
       error: outcome.error && { ...outcome.error, message: KEY_HIDDEN },
-      remote: outcome.remote && (outcome.remote.reason ? { ...outcome.remote, reason: KEY_HIDDEN } : outcome.remote),
+      // every free text of the werkbank job goes too; state, commit ids and
+      // numbers stay; without its file list the write check is incomplete
+      // (N135)
+      remote: outcome.remote && {
+        ...outcome.remote,
+        ...(outcome.remote.reason ? { reason: KEY_HIDDEN } : {}),
+        branch: outcome.remote.branch === `agent/relay/${r.role.name}` ? outcome.remote.branch : KEY_HIDDEN,
+        ...(outcome.remote.verify ? { verify: { ...outcome.remote.verify, ...(outcome.remote.verify.command !== undefined ? { command: KEY_HIDDEN } : {}) } } : {}),
+        changedFiles: undefined,
+      },
     },
+    check: r.check && r.id === 'werkbank' ? notChecked('the run printed a private key marker, so the file list werkbank reported is not shown') : r.check,
     proc: { ...proc, stderr: proc.stderr.trim() ? KEY_HIDDEN : '' },
   }
 }
@@ -1537,7 +1591,8 @@ async function attemptDelivery($: EngineInterface, d: Delivery): Promise<boolean
           // session (N129); the rotation check stays last, with no await after it
           const why =
             (await storageProblem($, path)) ??
-            ((await isSlotLater($, d.role.name, d.run)) || isRotatedOut(d.role, d.run) ? 'a later run holds this slot' : undefined)
+            (await slotProblem($, d.role.name, d.run)) ??
+            (isRotatedOut(d.role, d.run) ? 'a later run holds this slot' : undefined)
           if (why) warnings.add(why)
           else await $.fs.write(path, text)
         }
@@ -1962,7 +2017,18 @@ export const register: Register = (on, options) => {
     if (run > role.runs) return { result: `${role.name} has no run ${run} yet (${role.runs} begun).` }
     if (isRotatedOut(role, run)) return { result: `${role.name} run ${run} was rotated out (keepRuns ${config.keepRuns}).` }
     // a slot file that belongs to another run is never shown as this one (N131)
-    const otherRun = { result: `No stored report for ${role.name} run ${run} (the slot holds another run).` }
+    const otherRun = { result: `No stored report for ${role.name} run ${run} (the slot holds another run, or its two files do not match).` }
+    // both files of the slot must name this run before either is shown (N138)
+    const isPairOfRun = async () => {
+      const p = runPath(role.name, run, 'packet.json')
+      const f = runPath(role.name, run, 'full.md')
+      if ((await storageProblem($, p)) || (await storageProblem($, f))) return false
+      try {
+        return isEnvelopeRun(String(await $.fs.read(p)), run) && String(await $.fs.read(f)).startsWith(`# ${role.name} · run ${run}\n`)
+      } catch {
+        return false
+      }
+    }
     // a report file is read only when it is no link out, like before its
     // write (N99, N108)
     const refused = async (path: string) => {
@@ -1975,7 +2041,7 @@ export const register: Register = (on, options) => {
       if (no) return no
       try {
         const raw = String(await $.fs.read(path))
-        if (!isEnvelopeRun(raw, run)) return otherRun
+        if (!isEnvelopeRun(raw, run) || !(await isPairOfRun())) return otherRun
         const packet = parsePacket(raw)
         if (packet) return { result: redact(renderPacket(`[relay] ${role.name} · run ${run}`, packet, runPath(role.name, run, 'full.md'), 'full')) }
       } catch {
@@ -1993,7 +2059,7 @@ export const register: Register = (on, options) => {
     } catch {
       return { result: `No stored answer for ${role.name} run ${run}.` }
     }
-    if (!text.startsWith(`# ${role.name} · run ${run}\n`)) return otherRun
+    if (!text.startsWith(`# ${role.name} · run ${run}\n`) || !(await isPairOfRun())) return otherRun
     let out = text
     if (input.section) {
       const found = extractSection(text, input.section)

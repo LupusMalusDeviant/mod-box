@@ -144,7 +144,8 @@ Only one task per role runs at a time; a second send for a busy role waits in th
 | `stopped after N min` | The task was too big for the timeout; split it and resend |
 | `stopped at N tokens` | The user's `maxTokensPerRun` hit (codex, opencode); split the task |
 | `werkbank job … ended red / needs-approval / timed-out / limit` (status `partial`) | The job ran on the server but did not finish clean; its commits are on the named branch. Read the reason under *Risks*; `limit` and `error (budget)` mean no more werkbank jobs today |
-| `error (network)`, `error (auth)`, `error (repo)` on werkbank | Leitstand not reachable over Tailscale, relay token missing or wrong, or the repo is not in the Werkbank's list; the user fixes it, nothing ran |
+| `error (network)`, `error (auth)`, `error (repo)` on werkbank, no werkbank job named | Leitstand not reachable over Tailscale, relay token missing or wrong, or the repo is not in the Werkbank's list; the user fixes it, nothing ran |
+| `werkbank job … ended failed` with `error (repo)` or another kind | The job existed and may have left commits or changed files on its branch; read *Risks*, *Artifacts* and *Needs from main* before resending |
 | `interrupted` | The plugin reloaded or the session ended while it ran; it is not restarted. Check its write check, then resend if needed |
 | "worked by another Claude Code session" | Another session owns this project's queue; use that one |
 | a cost close to the budget, status `partial` | Budget per run hit; split the task, or ask the user to raise `maxBudgetUsd` |

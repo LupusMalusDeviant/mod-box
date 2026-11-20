@@ -305,7 +305,8 @@ describe('werkbank, Nachtrag 2a (Codex review of 8121e9e)', () => {
       expect(live).toContain('[redacted private key]')
       expect(live).not.toContain(KEY_BODY)
     }
-    expect(w.files.get('.relay/runs/coder/live.log')).toContain('verify done')
+    // since N134 nothing after the first key marker is shown
+    expect(w.files.get('.relay/runs/coder/live.log')).not.toContain('verify done')
   })
 
   test('N57: live.log shows progress while the run still holds its slot', { options: { ...WB, maxParallel: 1 } }, async ($: any, on: any) => {
@@ -977,7 +978,8 @@ describe('werkbank, Nachtrag 2i (ninth Codex review)', () => {
 
   test('N119: worker_expand redacts a section name it did not find', { options: WB }, async ($: any, on: any) => {
     const w = world(on, {
-      files: { '.relay/runs/coder/001.full.md': '# coder · run 1\n\n## Work\n\nDone.\n' },
+      // since N138 both files of the slot must name the run
+      files: { '.relay/runs/coder/001.full.md': '# coder · run 1\n\n## Work\n\nDone.\n', '.relay/runs/coder/001.packet.json': JSON.stringify({ run: 1, status: 'done', summary: 'x' }) },
       store: { 'roles:/w': { coder: { name: 'coder', runs: 1, isBusy: false } } },
     })
     if (!(await w.start($))) return
@@ -1136,6 +1138,82 @@ describe('werkbank, Nachtrag 2i (ninth Codex review)', () => {
     const live = w.files.get('.relay/runs/coder/live.log')!
     expect(live).toContain('# failed (answer hidden: a private key marker was in the output)')
     expect(live).not.toContain('# finished')
+  })
+
+  test('N134: after a key marker on stdout, a stderr line finished after the key closed stays out of live.log', { options: WB }, async ($: any, on: any) => {
+    const w = world(on)
+    w.play('key-split-fragment')
+    if (!(await w.start($))) return
+    await w.send($, { role: 'coder', task: 't' })
+    await w.until(() => w.submitted.length === 1)
+    expect(w.files.get('.relay/runs/coder/live.log')).not.toContain(KEY_BODY)
+  })
+
+  test('N135: a key marker in the answer hides verify.command of the werkbank job', { options: WB }, async ($: any, on: any) => {
+    const w = world(on)
+    w.play('key-verify-command')
+    if (!(await w.start($))) return
+    await w.send($, { role: 'coder', task: 't' })
+    await w.until(() => w.submitted.length === 1)
+    expect(w.submitted[0]).not.toContain(KEY_BODY)
+    expect(w.files.get('.relay/runs/coder/001.packet.json')).not.toContain(KEY_BODY)
+    expect(w.submitted[0]).toContain('write check incomplete')
+  })
+
+  test('N136: a slot whose packet.json cannot be read is not written', { options: { ...WB, keepRuns: 1 } }, async ($: any, on: any) => {
+    const later = JSON.stringify({ run: 2, backend: 'werkbank', usage: {}, status: 'done', summary: 'run two did it' })
+    const w = world(on, { files: { '.relay/runs/coder/001.packet.json': later, '.relay/runs/coder/001.full.md': '# coder · run 2' } })
+    w.io.failRead = (p: string) => p === '.relay/runs/coder/001.packet.json'
+    if (!(await w.start($))) return
+    await w.send($, { role: 'coder', task: 't' })
+    await w.until(() => w.submitted.length === 1)
+    expect(w.files.get('.relay/runs/coder/001.packet.json')).toBe(later)
+    expect(w.files.get('.relay/runs/coder/001.full.md')).toBe('# coder · run 2')
+    expect(w.submitted[0]).toContain('Not stored: the slot could not be checked')
+  })
+
+  test('N137: a roles file that cannot be parsed keeps the job queued, not started without owns', { options: WB }, async ($: any, on: any) => {
+    const w = world(on, { files: { '.relay/roles.json': '{ "roles": { "coder": { "owns": ["src"] } }' } })
+    if (!(await w.start($))) return
+    await w.send($, { role: 'coder', task: 't' })
+    for (let i = 0; i < 3; i++) await w.clock.advance(60_000)
+    expect(w.spawns).toHaveLength(0)
+    expect(await w.status($)).toContain('the roles file .relay/roles.json could not be read')
+    // fixed: the job starts with its owns
+    w.files.set('.relay/roles.json', JSON.stringify({ roles: { coder: { owns: ['src'] } } }))
+    for (let i = 0; i < 3 && !w.spawns.length; i++) await w.clock.advance(60_000)
+    await w.until(() => w.spawns.length === 1)
+    const a = w.spawns[0]!.argv
+    expect(a[a.indexOf('--owns') + 1]).toBe('src')
+  })
+
+  test('N138: worker_expand refuses a slot whose two files name different runs', { options: { ...WB, keepRuns: 1 } }, async ($: any, on: any) => {
+    const w = world(on, {
+      files: {
+        '.relay/runs/coder/001.packet.json': JSON.stringify({ run: 1, backend: 'werkbank', usage: {}, status: 'done', summary: 'run one did it' }),
+        '.relay/runs/coder/001.full.md': '# coder · run 2\n\n## Answer\n\nrun two answer\n',
+      },
+      store: { 'roles:/w': { coder: { name: 'coder', runs: 2, isBusy: false } } },
+    })
+    if (!(await w.start($))) return
+    const r = String((await $.tool.call({ tool: 'mcp__relay__worker_expand', role: 'coder', run: 2 })).result)
+    expect(r).not.toContain('run two answer')
+    expect(r).toContain('its two files do not match')
+  })
+
+  test('N139: a temp file is cleared again even while the queue cannot be written', { options: WB }, async ($: any, on: any) => {
+    const w = world(on)
+    const path = '.relay/tmp/coder-1.protocol.md'
+    let writes = 0
+    let isFull = true
+    w.io.failWrite = (p: string) => (p === path && ++writes >= 2 && isFull) || (p === '.relay/queue.json' && w.submitted.length >= 1)
+    if (!(await w.start($))) return
+    await w.send($, { role: 'coder', task: 't' })
+    await w.until(() => w.submitted.length === 1)
+    expect(w.files.get(path)).not.toBe('')
+    isFull = false
+    for (let i = 0; i < 5 && w.files.get(path) !== ''; i++) await w.clock.advance(60_000)
+    expect(w.files.get(path)).toBe('')
   })
 
   test('N112: worker_status shows no worktree for werkbank', { options: WB }, async ($: any, on: any) => {
