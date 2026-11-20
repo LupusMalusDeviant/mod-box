@@ -457,10 +457,12 @@ async function loadRoleDefs($: EngineInterface, opts: { isStrict?: boolean } = {
     if (opts.isStrict) {
       const isObject = (v: unknown) => typeof v === 'object' && v !== null && !Array.isArray(v)
       const isListish = (v: unknown) => v === undefined || typeof v === 'string' || (Array.isArray(v) && v.every(x => typeof x === 'string'))
-      const bad = !isObject(map)
-        ? 'roles is no JSON object'
-        : Object.entries(map).find(([, d]) => !isObject(d) || !isListish(d.owns) || !isListish(d.allowedTools) || !isListish(d.disallowedTools))?.[0]
-      if (bad) throw new RoleFileError(`the roles file ${config.rolesFile} could not be read (${isObject(map) ? `role "${bad}" has an invalid entry` : bad})`)
+      // any invalid entry counts, also one with an empty name (N148)
+      const invalid = isObject(map)
+        ? Object.entries(map).find(([, d]) => !isObject(d) || !isListish(d.owns) || !isListish(d.allowedTools) || !isListish(d.disallowedTools))
+        : undefined
+      const bad = !isObject(map) ? 'roles is no JSON object' : invalid ? `role "${invalid[0] || '(empty name)'}" has an invalid entry` : undefined
+      if (bad !== undefined) throw new RoleFileError(`the roles file ${config.rolesFile} could not be read (${bad})`)
     }
     const defs: Record<string, RoleDef> = {}
     for (const [name, d] of Object.entries(map)) {
@@ -1383,6 +1385,8 @@ function headMeta(r: RunResult): string {
 // are passed on nowhere, since a key may open in one stream and go on in
 // another (N107).
 const KEY_HIDDEN = "(text hidden: the run's output contains a private key marker)"
+// the werkbank job states of N37 (N150)
+const KNOWN_REMOTE_STATES: readonly string[] = ['done', 'red', 'needs-approval', 'timed-out', 'limit', 'failed', 'cancelled']
 // a whole relay block, as parsePacket looks for it (N117)
 const RELAY_FENCE = /```relay\s*\n[\s\S]*?```/g
 const fencesIn = (text: string) => [...text.matchAll(RELAY_FENCE)].length
@@ -1407,6 +1411,9 @@ function withoutKeyTexts(r: RunResult): RunResult {
       // (N135)
       remote: outcome.remote && {
         ...outcome.remote,
+        // the job id is hidden, the state kept only as a known one (N150)
+        jobId: '(hidden)',
+        state: KNOWN_REMOTE_STATES.includes(outcome.remote.state) ? outcome.remote.state : 'unknown',
         ...(outcome.remote.reason ? { reason: KEY_HIDDEN } : {}),
         branch: outcome.remote.branch === `agent/relay/${r.role.name}` ? outcome.remote.branch : KEY_HIDDEN,
         ...(outcome.remote.verify ? { verify: { ...outcome.remote.verify, ...(outcome.remote.verify.command !== undefined ? { command: KEY_HIDDEN } : {}) } } : {}),
@@ -1480,7 +1487,8 @@ async function finish($: EngineInterface, raw: RunResult) {
     // N37: why the job did not end done; N38: its verify command; N40: its branch.
     const end = remoteEndLine(remote)
     if (end) packet.risks.push(end)
-    if (isRemoteFailed(remote)) packet.status = 'failed'
+    // a state relay does not know (hidden after a key marker) is failed (N150)
+    if (isRemoteFailed(remote) || remote.state === 'unknown') packet.status = 'failed'
     else if (remote.state !== 'done' && packet.status === 'done') packet.status = 'partial'
     // N48: a CLI error never leaves a job done, and is named
     if (outcome.error && !isRemoteFailed(remote)) {
@@ -1746,7 +1754,10 @@ async function keptMessageOf($: EngineInterface, job: QueuedJob): Promise<string
 // Delivers a kept message; its headline says it came after a restart (N105).
 async function deliverKept($: EngineInterface, job: QueuedJob, body: string): Promise<string | undefined> {
   const run = job.run ?? 0
-  const role = roles[job.role] ?? { name: job.role, runs: run, isBusy: false }
+  // the role is kept with at least this run, before any later task starts (N152)
+  const role = (roles[job.role] ??= { name: job.role, runs: run, isBusy: false })
+  role.runs = Math.max(role.runs, run)
+  await save($).catch(() => undefined)
   const nl = body.indexOf('\n')
   const text = nl < 0 ? `${body}${RESTART_MARK}` : `${body.slice(0, nl)}${RESTART_MARK}${body.slice(nl)}`
   const status = (/^Status: (done|partial|blocked|failed)\b/m.exec(body)?.[1] ?? 'partial') as Packet['status']
@@ -1757,6 +1768,11 @@ async function deliverKept($: EngineInterface, job: QueuedJob, body: string): Pr
 async function deliverStored($: EngineInterface, job: QueuedJob): Promise<string | undefined> {
   const role = roles[job.role]
   const run = job.run ?? 0
+  // the run number is kept before any later task starts (N152)
+  if (role && role.runs < run) {
+    role.runs = run
+    await save($).catch(() => undefined)
+  }
   // the kept message was looked for first, in recover (N97, N103); the
   // stored packet is read only when it is no link out (N108)
   const unsafe = role ? await storageProblem($, runPath(job.role, run, 'packet.json')) : undefined
@@ -2057,15 +2073,20 @@ export const register: Register = (on, options) => {
     // a slot file that belongs to another run is never shown as this one (N131)
     const otherRun = { result: `No stored report for ${role.name} run ${run} (the slot holds another run, or its two files do not match).` }
     // both files of the slot must name this run before either is shown (N138)
-    const isPairOfRun = async () => {
+    // a missing or unreadable file of the pair is named itself (N154)
+    const pairProblem = async () => {
       const p = runPath(role.name, run, 'packet.json')
       const f = runPath(role.name, run, 'full.md')
-      if ((await storageProblem($, p)) || (await storageProblem($, f))) return false
-      try {
-        return isEnvelopeRun(String(await $.fs.read(p)), run) && String(await $.fs.read(f)).startsWith(`# ${role.name} · run ${run}\n`)
-      } catch {
-        return false
+      if ((await storageProblem($, p)) || (await storageProblem($, f))) return otherRun
+      const texts: string[] = []
+      for (const path of [p, f]) {
+        try {
+          texts.push(String(await $.fs.read(path)))
+        } catch {
+          return { result: `No stored report for ${role.name} run ${run} (${path} is missing or unreadable).` }
+        }
       }
+      return isEnvelopeRun(texts[0]!, run) && texts[1]!.startsWith(`# ${role.name} · run ${run}\n`) ? undefined : otherRun
     }
     // a report file is read only when it is no link out, like before its
     // write (N99, N108)
@@ -2080,7 +2101,9 @@ export const register: Register = (on, options) => {
       if (no) return no
       try {
         const raw = String(await $.fs.read(path))
-        if (!isEnvelopeRun(raw, run) || !(await isPairOfRun())) return otherRun
+        if (!isEnvelopeRun(raw, run)) return otherRun
+        const pair = await pairProblem()
+        if (pair) return pair
         const packet = parsePacket(raw)
         if (packet) return { result: redact(renderPacket(`[relay] ${role.name} · run ${run}`, packet, runPath(role.name, run, 'full.md'), 'full')) }
       } catch {
@@ -2098,7 +2121,9 @@ export const register: Register = (on, options) => {
     } catch {
       return { result: `No stored answer for ${role.name} run ${run}.` }
     }
-    if (!text.startsWith(`# ${role.name} · run ${run}\n`) || !(await isPairOfRun())) return otherRun
+    if (!text.startsWith(`# ${role.name} · run ${run}\n`)) return otherRun
+    const pair = await pairProblem()
+    if (pair) return pair
     let out = text
     if (input.section) {
       const found = extractSection(text, input.section)
@@ -2137,7 +2162,14 @@ export const register: Register = (on, options) => {
     if (input.backend !== undefined && !isBackend(input.backend)) return { result: `Unknown backend "${input.backend}": use ${BACKEND_IDS.join(', ')}.` }
     const role: Role = roles[name] ?? { name, runs: 0, isBusy: false }
     const inFlight = role.isBusy || queue.jobs.some(j => j.role === name && j.state === 'queued')
-    const def = (await loadRoleDefs($))[name]
+    // an unreadable roles file takes no task: its backend and rules are unknown (N151)
+    let def: RoleDef | undefined
+    try {
+      def = (await loadRoleDefs($, { isStrict: true }))[name]
+    } catch (err) {
+      if (!(err instanceof RoleFileError)) throw err
+      return { result: redact(`relay takes no task now: ${message(err)}; fix it and send again.`) }
+    }
     const prior = effective(role, def)
     const backendBefore = prior.backend
     if (input.brief !== undefined) role.brief = input.brief

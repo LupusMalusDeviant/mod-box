@@ -792,6 +792,12 @@ describe('werkbank, Nachtrag 2i (ninth Codex review)', () => {
   const kept = '[relay] coder · run 1 finished (werkbank)\nStatus: done\nrun one did it'
   // since N120 the marker alone hides the answer
   const KEY_STILL_OPEN = 'answer hidden: the output contains a private key marker'
+  // a job queued earlier and waiting for its start
+  const waitingJob = {
+    version: 1,
+    owner: { session: 'old', heartbeatAt: '1970-01-01T00:00:00.000Z' },
+    jobs: [{ id: 'j_1', role: 'coder', task: 't', enqueuedAt: '1970-01-01T00:00:00.000Z', state: 'queued', backend: 'werkbank' }],
+  }
 
   test('N107: a key opened on stderr whose body is the error reaches neither packet.json nor the message', { options: WB }, async ($: any, on: any) => {
     const w = world(on)
@@ -1173,9 +1179,13 @@ describe('werkbank, Nachtrag 2i (ninth Codex review)', () => {
   })
 
   test('N137: a roles file that cannot be parsed keeps the job queued, not started without owns', { options: WB }, async ($: any, on: any) => {
-    const w = world(on, { files: { '.relay/roles.json': '{ "roles": { "coder": { "owns": ["src"] } }' } })
+    // queued while the file was fine (since N151 a send with a broken file is refused)
+    const w = world(on, {
+      files: { '.relay/queue.json': JSON.stringify(waitingJob), '.relay/roles.json': '{ "roles": { "coder": { "owns": ["src"] } }' },
+      store: { 'roles:/w': { coder: { name: 'coder', runs: 0, isBusy: false } } },
+    })
+    await w.clock.set(10 * 60_000)
     if (!(await w.start($))) return
-    await w.send($, { role: 'coder', task: 't' })
     for (let i = 0; i < 3; i++) await w.clock.advance(60_000)
     expect(w.spawns).toHaveLength(0)
     expect(await w.status($)).toContain('the roles file .relay/roles.json could not be read')
@@ -1248,9 +1258,12 @@ describe('werkbank, Nachtrag 2i (ninth Codex review)', () => {
   })
 
   test('N143: a roles file whose roles is no object keeps the job queued', { options: WB }, async ($: any, on: any) => {
-    const w = world(on, { files: { '.relay/roles.json': '{"roles":"broken"}' } })
+    const w = world(on, {
+      files: { '.relay/queue.json': JSON.stringify(waitingJob), '.relay/roles.json': '{"roles":"broken"}' },
+      store: { 'roles:/w': { coder: { name: 'coder', runs: 0, isBusy: false } } },
+    })
+    await w.clock.set(10 * 60_000)
     if (!(await w.start($))) return
-    await w.send($, { role: 'coder', task: 't' })
     for (let i = 0; i < 3; i++) await w.clock.advance(60_000)
     expect(w.spawns).toHaveLength(0)
     expect(await w.status($)).toContain('roles is no JSON object')
@@ -1305,6 +1318,86 @@ describe('werkbank, Nachtrag 2i (ninth Codex review)', () => {
     if (!(await w.start($))) return
     const r = String((await $.tool.call({ tool: 'mcp__relay__worker_expand', role: 'coder', run: 1, section: 'packet' })).result)
     expect(r).toContain('relay does not read .relay/runs/coder/001.full.md')
+  })
+
+  test('N148: an invalid roles entry with an empty name keeps the job queued', { options: WB }, async ($: any, on: any) => {
+    const w = world(on, {
+      files: { '.relay/queue.json': JSON.stringify(waitingJob), '.relay/roles.json': JSON.stringify({ roles: { '': 'broken', coder: { owns: 7 } } }) },
+      store: { 'roles:/w': { coder: { name: 'coder', runs: 0, isBusy: false } } },
+    })
+    await w.clock.set(10 * 60_000)
+    if (!(await w.start($))) return
+    for (let i = 0; i < 3; i++) await w.clock.advance(60_000)
+    expect(w.spawns).toHaveLength(0)
+    expect(await w.status($)).toContain('role "(empty name)" has an invalid entry')
+  })
+
+  test('N149: a quoted Authorization value with an escaped quote is redacted whole', { options: WB }, async ($: any, on: any) => {
+    const w = world(on)
+    w.play('quoted-auth-escaped')
+    if (!(await w.start($))) return
+    await w.send($, { role: 'coder', task: 't' })
+    await w.until(() => w.submitted.length === 1)
+    expect(w.files.get('.relay/runs/coder/live.log')).not.toContain('opaque0tail0x9')
+  })
+
+  test('N150: after a key marker the job id is hidden and an unknown state means failed', { options: WB }, async ($: any, on: any) => {
+    const w = world(on)
+    w.play('key-bad-state')
+    if (!(await w.start($))) return
+    await w.send($, { role: 'coder', task: 't' })
+    await w.until(() => w.submitted.length === 1)
+    expect(w.submitted[0]).not.toContain('opaque0job0x10')
+    expect(w.submitted[0]).not.toContain('opaque0state0x11')
+    expect(w.files.get('.relay/runs/coder/001.packet.json')).not.toContain('opaque0job0x10')
+    expect(w.submitted[0]).toContain('Status: failed')
+  })
+
+  test('N151: worker_send refuses a task while the roles file cannot be read', { options: WB }, async ($: any, on: any) => {
+    const w = world(on, { files: { '.relay/roles.json': '{ broken' } })
+    if (!(await w.start($))) return
+    const r = String((await w.send($, { role: 'coder', task: 't' })).result)
+    expect(r).toContain('relay takes no task now: the roles file .relay/roles.json could not be read')
+    expect(w.queueFile().jobs).toHaveLength(0)
+  })
+
+  test('N152: after a restart that delivered run 1, the next task gets run 2', { options: WB }, async ($: any, on: any) => {
+    const kept = '[relay] coder · run 1 finished (werkbank)\nStatus: done\nrun one did it'
+    const running = {
+      version: 1,
+      owner: { session: 'old', heartbeatAt: '1970-01-01T00:00:00.000Z' },
+      jobs: [{ id: 'j_1', role: 'coder', task: 't', enqueuedAt: '1970-01-01T00:00:00.000Z', state: 'running', run: 1, backend: 'werkbank' }],
+    }
+    const w = world(on, {
+      files: { '.relay/queue.json': JSON.stringify(running), '.relay/runs/coder/undelivered-1.md': `<!-- relay job j_1 length ${kept.length} -->\n${kept}` },
+    })
+    await w.clock.set(10 * 60_000)
+    if (!(await w.start($))) return
+    await w.until(() => w.submitted.length === 1)
+    expect(w.submitted[0]).toContain('run one did it')
+    await w.send($, { role: 'coder', task: 'next' })
+    await w.until(() => w.spawns.length === 1)
+    const a = w.spawns[0]!.argv
+    expect(a[a.indexOf('--run') + 1]).toBe('2')
+  })
+
+  test('N153: a split --key option in werkbankBin runs nothing', { options: { ...WB, werkbankBin: '["werkbank-relay","--key","opaque0value0x12"]' } }, async ($: any, on: any) => {
+    const w = world(on)
+    if (!(await w.start($))) return
+    await w.send($, { role: 'coder', task: 't' })
+    await w.until(() => w.submitted.length === 1)
+    expect(w.spawns).toHaveLength(0)
+    expect(w.runs.some((r: { argv: string[] }) => r.argv.includes('opaque0value0x12'))).toBe(false)
+  })
+
+  test('N154: worker_expand names a missing companion file', { options: WB }, async ($: any, on: any) => {
+    const w = world(on, {
+      files: { '.relay/runs/coder/001.packet.json': JSON.stringify({ run: 1, backend: 'werkbank', usage: {}, status: 'done', summary: 'x' }) },
+      store: { 'roles:/w': { coder: { name: 'coder', runs: 1, isBusy: false } } },
+    })
+    if (!(await w.start($))) return
+    const r = String((await $.tool.call({ tool: 'mcp__relay__worker_expand', role: 'coder', run: 1, section: 'packet' })).result)
+    expect(r).toContain('.relay/runs/coder/001.full.md is missing or unreadable')
   })
 
   test('N112: worker_status shows no worktree for werkbank', { options: WB }, async ($: any, on: any) => {

@@ -122,6 +122,12 @@ export type Scenario =
   | 'key-session-model'
   // werkbank-relay: a quoted Authorization value on stderr (N142)
   | 'quoted-auth'
+  // werkbank-relay: quoted Authorization values with an escaped quote inside,
+  // plain and as JSON (N149)
+  | 'quoted-auth-escaped'
+  // werkbank-relay: a key marker on stderr, placeholders in jobId and state
+  // (N150)
+  | 'key-bad-state'
 
 export type Call = { argv: string[]; cwd?: string; env: Record<string, string>; input?: string; attachment?: string; protocolFile?: string }
 
@@ -511,6 +517,16 @@ export function fakeWorld(
       if (scenario === 'quoted-auth') {
         yield { stream: 'stderr', text: '{"Authorization": "opaque0value0x8"}\n' }
         yield { stream: 'stdout', text: JSON.stringify({ jobId: WERKBANK_JOB, state: 'done', answer: PACKET(), sessionId: 'fsn1-5:9b1f', branch: `agent/relay/${role}`, commits: [], changedFiles: [] }) }
+        return { value: { code: 0, signal: null } }
+      }
+      if (scenario === 'quoted-auth-escaped') {
+        yield { stream: 'stderr', text: 'Authorization: "a\\"opaque0tail0x9"\n{"Authorization": "b\\"opaque0tail0x9"}\n' }
+        yield { stream: 'stdout', text: JSON.stringify({ jobId: WERKBANK_JOB, state: 'done', answer: PACKET(), sessionId: 'fsn1-5:9b1f', branch: `agent/relay/${role}`, commits: [], changedFiles: [] }) }
+        return { value: { code: 0, signal: null } }
+      }
+      if (scenario === 'key-bad-state') {
+        yield { stream: 'stderr', text: `${KEY_LINES[0]}\n` }
+        yield { stream: 'stdout', text: JSON.stringify({ jobId: 'opaque0job0x10', state: 'opaque0state0x11', answer: 'x', sessionId: 'fsn1-5:9b1f', branch: `agent/relay/${role}`, commits: [WERKBANK_COMMIT], changedFiles: [] }) }
         return { value: { code: 0, signal: null } }
       }
       if (scenario === 'key-split-fragment') {

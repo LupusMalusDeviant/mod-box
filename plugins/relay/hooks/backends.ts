@@ -536,7 +536,8 @@ export const isSafeSession = (id: string) => isSafeId(id) && redact(id) === id
 // run nor the version probe starts (N82).
 // Also over argument borders: the joined list, and no option whose name looks
 // like a credential, so `--token <value>` never passes (N122).
-const CREDENTIAL_OPTION = /^-{1,2}[^=\s]*(token|secret|password|passwd|auth|credential|bearer|cookie|apikey|api-key|api_key)/i
+// also key and names ending in _key, -key or .key, as in N142 (N153)
+const CREDENTIAL_OPTION = /^-{1,2}[^=\s]*(token|secret|password|passwd|auth|credential|bearer|cookie|apikey|api-key|api_key|(?<![A-Za-z])key(?![A-Za-z]))/i
 export const isWerkbankBinSafe = (bin: readonly string[]) =>
   bin.every(p => redact(p) === p) && redact(bin.join(' ')) === bin.join(' ') && !bin.some(p => CREDENTIAL_OPTION.test(p.trim()))
 

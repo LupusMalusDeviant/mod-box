@@ -531,7 +531,14 @@ function redactKeyValue(match: string, name: string, sep: string, value: string)
 const SECRET_PATTERNS: [RegExp, string | ((...args: string[]) => string)][] = [
   // `"Authorization": "Bearer x"`, `Authorization: "x"`: the whole quoted
   // value goes (N142)
-  [/(\\?["']?\b(?:proxy-)?authorization\\?["']?\s*[:=]\s*)(\\?["'])(?:(?!\2)[^\r\n])*\2/gi, `$1$2${SECRET}$2`],
+  // read with its escapes, so a \" inside does not end it (N149)
+  [
+    /(\\?["']?\b(?:proxy-)?authorization\\?["']?\s*[:=]\s*)(\\"(?:\\\\\\"|[^"\\]|\\\\|\\[^"\\])*\\"|"(?:[^"\\\r\n]|\\.)*"|'(?:[^'\\\r\n]|\\.)*')/gi,
+    ((_m: string, head: string, value: string) => {
+      const quote = value.startsWith('\\"') ? '\\"' : value[0]!
+      return `${head}${quote}${SECRET}${quote}`
+    }) as (...args: string[]) => string,
+  ],
   // `Authorization: Bearer x`, `Proxy-Authorization: Basic x`
   [/\b((?:proxy-)?authorization)(\s*[:=]\s*)(?:(bearer|basic|token|digest)\s+)?[^\s"'\\,;]+/gi, `$1$2$3 ${SECRET}`],
   [/\b(bearer|basic)\s+[A-Za-z0-9._~+/=-]{8,}/gi, `$1 ${SECRET}`],
