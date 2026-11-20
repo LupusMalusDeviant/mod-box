@@ -648,7 +648,14 @@ const werkbank: Backend = {
     // job id (N90)
     const rawJobId = typeof json.jobId === 'number' && Number.isSafeInteger(json.jobId) && json.jobId >= 0 ? String(json.jobId) : str(json.jobId)
     const jobId = rawJobId?.trim() ? oneLine(rawJobId) : undefined
-    const state = oneLine(str(json.state)) ?? 'unknown'
+    // state and branch count only as the JSON gives them: a value the display
+    // form changes (redaction, written-out escapes, spaces, the cut) is marked,
+    // so it never equals a known state or the role's branch (N191)
+    const exact = (s: string | undefined) => {
+      const shown = oneLine(s)
+      return shown === undefined || shown === s ? shown : `${shown} (not exact)`
+    }
+    const state = exact(str(json.state)) ?? 'unknown'
     const strings = (v: unknown) => (Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : [])
     let remote: RemoteRun | undefined
     if (jobId) {
@@ -660,7 +667,7 @@ const werkbank: Backend = {
       remote = {
         jobId,
         state,
-        branch: oneLine(str(json.branch)) ?? '',
+        branch: exact(str(json.branch)) ?? '',
         commits,
         ...(rawCommits.length > commits.length ? { malformedCommits: rawCommits.length - commits.length } : {}),
         // A list with anything but non-empty strings is malformed, never a short list (N49).

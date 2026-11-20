@@ -518,7 +518,7 @@ const isCount = (value: string) => /^[\d.,]+[kKmMbB]?$/.test(value)
 // except the count of a counter name (contract 0001, Nachtrag 1, N18).
 const KEY_NAME =
   String.raw`[A-Za-z0-9_.-]*(?:api[_-]?key|apikey|secret|token|passwd|password|access[_-]?key|private[_-]?key|credential|session[_-]?key|(?<![A-Za-z])key(?![A-Za-z]))[A-Za-z0-9_.-]*`
-// a quote around the name may be escaped, also as " (N166)
+// a quote around the name may be escaped, also as \u0022 (N166)
 const KEY_SEP = String.raw`(?:\\u0022|\\?["'])?\s*[:=]\s*`
 // name and separator, the value read by quotedValue (N156)
 const KEY_HEAD = new RegExp(String.raw`\b(${KEY_NAME})(${KEY_SEP})`, 'gi')
@@ -526,7 +526,7 @@ const KEY_HEAD = new RegExp(String.raw`\b(${KEY_NAME})(${KEY_SEP})`, 'gi')
 // it ends before } ] ) too, so JSON around it stays whole (N187)
 const KEY_VALUE = new RegExp(String.raw`\b(${KEY_NAME})(${KEY_SEP})([^\s"'&,;\\}\])]+)`, 'gi')
 // `"Authorization": "x"`, `Authorization: "x"`, also once escaped, with \"
-// or " (N142, N149, N166)
+// or \u0022 (N142, N149, N166)
 const AUTH_HEAD = /((?:\\u0022|\\?["'])?(?<![A-Za-z])(?:proxy-)?authorization(?:\\u0022|\\?["'])?\s*[:=]\s*)/gi
 
 function redactKeyValue(match: string, name: string, sep: string, value: string): string {
@@ -550,7 +550,7 @@ function decodeNameEscapes(text: string): string {
 // "…" and '…' with \ escaping the next character, and once-escaped JSON \"…\"
 // read as it would be after one decoding. Undefined when nothing quoted
 // starts there; isClosed false when it runs to the line or text end (N156).
-// The value itself is text[start, stop); its quotes stay as written, "
+// The value itself is text[start, stop); its quotes stay as written, \u0022
 // too (N166).
 type Quoted = { start: number; stop: number; end: number; isClosed: boolean }
 export function quotedValue(text: string, at: number): Quoted | undefined {
@@ -581,7 +581,7 @@ export function quotedValue(text: string, at: number): Quoted | undefined {
       }
       if (isEscaped) isEscaped = false
       else if (c === '\\') isEscaped = true
-      // the closing quote keeps its own width, \" or " (N166)
+      // the closing quote keeps its own width, \" or \u0022 (N166)
       else if (c === '"') return { start, stop: i, end: i + width, isClosed: true }
       i += width
     }
@@ -602,7 +602,39 @@ export function quotedValue(text: string, at: number): Quoted | undefined {
   return { start, stop: text.length, end: text.length, isClosed: false }
 }
 
-// Replaces the quoted value after each match of `head` (N156).
+// Where an unquoted JSON value that starts at `at` ends: a list or object up
+// to its matching bracket (brackets inside strings do not count; without
+// one, the line end), else a scalar up to , } ] ) or space (N192).
+function jsonValueEnd(text: string, at: number): number {
+  const c = text[at]
+  if (c !== '[' && c !== '{') {
+    const scalar = /^[^\s,}\])"'\\]+/.exec(text.slice(at))
+    return scalar ? at + scalar[0].length : at
+  }
+  let depth = 0
+  let isInString = false
+  for (let i = at; i < text.length; i++) {
+    const d = text[i]
+    if (d === '\n' || d === '\r') return i
+    if (d === '\\') {
+      i++
+      continue
+    }
+    if (d === '"') isInString = !isInString
+    else if (!isInString && (d === '[' || d === '{')) depth++
+    else if (!isInString && (d === ']' || d === '}') && --depth === 0) return i + 1
+  }
+  return text.length
+}
+
+// The quote that closed a JSON name before its separator, if any (N187, N192).
+function nameQuote(head: string): string | undefined {
+  const m = /(\\u0022|\\"|")\s*[:=]\s*$/i.exec(head)
+  return m ? m[1] : undefined
+}
+
+// Replaces the quoted value after each match of `head` (N156); after a quoted
+// JSON name an unquoted value goes whole too, as a string (N192).
 function redactQuoted(text: string, head: RegExp, keep?: (name: string, value: string) => boolean): string {
   let out = ''
   let last = 0
@@ -610,6 +642,16 @@ function redactQuoted(text: string, head: RegExp, keep?: (name: string, value: s
   for (let m = head.exec(text); m; m = head.exec(text)) {
     const at = m.index + m[0].length
     const v = at >= last ? quotedValue(text, at) : undefined
+    const q = !v && at >= last ? nameQuote(m[0]) : undefined
+    if (q !== undefined) {
+      const end = jsonValueEnd(text, at)
+      if (end > at && !keep?.(m[1] ?? '', text.slice(at, end))) {
+        out += `${text.slice(last, at)}${q}${SECRET}${q}`
+        last = end
+        head.lastIndex = end
+        continue
+      }
+    }
     if (!v || keep?.(m[1] ?? '', text.slice(at, v.end))) {
       if (m[0].length === 0) head.lastIndex++
       continue
@@ -656,6 +698,11 @@ function redactKeys(text: string): string {
   let out = text
   for (const [from, to] of spans.reverse()) out = `${out.slice(0, from)}${SECRET} private key${out.slice(to)}`
   return out
+}
+
+// Whether the redaction removes anything beyond writing escapes out (N195).
+export function hasCredential(text: string): boolean {
+  return redact(text) !== decodeNameEscapes(text)
 }
 
 export function redact(text: string): string {

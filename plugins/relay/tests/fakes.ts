@@ -135,10 +135,10 @@ export type Scenario =
   // inside and an Authorization value ending in a backslash (N156)
   | 'quoted-escaped-json'
   // werkbank-relay: once-escaped JSON on stderr whose key value holds a
-  // \ before a quote (N160)
+  // \u005c before a quote (N160)
   | 'quoted-unicode-escape'
   // werkbank-relay: once-escaped JSON on stderr whose values are quoted with
-  // " (N166)
+  // \u0022 (N166)
   | 'quoted-unicode-quotes'
   // werkbank-relay: a failed job whose usage.model holds a line break and a
   // Status: done line (N168)
@@ -169,12 +169,19 @@ export type Scenario =
   // werkbank-relay: the job id as a whole number, and as a fraction (N183)
   | 'numeric-job'
   | 'fraction-job'
-  // werkbank-relay: a credential name escaped as w on stderr (N185)
+  // werkbank-relay: a credential name escaped as \u0077 on stderr (N185)
   | 'escaped-name'
   // werkbank-relay: a packet with an extra numeric password field (N187)
   | 'packet-numeric-password'
   // werkbank-relay: a key marker on stderr, then it hangs (N190)
   | 'key-then-hang'
+  // werkbank-relay: a state that reads done once an escaped o is written out
+  // (N191)
+  | 'escaped-done-state'
+  // werkbank-relay: unquoted JSON credential values on stderr (N192)
+  | 'json-unquoted-credentials'
+  // werkbank-relay: a packet with a password list (N192)
+  | 'packet-password-list'
 
 export type Call = { argv: string[]; cwd?: string; env: Record<string, string>; input?: string; attachment?: string; protocolFile?: string }
 
@@ -195,6 +202,9 @@ export const WERKBANK_TOKEN_SESSION = 'token:abcdef0123456789abcd'
 // Placeholder credentials (no real ones) the leak scenarios put into every
 // output channel, in the forms relay redacts: Authorization header,
 // key=value, user:password in a URL.
+// A JSON escape as text: a backslash, u and four hex digits (N191, N195).
+export const ESC = (hex: string) => `${String.fromCharCode(92)}u${hex}`
+
 export const SECRETS = {
   bearer: 'example-bearer-value-0001',
   token: 'example-token-value-0002',
@@ -619,6 +629,20 @@ export function fakeWorld(
       }
       if (scenario === 'packet-numeric-password') {
         const answer = ['## Work', 'Done.', '```relay', '{"status":"done","summary":"Did it.","facts":["fact0x27"],"sections":["Work"],"password":123}', '```'].join('\n')
+        yield { stream: 'stdout', text: JSON.stringify({ jobId: WERKBANK_JOB, state: 'done', answer, sessionId: 'fsn1-5:9b1f', branch: `agent/relay/${role}`, commits: [], changedFiles: [] }) }
+        return { value: { code: 0, signal: null } }
+      }
+      if (scenario === 'escaped-done-state') {
+        yield { stream: 'stdout', text: JSON.stringify({ jobId: WERKBANK_JOB, state: `d${ESC('006f')}ne`, answer: PACKET(), sessionId: 'fsn1-5:9b1f', branch: `agent/relay/${role}`, commits: [], changedFiles: [] }) }
+        return { value: { code: 0, signal: null } }
+      }
+      if (scenario === 'json-unquoted-credentials') {
+        yield { stream: 'stderr', text: '{"Authorization":834291}\n{"password":[572913,640185],"next":1}\n' }
+        yield { stream: 'stdout', text: JSON.stringify({ jobId: WERKBANK_JOB, state: 'done', answer: PACKET(), sessionId: 'fsn1-5:9b1f', branch: `agent/relay/${role}`, commits: [], changedFiles: [] }) }
+        return { value: { code: 0, signal: null } }
+      }
+      if (scenario === 'packet-password-list') {
+        const answer = ['## Work', 'Done.', '```relay', '{"status":"done","summary":"Did it.","facts":["fact0x30"],"sections":["Work"],"password":[572913,{"a":"]"}]}', '```'].join('\n')
         yield { stream: 'stdout', text: JSON.stringify({ jobId: WERKBANK_JOB, state: 'done', answer, sessionId: 'fsn1-5:9b1f', branch: `agent/relay/${role}`, commits: [], changedFiles: [] }) }
         return { value: { code: 0, signal: null } }
       }

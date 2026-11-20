@@ -1,7 +1,7 @@
 // The werkbank backend with a fake werkbank-relay (contract 0001, Nachtrag 2).
 import { describe, expect, test } from 'claude-code/testing'
 import { protocolPrompt } from '../hooks/protocol.ts'
-import { fakeWorld, KEY_BODY, MISMATCHED_BODY, SECRETS, WERKBANK_JOB, type Scenario } from './fakes.ts'
+import { ESC, fakeWorld, KEY_BODY, MISMATCHED_BODY, SECRETS, WERKBANK_JOB, type Scenario } from './fakes.ts'
 
 const WB = { defaultBackend: 'werkbank' }
 const HOME = { USERPROFILE: 'C:/Users/u', OS: 'Windows_NT' }
@@ -1889,6 +1889,96 @@ describe('werkbank, Nachtrag 2i (ninth Codex review)', () => {
     await w.until(() => w.submitted.length === 1)
     const lines = (w.files.get('.relay/runs/coder/live.log') ?? '').trim().split('\n')
     expect(lines[lines.length - 1]).toContain('stopped (timeout); answer hidden: a private key marker was in the output')
+  })
+
+  test('N191: a state that reads done only once an escape is written out is failed', { options: WB }, async ($: any, on: any) => {
+    const w = world(on)
+    w.play('escaped-done-state')
+    if (!(await w.start($))) return
+    await w.send($, { role: 'coder', task: 't' })
+    await w.until(() => w.submitted.length === 1)
+    expect(w.submitted[0]).toContain('Status: failed')
+  })
+
+  test('N192: unquoted JSON credential values go whole, lists too', { options: WB }, async ($: any, on: any) => {
+    const w = world(on)
+    w.play('json-unquoted-credentials')
+    if (!(await w.start($))) return
+    await w.send($, { role: 'coder', task: 't' })
+    await w.until(() => w.submitted.length === 1)
+    const log = w.files.get('.relay/runs/coder/live.log') ?? ''
+    for (const v of ['834291', '572913', '640185']) expect(log).not.toContain(v)
+    expect(log).toContain('"next":1')
+  })
+
+  test('N192: a packet with a password list stays valid', { options: WB }, async ($: any, on: any) => {
+    const w = world(on)
+    w.play('packet-password-list')
+    if (!(await w.start($))) return
+    await w.send($, { role: 'coder', task: 't' })
+    await w.until(() => w.submitted.length === 1)
+    expect(w.submitted[0]).toContain('Status: done')
+    expect(w.submitted[0]).toContain('fact0x30')
+    expect(w.submitted[0]).not.toContain('572913')
+  })
+
+  test('N192: a --model with a JSON Authorization number is not passed on', { options: WB }, async ($: any, on: any) => {
+    const w = world(on)
+    if (!(await w.start($))) return
+    await w.send($, { role: 'coder', task: 't', model: '"Authorization":834291' })
+    await w.until(() => w.submitted.length === 1)
+    expect(w.spawns).toHaveLength(0)
+    expect(w.submitted[0]).toContain('a value for --model looks like a credential')
+  })
+
+  test('N193: neither queue.json nor its backup keeps a left-out credential id', { options: WB }, async ($: any, on: any) => {
+    const q = runningJob(1)
+    const bad = { ...q.jobs[0]!, id: `access_token=${SECRETS.token}` }
+    const gh = { ...q.jobs[0]!, id: `j_ghp_${'A'.repeat(36)}`, state: 'queued', run: undefined }
+    const w = world(on, {
+      files: { '.relay/queue.json': JSON.stringify({ ...q, jobs: [bad, gh] }) },
+      store: { 'roles:/w': { coder: { name: 'coder', runs: 1, isBusy: false } } },
+    })
+    await w.clock.set(10 * 60_000)
+    if (!(await w.start($))) return
+    await w.send($, { role: 'coder', task: 'next' })
+    await w.until(() => w.spawns.length === 1)
+    expect(await w.status($)).toContain('relay left out 2 job(s)')
+    for (const path of ['.relay/queue.json', '.relay/queue.json.bak']) {
+      expect(w.files.get(path) ?? '').not.toContain(SECRETS.token)
+      expect(w.files.get(path) ?? '').not.toContain('ghp_')
+    }
+  })
+
+  test('N194: a role with no safe next run number does not hold up the others', { options: { ...WB, maxParallel: 3 } }, async ($: any, on: any) => {
+    const job = (id: string, role: string) => ({ id, role, task: 't', enqueuedAt: '1970-01-01T00:00:00.000Z', state: 'queued', backend: 'werkbank' })
+    const w = world(on, {
+      files: { '.relay/queue.json': JSON.stringify({ version: 1, jobs: [job('j_x', 'full'), job('j_y', 'fresh')] }) },
+      store: { 'roles:/w': { full: { name: 'full', runs: Number.MAX_SAFE_INTEGER, isBusy: false }, fresh: { name: 'fresh', runs: 0, isBusy: false } } },
+    })
+    if (!(await w.start($))) return
+    await w.until(() => w.spawns.length === 1)
+    const a = w.spawns[0]!.argv
+    expect(a[a.indexOf('--role') + 1]).toBe('fresh')
+    expect(await w.status($)).toContain('full has no safe next run number')
+  })
+
+  test('N195: a brief with an escape but no credential stays in argv as it is', async ($: any, on: any) => {
+    const w = world(on)
+    if (!(await w.start($))) return
+    const brief = `Write a${ESC('0042')}c literally.`
+    await w.send($, { role: 'docs', task: 'the task', brief })
+    await w.until(() => w.spawns.length === 1)
+    const a = w.spawns[0]!.argv
+    expect(a[a.indexOf('--append-system-prompt') + 1]).toContain(brief)
+    expect(w.spawns[0]!.input ?? '').not.toContain('kept off the command line')
+  })
+
+  test('N196: jobs whose id is no text are left out and counted', { options: WB }, async ($: any, on: any) => {
+    const base = { role: 'coder', task: 't', enqueuedAt: '1970-01-01T00:00:00.000Z', state: 'queued', backend: 'werkbank' }
+    const w = world(on, { files: { '.relay/queue.json': JSON.stringify({ version: 1, jobs: [{ ...base, id: null }, { ...base, id: 7 }, { ...base }] }) } })
+    if (!(await w.start($))) return
+    expect(await w.status($)).toContain('relay left out 3 job(s)')
   })
 
   test('N112: worker_status shows no worktree for werkbank', { options: WB }, async ($: any, on: any) => {

@@ -59,8 +59,11 @@ const isSafeJob = (j: QueuedJob) =>
   typeof j.role === 'string' &&
   ROLE_NAME.test(j.role) &&
   (j.run === undefined || isRunNumber(j.run)) &&
+  // a text id, checked whole and after its j_ too (N189, N193, N196)
+  typeof j.id === 'string' &&
   JOB_ID.test(j.id) &&
-  redact(j.id) === j.id
+  redact(j.id) === j.id &&
+  redact(j.id.slice(2)) === j.id.slice(2)
 
 // The queue in the text plus the number of jobs dropped as unsafe;
 // undefined when the text is not a queue file.
@@ -71,8 +74,9 @@ function readQueueText(text: string | undefined): { queue: QueueFile; dropped: n
     if (v?.version !== 1 || !Array.isArray(v.jobs)) return undefined
     const jobs = v.jobs.filter(
       (j): j is QueuedJob =>
-        // the role is judged by isSafeJob, so a bad one is counted (N93)
-        !!j && typeof j.id === 'string' && typeof j.task === 'string' && (j.state === 'queued' || j.state === 'running'),
+        // the role and the id are judged by isSafeJob, so a bad one is
+        // counted (N93, N196)
+        !!j && typeof j.task === 'string' && (j.state === 'queued' || j.state === 'running'),
     )
     const safe = jobs.filter(isSafeJob)
     const owner =

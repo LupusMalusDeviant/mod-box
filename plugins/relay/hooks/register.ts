@@ -47,6 +47,7 @@ import {
   remoteWriteCheck,
   toProjectPath,
   protocolPrompt,
+  hasCredential,
   redact,
   redactDeep,
   safeRelayDir,
@@ -173,6 +174,8 @@ let queueError: string | undefined
 let dispatchError: string | undefined
 let session = ''
 let lastQueueText: string | undefined
+// what the next write keeps as queue.json.bak (N193)
+let lastBackupText: string | undefined
 let notices: string[] = []
 let configNotes: string[] = []
 let heartbeat: { cancel: () => void } | undefined
@@ -243,18 +246,22 @@ async function readQueue($: EngineInterface) {
 
 // Takes a queue as read: only a main file that parsed may become the backup
 // of the next write, never an empty or broken one over a good .bak.
+// The backup is the checked queue as relay writes it, never the raw text,
+// so a job left out as unsafe never reaches it (N193).
 function adopt(loaded: Awaited<ReturnType<typeof readQueue>>) {
   queue = loaded.queue
   lastQueueText = loaded.isBroken || loaded.isFromBackup ? undefined : loaded.text
+  lastBackupText = lastQueueText !== undefined || loaded.dropped ? serializeQueue(loaded.queue) : undefined
 }
 
 async function writeQueueText($: EngineInterface) {
   await ensureGitignore($)
   const text = serializeQueue(queue)
   if (text === lastQueueText) return
-  if (lastQueueText !== undefined) await $.fs.write(relayPath('queue.json.bak'), lastQueueText)
+  if (lastBackupText !== undefined) await $.fs.write(relayPath('queue.json.bak'), lastBackupText)
   await $.fs.write(relayPath('queue.json'), text)
   lastQueueText = text
+  lastBackupText = text
 }
 
 function stepDown(who: string) {
@@ -857,6 +864,8 @@ async function writeCheckOf($: EngineInterface, owns: string[], dir: string, bef
 // a time; a call while one runs makes it look again before it ends.
 let pumping: Promise<void> | undefined
 let isPumpAsked = false
+// roles already named as having no safe next run number (N194)
+const exhaustedNoted = new Set<string>()
 // true while the restart handles the interrupted runs (N167)
 let isRecovering = false
 function pump($: EngineInterface): Promise<void> {
@@ -889,8 +898,19 @@ async function pumpOnce($: EngineInterface) {
       if (!roles[j.role] && defs[j.role]) roles[j.role] = { name: j.role, runs: 0, isBusy: false }
     }
   }
+  // a role with no safe next run number is skipped, named once, and the
+  // others still start (N188, N194)
+  for (const j of queued()) {
+    const r = roles[j.role]
+    if (r && !isRunNumber(r.runs + 1) && !exhaustedNoted.has(r.name)) {
+      exhaustedNoted.add(r.name)
+      dispatchError = `${r.name} has no safe next run number (${r.runs} runs counted)`
+      notices.push(redact(`relay did not start ${r.name}: ${dispatchError}; its jobs stay queued.`))
+    }
+  }
+  const isStartable = (j: QueuedJob) => j.state === 'queued' && !!roles[j.role] && !roles[j.role]?.isBusy && isRunNumber(roles[j.role]!.runs + 1)
   while (isOwner && running < Math.max(1, config.maxParallel)) {
-    const candidate = queue.jobs.find(j => j.state === 'queued' && roles[j.role] && !roles[j.role]?.isBusy)
+    const candidate = queue.jobs.find(isStartable)
     if (!candidate) break
     // the roles file is checked and the start time taken before anything is
     // reserved, so no heartbeat writes a job as running before (N162); a roles
@@ -909,16 +929,10 @@ async function pumpOnce($: EngineInterface) {
     }
     // looked for again after the awaits; reserved with no await in between:
     // the job, its role and the slot
-    const job = queue.jobs.find(j => j.state === 'queued' && roles[j.role] && !roles[j.role]?.isBusy)
+    const job = queue.jobs.find(isStartable)
     const role = job && roles[job.role]
     if (!isOwner || !job || !role || running >= Math.max(1, config.maxParallel)) break
     const run = role.runs + 1
-    // a next run number outside the safe range starts nothing (N188)
-    if (!isRunNumber(run)) {
-      dispatchError = `${role.name} has no safe next run number (${role.runs} runs counted)`
-      notices.push(redact(`relay did not start ${role.name}: ${dispatchError}; the job stays queued.`))
-      break
-    }
     role.isBusy = true
     role.runs = run
     running++
@@ -1016,8 +1030,9 @@ async function start($: EngineInterface, job: QueuedJob, role: Role, run: number
         const isNew = role.sessionId === undefined || sessionBackendOf(role) !== id || isMoved
         // A brief that holds credentials stays out of argv (N20): the system
         // prompt gets it redacted, the task (stdin or file) carries it whole.
+        // written-out escapes alone do not count as a credential (N195)
         const safeBrief = redact(eff.brief)
-        const isBriefPrivate = safeBrief !== eff.brief
+        const isBriefPrivate = hasCredential(eff.brief)
         const spec: LaunchSpec = {
           role: role.name,
           run,
@@ -2165,6 +2180,7 @@ export const register: Register = (on, options) => {
     else {
       queue = emptyQueue()
       lastQueueText = undefined
+      lastBackupText = undefined
     }
     await save($)
 
