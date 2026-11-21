@@ -195,6 +195,9 @@ export type Scenario =
   | 'nul-file'
   // claude: an answer with a private key marker (N203)
   | 'claude-key'
+  // werkbank-relay: credential names that end their line, the values on the
+  // next lines (N204)
+  | 'pending-password'
 
 export type Call = { argv: string[]; cwd?: string; env: Record<string, string>; input?: string; attachment?: string; protocolFile?: string }
 
@@ -679,6 +682,12 @@ export function fakeWorld(
       if (scenario === 'key-deep-escape') {
         const deep = KEY_LINES[0].replace(/-/g, `${String.fromCharCode(92).repeat(8)}u002d`)
         yield { stream: 'stderr', text: `${deep}\n${KEY_BODY}\n` }
+        yield { stream: 'stdout', text: JSON.stringify({ jobId: WERKBANK_JOB, state: 'done', answer: PACKET(), sessionId: 'fsn1-5:9b1f', branch: `agent/relay/${role}`, commits: [], changedFiles: [] }) }
+        return { value: { code: 0, signal: null } }
+      }
+      if (scenario === 'pending-password') {
+        const text = ['{"password":', '', '  [', '  "opaque0pw0x40",', '  {"inner": "opaque0pw0x41"}', '], "next": 1}', '{"api_key":', '  "opaque0pw0x42", "keep": "after0x43"}', '']
+        yield { stream: 'stderr', text: text.join('\n') }
         yield { stream: 'stdout', text: JSON.stringify({ jobId: WERKBANK_JOB, state: 'done', answer: PACKET(), sessionId: 'fsn1-5:9b1f', branch: `agent/relay/${role}`, commits: [], changedFiles: [] }) }
         return { value: { code: 0, signal: null } }
       }

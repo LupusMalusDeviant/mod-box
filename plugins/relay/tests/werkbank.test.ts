@@ -2093,6 +2093,107 @@ describe('werkbank, Nachtrag 2i (ninth Codex review)', () => {
     expect(log).not.toContain(KEY_BODY)
   })
 
+  test('N204: a credential name at the line end has its value replaced on the next lines', { options: WB }, async ($: any, on: any) => {
+    const w = world(on)
+    w.play('pending-password')
+    if (!(await w.start($))) return
+    await w.send($, { role: 'coder', task: 't' })
+    await w.until(() => w.submitted.length === 1)
+    const log = w.files.get('.relay/runs/coder/live.log') ?? ''
+    for (const v of ['opaque0pw0x40', 'opaque0pw0x41', 'opaque0pw0x42']) expect(log).not.toContain(v)
+    expect(log).toContain('after0x43')
+  })
+
+  test('N205: queue.json is checked again right before its own write', { options: WB }, async ($: any, on: any) => {
+    const w = world(on)
+    if (!(await w.start($))) return
+    await w.send($, { role: 'coder', task: 'first' })
+    await w.until(() => w.submitted.length === 1)
+    const before = w.files.get('.relay/queue.json')
+    // queue.json turns into a link while the backup is written
+    w.io.writeDelay = (p: string) => {
+      if (p === '.relay/queue.json.bak') w.links.set('.relay/queue.json', '/elsewhere/.relay/queue.json')
+      return 0
+    }
+    const r = await w.send($, { role: 'coder', task: 'second0x44' })
+    expect(JSON.stringify(r)).toContain('task not accepted')
+    expect(w.files.get('.relay/queue.json')).toBe(before)
+  })
+
+  test('N206: a link at a case probe file stops the probe', async ($: any, on: any) => {
+    const w = world(on, { files: { '.relay/tmp/keep': '' } })
+    w.links.set('.relay/tmp/case-probe', '/elsewhere/case-probe')
+    if (!(await w.start($))) return
+    expect(w.files.has('.relay/tmp/case-probe')).toBe(false)
+  })
+
+  test('N206: a link at the snapshot file: it is not written, the run still checks', async ($: any, on: any) => {
+    const w = world(on, { files: { '.relay/tmp/keep': '' } })
+    w.links.set('.relay/tmp/docs-1.snapshot.json', '/elsewhere/snapshot.json')
+    if (!(await w.start($))) return
+    w.during(() => w.git.status.push({ code: '??', path: 'other/x.md', hash: 'h7' }))
+    await w.send($, { role: 'docs', task: 't', owns: ['src/'] })
+    await w.until(() => w.submitted.length === 1)
+    expect(w.files.has('.relay/tmp/docs-1.snapshot.json')).toBe(false)
+    expect(w.submitted[0]).toContain('wrote outside owns: other/x.md')
+  })
+
+  test('N206: an interrupted run whose snapshot file is a link has an incomplete check', async ($: any, on: any) => {
+    const job = { id: 'j_1', role: 'docs', task: 't', enqueuedAt: '1970-01-01T00:00:00.000Z', state: 'running', run: 1, backend: 'claude' }
+    const w = world(on, {
+      files: { '.relay/queue.json': JSON.stringify({ version: 1, jobs: [job] }), '.relay/tmp/keep': '' },
+      store: { 'roles:/w': { docs: { name: 'docs', runs: 1, isBusy: true } } },
+    })
+    w.links.set('.relay/tmp/docs-1.snapshot.json', '/elsewhere/snapshot.json')
+    await w.clock.set(10 * 60_000)
+    if (!(await w.start($))) return
+    await w.until(() => w.submitted.length === 1)
+    expect(w.submitted[0]).toContain('⚠ write check incomplete')
+    expect(w.submitted[0]).toContain('the snapshot of the run was not read')
+  })
+
+  test('N207: a file named __proto__ counts like any other in the write check', async ($: any, on: any) => {
+    const w = world(on)
+    if (!(await w.start($))) return
+    w.during(() => w.git.status.push({ code: '??', path: '__proto__', hash: 'h8' }))
+    await w.send($, { role: 'docs', task: 't', owns: ['src/'] })
+    await w.until(() => w.submitted.length === 1)
+    expect(w.submitted[0]).toContain('wrote outside owns: __proto__')
+  })
+
+  test('N208: a kept message that cannot be read once keeps the job and reports nothing', { options: WB }, async ($: any, on: any) => {
+    const message = '[relay] coder · run 1 finished (werkbank)\nStatus: done\nrun one did it'
+    const file = `<!-- relay job j_1 length ${message.length} -->\n${message}`
+    const w = world(on, {
+      files: { '.relay/queue.json': JSON.stringify(runningJob(1)), '.relay/runs/coder/undelivered-1.md': file },
+      store: { 'roles:/w': { coder: { name: 'coder', runs: 1, isBusy: true } } },
+    })
+    let failures = 1
+    w.io.failRead = (p: string) => p === '.relay/runs/coder/undelivered-1.md' && failures-- > 0
+    await w.clock.set(10 * 60_000)
+    if (!(await w.start($))) return
+    await w.until(() => false, 20)
+    expect(w.submitted).toHaveLength(0)
+    expect(w.files.get('.relay/runs/coder/undelivered-1.md')).toBe(file)
+    expect(w.files.get('.relay/queue.json') ?? '').toContain('"j_1"')
+    expect(await w.status($)).toContain('the kept message could not be read')
+  })
+
+  test('N209: a role named constructor starts like any other', { options: WB }, async ($: any, on: any) => {
+    const w = world(on)
+    if (!(await w.start($))) return
+    await w.send($, { role: 'constructor', task: 't' })
+    await w.until(() => w.spawns.length === 1)
+    expect(w.spawns).toHaveLength(1)
+  })
+
+  test('N210: jobs with a task or state of the wrong type are counted', { options: WB }, async ($: any, on: any) => {
+    const base = { role: 'coder', task: 't', enqueuedAt: '1970-01-01T00:00:00.000Z', state: 'queued', backend: 'werkbank' }
+    const w = world(on, { files: { '.relay/queue.json': JSON.stringify({ version: 1, jobs: [{ ...base, id: 'j_a', task: 27 }, { ...base, id: 'j_b', state: 7 }, null] }) } })
+    if (!(await w.start($))) return
+    expect(await w.status($)).toContain('relay left out 3 job(s)')
+  })
+
   test('N112: worker_status shows no worktree for werkbank', { options: WB }, async ($: any, on: any) => {
     const w = world(on)
     if (!(await w.start($))) return

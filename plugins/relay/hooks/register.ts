@@ -33,6 +33,8 @@ import {
   eventTexts,
   hasKeyBegin,
   credentialValueCarry,
+  dict,
+  restoreSnapshot,
   REDACTED_KEY_LINE,
   compareSnapshots,
   extractSection,
@@ -158,7 +160,8 @@ async function expandHome($: EngineInterface, path: string) {
 }
 
 let cwd = ''
-let roles: Record<string, Role> = {}
+// a dict: a role named constructor is no inherited entry (N209)
+let roles: Record<string, Role> = dict<Role>()
 let queue: QueueFile = emptyQueue()
 let running = 0
 let unread: string[] = []
@@ -272,11 +275,9 @@ async function writeQueueText($: EngineInterface) {
   await ensureGitignore($)
   const text = serializeQueue(queue)
   if (text === lastQueueText) return
-  // both files are checked before either is written (N197)
-  const main = await checkQueueFile($, 'queue.json')
-  const backup = lastBackupText !== undefined ? await checkQueueFile($, 'queue.json.bak') : undefined
-  if (backup !== undefined && lastBackupText !== undefined) await $.fs.write(backup, lastBackupText)
-  await $.fs.write(main, text)
+  // each file is checked right before its own write (N197, N205)
+  if (lastBackupText !== undefined) await $.fs.write(await checkQueueFile($, 'queue.json.bak'), lastBackupText)
+  await $.fs.write(await checkQueueFile($, 'queue.json'), text)
   lastQueueText = text
   lastBackupText = text
 }
@@ -411,7 +412,13 @@ async function recover($: EngineInterface) {
     }
     // the kept message of this very job first, stored or not (N103); a kept
     // file that is a link out means interrupted, without files (N118)
-    const kept = await keptMessageOf($, job).catch(() => undefined)
+    const kept = await keptMessageOf($, job).catch(err => ({ unreadable: message(err) }))
+    // a kept message that is there but cannot be read: nothing is reported,
+    // the job and its files stay for the next start (N208)
+    if (kept && 'unreadable' in kept) {
+      unreported.set(job.id, redact(`the kept message could not be read (${kept.unreadable}); the job stays queued for the next start`))
+      continue
+    }
     const why = await (
       kept && 'unsafe' in kept
         ? reportInterrupted($, job, redact(`the kept message was not read: ${kept.unsafe}`), { noFiles: 'its stored files are not safe to use' })
@@ -504,14 +511,14 @@ class RoleFileError extends Error {}
 // cannot be read or parsed throws instead of counting as empty (N137).
 async function loadRoleDefs($: EngineInterface, opts: { isStrict?: boolean } = {}): Promise<Record<string, RoleDef>> {
   try {
-    if (!(await $.fs.exists(config.rolesFile))) return {}
+    if (!(await $.fs.exists(config.rolesFile))) return dict<RoleDef>()
     let parsed: Record<string, unknown>
     try {
       parsed = JSON.parse(await $.fs.read(config.rolesFile)) as Record<string, unknown>
       if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) throw new Error('no JSON object')
     } catch (err) {
       if (opts.isStrict) throw new RoleFileError(`the roles file ${config.rolesFile} could not be read (${message(err)})`)
-      return {}
+      return dict<RoleDef>()
     }
     const map = (parsed.roles ?? parsed) as Record<string, Record<string, unknown>>
     // before a start, the map and every rule that limits a worker must have
@@ -526,7 +533,7 @@ async function loadRoleDefs($: EngineInterface, opts: { isStrict?: boolean } = {
       const bad = !isObject(map) ? 'roles is no JSON object' : invalid ? `role "${invalid[0] || '(empty name)'}" has an invalid entry` : undefined
       if (bad !== undefined) throw new RoleFileError(`the roles file ${config.rolesFile} could not be read (${bad})`)
     }
-    const defs: Record<string, RoleDef> = {}
+    const defs = dict<RoleDef>()
     for (const [name, d] of Object.entries(map)) {
       if (!ROLE_NAME.test(name) || typeof d !== 'object' || d === null) continue
       defs[name] = {
@@ -543,7 +550,7 @@ async function loadRoleDefs($: EngineInterface, opts: { isStrict?: boolean } = {
     return defs
   } catch (err) {
     if (opts.isStrict) throw err instanceof RoleFileError ? err : new RoleFileError(`the roles file ${config.rolesFile} could not be checked (${message(err)})`)
-    return {}
+    return dict<RoleDef>()
   }
 }
 
@@ -592,8 +599,11 @@ async function probeCase($: EngineInterface): Promise<PathCase> {
   const token = newToken()
   try {
     await ensureGitignore($)
-    await $.fs.write(relayPath('tmp/case-probe'), token)
     const upper = relayPath('tmp/CASE-PROBE')
+    // both probe files are checked first; a link at either: no probe, the
+    // case stays unknown (N206)
+    if ((await storageProblem($, relayPath('tmp/case-probe'))) || (await storageProblem($, upper))) return {}
+    await $.fs.write(relayPath('tmp/case-probe'), token)
     const seen = (await $.fs.exists(upper)) ? String(await $.fs.read(upper)) : ''
     return { caseInsensitive: seen === token }
   } catch {
@@ -791,7 +801,8 @@ async function takeSnapshot($: EngineInterface, dir: string): Promise<Snapshot |
   const mine = (repoPath: string) => toProjectPath(repoPath, repo.prefix)
   const relayPrefix = `${config.relayDir}/`
   const isMine = (p: string) => !p.startsWith(relayPrefix)
-  const dirty: Record<string, string> = {}
+  // a dict, so a file named __proto__ is kept like any other (N207)
+  const dirty = dict<string>()
   const present: { repoPath: string; path: string; code: string }[] = []
   for (const e of parsePorcelain(status.stdout)) {
     const path = mine(e.path)
@@ -1038,7 +1049,9 @@ async function start($: EngineInterface, job: QueuedJob, role: Role, run: number
         }
         await checkVersion($, id)
         const before = config.writeCheck === 'report' && work.isGit && !isRemote ? await takeSnapshot($, work.dir) : undefined
-        if (before) await $.fs.write(snapshotPath(role.name, run), JSON.stringify(before))
+        // the file itself is checked before it is written; a run whose file
+        // is not safe checks against the snapshot in memory (N206)
+        if (before && !(await storageProblem($, snapshotPath(role.name, run)))) await $.fs.write(snapshotPath(role.name, run), JSON.stringify(before))
 
         // A session lives in one folder: a run elsewhere starts a fresh one (N23).
         const sessionDir = role.sessionDir ?? cwd
@@ -1905,13 +1918,20 @@ const RESTART_MARK = ' · delivered after a restart'
 // The kept message of this job, without its id line; undefined when the file
 // is missing, empty, unsafe, carries another (or no) job id or is not as
 // long as its id line says (N103, N111).
-async function keptMessageOf($: EngineInterface, job: QueuedJob): Promise<KeptMessage | { unsafe: string } | undefined> {
+async function keptMessageOf($: EngineInterface, job: QueuedJob): Promise<KeptMessage | { unsafe: string } | { unreadable: string } | undefined> {
   if (job.run === undefined) return undefined
   const path = undeliveredPath(job.role, job.run)
   // a link out is no missing file: the run is reported as interrupted (N118)
   const unsafe = await storageProblem($, path)
   if (unsafe) return { unsafe }
-  const text = String(await $.fs.read(path).catch(() => ''))
+  // only a confirmed missing file is no kept message; one that is there but
+  // cannot be read keeps the job for the next start (N208)
+  let text = ''
+  try {
+    if (await $.fs.exists(path)) text = String(await $.fs.read(path))
+  } catch (err) {
+    return { unreadable: message(err) }
+  }
   const nl = text.indexOf('\n')
   const body = text.slice(nl + 1)
   const line = nl < 0 ? undefined : JOB_LINE.exec(text.slice(0, nl))
@@ -1949,7 +1969,16 @@ async function deliverStored($: EngineInterface, job: QueuedJob): Promise<string
   // stored packet is read only when it is no link out (N108)
   const unsafe = role ? await storageProblem($, runPath(job.role, run, 'packet.json')) : undefined
   if (unsafe) return reportInterrupted($, job, redact(`the stored report was not read: ${unsafe}`), { noFiles: 'its stored files are not safe to use' })
-  const text = role ? String(await $.fs.read(runPath(job.role, run, 'packet.json')).catch(() => '')) : ''
+  // a stored report that is there but cannot be read keeps the job (N208)
+  let text = ''
+  if (role) {
+    try {
+      const p = runPath(job.role, run, 'packet.json')
+      if (await $.fs.exists(p)) text = String(await $.fs.read(p))
+    } catch (err) {
+      return redact(`the stored report could not be read (${message(err)}); the job stays queued for the next start`)
+    }
+  }
   // packet.json only when it is this run's: a later run may have taken its
   // slot, whose files then stay as they are (N97, N102)
   if (role && text.trim() && !isEnvelopeOf(text, run, job.backend)) {
@@ -2060,14 +2089,23 @@ async function reportInterrupted($: EngineInterface, job: QueuedJob, note?: stri
     // No local snapshot exists; the job may still run on the server (N53).
     applyWriteCheck(packet, notChecked(`the werkbank job may still be running on the server; its changes would be on agent/relay/${role.name}`))
   } else if (config.writeCheck === 'report') {
+    // the snapshot file is read only when it is no link out (N206)
+    const unsafe = await storageProblem($, snapshotPath(role.name, run))
     let before: Snapshot | undefined
-    try {
-      before = JSON.parse(await $.fs.read(snapshotPath(role.name, run))) as Snapshot
-    } catch {
-      before = undefined
+    if (!unsafe) {
+      try {
+        before = restoreSnapshot(JSON.parse(await $.fs.read(snapshotPath(role.name, run))))
+      } catch {
+        before = undefined
+      }
     }
     const dir = eff.isolation === 'worktree' ? absolute(relayPath(`worktrees/${role.name}`)) : cwd
-    applyWriteCheck(packet, await writeCheckOf($, eff.owns, dir, before, await gitStateOf($, dir)))
+    applyWriteCheck(
+      packet,
+      unsafe
+        ? notChecked(redact(`the snapshot of the run was not read: ${unsafe}`))
+        : await writeCheckOf($, eff.owns, dir, before, await gitStateOf($, dir)),
+    )
   }
   // the headline marks the check like a live report does (N10, N86)
   let head = `[relay] ${role.name} · run ${run} interrupted (${job.backend})`
@@ -2173,7 +2211,7 @@ export const register: Register = (on, options) => {
     }
     cwd = e.cwd
     session = started?.sessionId ?? (await $.session.id().catch(() => '')) ?? ''
-    roles = ((await $.store.get(storeKey())) as Record<string, Role> | undefined) ?? {}
+    roles = dict((await $.store.get(storeKey())) as Record<string, Role> | undefined)
     // Children die with the module: a role still marked busy is stale.
     for (const r of Object.values(roles)) r.isBusy = false
     running = 0

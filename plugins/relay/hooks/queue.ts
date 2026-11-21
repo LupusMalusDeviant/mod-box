@@ -111,7 +111,7 @@ function readQueueText(text: string | undefined): { queue: QueueFile; dropped: n
       o && typeof o.session === 'string' && typeof o.heartbeatAt === 'string'
         ? { session: o.session, heartbeatAt: o.heartbeatAt, ...(typeof o.token === 'string' ? { token: o.token } : {}) }
         : undefined
-    return { queue: { version: 1, ...(owner ? { owner } : {}), jobs: safe.map(toSchema) }, dropped: jobs.length - safe.length }
+    return { queue: { version: 1, ...(owner ? { owner } : {}), jobs: safe.map(toSchema) }, dropped: v.jobs.length - safe.length }
   } catch {
     return undefined
   }

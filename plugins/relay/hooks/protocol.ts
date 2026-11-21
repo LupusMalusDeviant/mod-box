@@ -274,6 +274,30 @@ export function isSamePath(a: string, b: string, opts: PathCase = {}): boolean {
   return norm(a) === norm(b)
 }
 
+// A dictionary without inherited entries: every name is a key like any
+// other, __proto__ and constructor included (N207, N209).
+export function dict<T>(entries?: Record<string, T>): Record<string, T> {
+  const d = Object.create(null) as Record<string, T>
+  if (entries) for (const k of Object.keys(entries)) Object.defineProperty(d, k, { value: entries[k], writable: true, enumerable: true, configurable: true })
+  return d
+}
+
+// The value a snapshot itself holds for a path, never an inherited one (N207).
+const ownEntry = (dirty: Record<string, string>, path: string): string | undefined =>
+  Object.prototype.hasOwnProperty.call(dirty, path) ? dirty[path] : undefined
+
+// A snapshot read back from its file, its file list as a dict (N207).
+export function restoreSnapshot(v: unknown): Snapshot | undefined {
+  const s = v as Partial<Snapshot> | null
+  if (!s || typeof s !== 'object' || typeof s.head !== 'string' || !s.dirty || typeof s.dirty !== 'object') return undefined
+  const dirty = dict<string>()
+  for (const k of Object.keys(s.dirty)) {
+    const value = (s.dirty as Record<string, unknown>)[k]
+    if (typeof value === 'string') dirty[k] = value
+  }
+  return { head: s.head, dirty, ...(typeof s.prefix === 'string' ? { prefix: s.prefix } : {}) }
+}
+
 // What a run wrote, judged against what the role owns and what the roles
 // running beside it own.
 export function compareSnapshots(
@@ -286,8 +310,8 @@ export function compareSnapshots(
 ): WriteCheck {
   const byCommit = new Map(committed.map(c => [c.path, c.change]))
   const kind = (path: string): Change => {
-    const now = after.dirty[path]
-    const was = before.dirty[path]
+    const now = ownEntry(after.dirty, path)
+    const was = ownEntry(before.dirty, path)
     if (now === 'deleted') return 'deleted'
     if (now?.startsWith('new:') && !was?.startsWith('new:')) return 'created'
     if (now === undefined) {
@@ -300,8 +324,10 @@ export function compareSnapshots(
   const incomplete: string[] = []
   const paths = new Set<string>()
   for (const p of new Set([...Object.keys(before.dirty), ...Object.keys(after.dirty)])) {
-    if (before.dirty[p] === UNHASHED || after.dirty[p] === UNHASHED) incomplete.push(p)
-    else if (before.dirty[p] !== after.dirty[p]) paths.add(p)
+    const was = ownEntry(before.dirty, p)
+    const now = ownEntry(after.dirty, p)
+    if (was === UNHASHED || now === UNHASHED) incomplete.push(p)
+    else if (was !== now) paths.add(p)
   }
   for (const c of committed) paths.add(c.path)
   const changed = [...paths].sort().map(path => ({ path, change: kind(path) }))
@@ -669,9 +695,10 @@ function jsonValueEnd(text: string, at: number, q: string): number {
   return lineEnd < 0 ? text.length : at + lineEnd
 }
 
-// A credential list or object left open at the end of a text: its depth and
-// the quote level it is read at, or undefined (N198).
-type OpenValue = { depth: number; q: string }
+// A credential value left open at the end of a text: a list or object with
+// its depth, or (isPending) a name and separator whose value has not begun
+// yet; with the quote level it is read at. Undefined when none (N198, N204).
+type OpenValue = { depth: number; q: string; isPending?: true }
 function openValueAfter(text: string): OpenValue | undefined {
   const t = decodeNameEscapes(text)
   let first: (OpenValue & { at: number }) | undefined
@@ -681,23 +708,52 @@ function openValueAfter(text: string): OpenValue | undefined {
       if (m[0].length === 0) head.lastIndex++
       const at = m.index + m[0].length
       const q = nameQuote(m[0])
-      if (q === undefined || quotedValue(t, at) || (t[at] !== '[' && t[at] !== '{')) continue
+      if (q === undefined || (first && at >= first.at)) continue
+      // nothing after the separator: the value comes on a later line (N204)
+      if (!t.slice(at).trim()) {
+        first = { depth: 0, q, isPending: true, at }
+        continue
+      }
+      if (quotedValue(t, at) || (t[at] !== '[' && t[at] !== '{')) continue
       const r = scanJson(t, at, q, 0)
-      if (r.end === undefined && (!first || at < first.at)) first = { depth: r.depth, q, at }
+      if (r.end === undefined) first = { depth: r.depth, q, at }
     }
   }
-  return first && { depth: first.depth, q: first.q }
+  return first && { depth: first.depth, q: first.q, ...(first.isPending ? { isPending: true as const } : {}) }
 }
 
 // For text read line by line (live.log): a credential list or object that a
 // line leaves open is replaced in the following lines too, up to its closing
-// bracket. Returns the line as it may be passed on to redact() (N198).
+// bracket (N198); a credential name that ends a line has its value replaced
+// in the first line with content after it (N204). Returns the line as it may
+// be passed on to redact().
 export function credentialValueCarry(): (line: string) => string {
   let open: OpenValue | undefined
   return (line: string) => {
     let head = ''
     let rest = line
-    if (open) {
+    if (open?.isPending) {
+      const i = line.search(/\S/)
+      // an empty line keeps the value pending
+      if (i < 0) return line
+      const q = open.q
+      open = undefined
+      const v = quotedValue(line, i)
+      let end: number
+      if (v) end = v.isClosed ? v.end : line.length
+      else if (line[i] === '[' || line[i] === '{') {
+        const r = scanJson(line, i, q, 0)
+        if (r.end === undefined) {
+          open = { depth: r.depth, q }
+          return `${line.slice(0, i)}${SECRET}`
+        }
+        end = r.end
+      } else end = jsonValueEnd(line, i, q)
+      if (end > i) {
+        head = `${line.slice(0, i)}${SECRET}`
+        rest = line.slice(end)
+      }
+    } else if (open) {
       const r = scanJson(line, 0, open.q, open.depth)
       if (r.end === undefined) {
         open = { depth: r.depth, q: open.q }
