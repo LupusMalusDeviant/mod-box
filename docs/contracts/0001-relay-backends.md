@@ -1,6 +1,6 @@
 # Vertrag 0001: relay mit Backends je Rolle
 
-**Status:** abgenommen am 3. November 2026 (E1–E11 wie empfohlen, herdr gestrichen) · **Stand:** 13. November 2026, Nachtrag 1 (Abschnitt 14 und 14.1, N1–N28) abgenommen am 13. November 2026; Nachtrag 2 (Abschnitt 15, N29–N47, Backend `werkbank`) sowie Nachträge 2a (15.4, N48–N57) , 2b (15.5, N58–N67) und 2c (15.6, N68–N72) abgenommen am 18. November 2026; Nachtrag 2d (15.7, N73–N80) abgenommen am 19. November 2026; Nachtrag 2e (15.8, N81–N86) und 2f (15.9, N87–N93) abgenommen am 19. November 2026; Nachtrag 2g (15.10, N94–N98) abgenommen am 19. November 2026; Nachtrag 2h (15.11, N99–N106) , 2i (15.12, N107–N113), 2j (15.13, N114–N119), 2k (15.14, N120–N126), 2l (15.15, N127–N133), 2m (15.16, N134–N140), 2n (15.17, N141–N147), 2o (15.18, N148–N154), 2p (15.19, N155–N159), 2q (15.20, N160–N165), 2r (15.21, N166–N169), 2s (15.22, N170–N172), 2t (15.23, N173–N177), 2u (15.24, N178–N181), 2v (15.25, N182–N184), 2w (15.26, N185–N190), 2x (15.27, N191–N196) und 2y (15.28, N197–N203) abgenommen am 20. November 2026; Nachträge 2z (15.29, N204–N211) und 2α (15.30, N212–N218) abgenommen am 21. November 2026 · **Betrifft:** `plugins/relay` (heute 0.3.0)
+**Status:** abgenommen am 3. November 2026 (E1–E11 wie empfohlen, herdr gestrichen) · **Stand:** 13. November 2026, Nachtrag 1 (Abschnitt 14 und 14.1, N1–N28) abgenommen am 13. November 2026; Nachtrag 2 (Abschnitt 15, N29–N47, Backend `werkbank`) sowie Nachträge 2a (15.4, N48–N57) , 2b (15.5, N58–N67) und 2c (15.6, N68–N72) abgenommen am 18. November 2026; Nachtrag 2d (15.7, N73–N80) abgenommen am 19. November 2026; Nachtrag 2e (15.8, N81–N86) und 2f (15.9, N87–N93) abgenommen am 19. November 2026; Nachtrag 2g (15.10, N94–N98) abgenommen am 19. November 2026; Nachtrag 2h (15.11, N99–N106) , 2i (15.12, N107–N113), 2j (15.13, N114–N119), 2k (15.14, N120–N126), 2l (15.15, N127–N133), 2m (15.16, N134–N140), 2n (15.17, N141–N147), 2o (15.18, N148–N154), 2p (15.19, N155–N159), 2q (15.20, N160–N165), 2r (15.21, N166–N169), 2s (15.22, N170–N172), 2t (15.23, N173–N177), 2u (15.24, N178–N181), 2v (15.25, N182–N184), 2w (15.26, N185–N190), 2x (15.27, N191–N196) und 2y (15.28, N197–N203) abgenommen am 20. November 2026; Nachträge 2z (15.29, N204–N211), 2α (15.30, N212–N218) und 2β (15.31, N219–N223) abgenommen am 21. November 2026 · **Betrifft:** `plugins/relay` (heute 0.3.0)
 
 Heute startet relay jeden Worker als `claude -p`. Künftig wählt jede Rolle ihr **Backend**: `claude`, `codex` oder `opencode`. Über opencode erreicht relay auch Ollama und OpenRouter. Warteschlange, Timeout, `owns`, Relay-Pakete und die drei Werkzeuge bleiben gleich. Neu sind die Backend-Schnittstelle, eine Schreibprüfung nach jedem Lauf, die gleich für alle Backends greift, Token-Angaben im Paket, Ollama als Ersatz-Verdichter und eine Warteschlange, die auf der Platte liegt.
 
@@ -1208,3 +1208,29 @@ Anmerkungen:
 - **N213:** Ein Worker-Text, in dem nach einem Zugangsnamen eine Liste ohne schließende Klammer steht, verliert ab dort seinen Rest. Das ist die sichere Seite.
 - **N217:** Als Git-ID gilt eine Hex-Folge von 1 bis 64 Zeichen. So kann die Angabe nie als Option an `git` gehen, und die kurzen IDs der Test-Vorrichtung bleiben gültig.
 - **N218:** Die Prüfsumme ist SHA-256 über den Systemprompt der Rolle `ingester` mit `owns: ["wiki/sources/"]`. Sie wurde mit dem Stand `c270e77` erzeugt und ist dort und heute gleich (1618 Zeichen).
+
+### 15.31 Nachtrag 2β (21. November 2026): Befunde aus dem achtundzwanzigsten Codex-Review (`c270e77...6514916`)
+
+**Status: abgenommen am 21. November 2026** (N219–N223 wie vorgeschlagen). Das achtundzwanzigste Codex-Review (gpt-6.2-sol) fand 5 Befunde: 2 hoch, 2 mittel, 1 niedrig. Alle werden als echt eingestuft. Zwei davon liegen im Code zu Nachträgen 2z und 2α (N204, N217), die übrigen in älterem Code. Entschieden vom Nutzer am 21. November 2026: alle als Nachtrag 2β beheben.
+
+| Nr. | Änderung | Ersetzt / ergänzt | Befund |
+|---|---|---|---|
+| N219 | **Ein ausstehender Authorization-Wert bleibt ausstehend, bis der Wert selbst kam.** Steht nach einem ausstehenden Authorization-Namen (N204, N212) in der nächsten Zeile mit Inhalt nur das Verfahren (`Bearer`, `Basic`, `Token`, `Digest`), ersetzt relay das Verfahren. Der Wert bleibt ausstehend und wird in der nächsten Zeile mit Inhalt ersetzt. | N204, N212 | hoch 1 |
+| N220 | **Ein Digest-Wert wird mit allen Parametern ersetzt.** Nach `Authorization` oder `Proxy-Authorization` mit dem Verfahren `Digest` ersetzt relay die ganze Parameterliste (`name=wert` oder `name="wert"`, durch Kommas getrennt), nicht nur den ersten Parameter. Das gilt für die Zeile `Authorization: Digest …`, für einen JSON-Wert ohne Anführungszeichen (N212) und für einen ausstehenden Wert in `live.log` (N204). | N2, N212 | hoch 2 |
+| N221 | **Ein fertiger Bericht wird auch ohne `delivery` wiederhergestellt.** `packet.json` nennt die Job-ID (`jobId`). Hat ein laufender Auftrag beim Neustart weder `delivery: "stored"` noch eine aufbewahrte Nachricht, liefert relay sein `packet.json`, wenn es Lauf, Backend und Job-ID des Auftrags nennt (wie N15, mit dem Kopf aus N92). Nur sonst gilt der Lauf als unterbrochen. Lässt sich `packet.json` nicht prüfen oder lesen, bleibt der Auftrag (N208, N216). | N15, N97, N103 | mittel 1 |
+| N222 | **Eine gespeicherte HEAD-Angabe ist leer oder eine volle Objekt-ID, die als Commit besteht.** Beim Wiederherstellen gilt eine HEAD-Angabe nur, wenn sie leer ist oder aus 40 bzw. 64 Hex-Zeichen besteht (N217 wird enger). Vor dem `git diff` prüft relay mit `git cat-file -e <id>^{commit}`, dass sie ein Commit ist. Sonst ist die Schreibprüfung unvollständig, und der Grund wird genannt. | N217 | mittel 2 |
+| N223 | **Angezeigte Werkbank-Felder bleiben in 120 Zeichen.** `jobId`, `state` und `branch` sind in der Anzeige samt „…“ und „ (not exact)“ höchstens 120 Zeichen lang (N176, N179). Die Prüfung am Rohwert (N191) bleibt davon getrennt. | N176, N179, N191 | niedrig 1 |
+
+**Tests:** je Zeile mindestens ein Fall, der mit `6514916` fehlschlägt:
+- **N219:** `"Authorization":`, `Bearer` und der Wert auf drei Zeilen. Der Wert steht nicht in `live.log`.
+- **N220:** `Authorization: Digest username="…", nonce="…", response="…"` auf stderr. Keiner der Werte steht in `live.log` oder im Bericht.
+- **N221:** Ein Neustart mit `full.md` und `packet.json` des Laufs, aber ohne aufbewahrte Nachricht und ohne `delivery`. Der Bericht kommt mit dem Status des Laufs, beide Dateien bleiben.
+- **N222:** Ein Snapshot mit `head: "a"` ist fehlerhaft. Ein Snapshot mit einer vollen ID, die kein Commit ist, macht die Prüfung unvollständig.
+- **N223:** Die Felder aus N179 und ein langer `state` sind in der Anzeige höchstens 120 Zeichen lang.
+
+**Stand (21. November 2026):** N219–N223 umgesetzt. `claude plugin test plugins/relay`: 338 pass, 0 fail. Mit `6514916` schlagen genau die 6 neuen Fälle fehl (332 pass, 6 fail): je einer zu N219, N220, N221 und N223 (Einzeltest in `backends.test.ts`), zwei zu N222.
+
+Anmerkungen:
+- **N221:** Ein `packet.json` von vor diesem Nachtrag hat keine `jobId`. Für einen solchen Lauf bleibt es beim Verhalten von N15 und N103.
+- **N222:** Die Test-Vorrichtung liefert jetzt volle Objekt-IDs (40 Hex-Zeichen) statt kurzer Platzhalter. `git cat-file` läuft nur, wenn sich HEAD während des Laufs geändert hat.
+- **N223:** Gekürzt wird erst nach der Bereinigung. „…“ und „ (not exact)“ zählen mit.

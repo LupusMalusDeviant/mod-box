@@ -288,9 +288,10 @@ export function dict<T>(entries?: Record<string, T>): Record<string, T> {
 const ownEntry = (dirty: Record<string, string>, path: string): string | undefined =>
   Object.prototype.hasOwnProperty.call(dirty, path) ? dirty[path] : undefined
 
-// A HEAD as a snapshot keeps it: empty (unborn) or a Git object id, hex
-// only, so it never reads as an option to git (N217).
-const isSnapshotHead = (h: unknown): h is string => typeof h === 'string' && (h === '' || /^[0-9a-fA-F]{1,64}$/.test(h))
+// A HEAD as a snapshot keeps it: empty (unborn) or a full Git object id of
+// 40 or 64 hex characters, so it never reads as an option or a ref name to
+// git (N217, N222).
+const isSnapshotHead = (h: unknown): h is string => typeof h === 'string' && (h === '' || /^(?:[0-9a-fA-F]{40}|[0-9a-fA-F]{64})$/.test(h))
 
 // A snapshot read back from its file, its file list as a dict (N207).
 // Undefined when any part of it is malformed: a list entry that is no text,
@@ -698,8 +699,15 @@ function scanJson(text: string, from: number, q: string, stack: string): { end?:
   return { stack }
 }
 
-// An unquoted Authorization value: its scheme and the value after it (N212).
-const AUTH_SCALAR = /^(?:(?:bearer|basic|token|digest)\s+)?[^\s,}\])"'\\;]+/i
+// Digest parameters: name=value or name="value", comma separated (N220).
+const DIGEST_PARAM = String.raw`[A-Za-z0-9_-]+\s*=\s*(?:"(?:[^"\\\r\n]|\\.)*"|[^\s,"'\\;}\])]+)`
+const DIGEST_PARAMS = String.raw`${DIGEST_PARAM}(?:\s*,\s*${DIGEST_PARAM})*`
+// An unquoted Authorization value: its scheme and the value after it (N212),
+// Digest with all its parameters, also a parameter list without the scheme
+// when the scheme came on an earlier line (N220).
+const AUTH_SCALAR = new RegExp(String.raw`^(?:digest\s+${DIGEST_PARAMS}|${DIGEST_PARAMS}|(?:(?:bearer|basic|token|digest)\s+)?[^\s,}\])"'\\;]+)`, 'i')
+// A line that holds only the scheme: the value comes later (N219).
+const AUTH_SCHEME_ONLY = /^(?:bearer|basic|token|digest)\s*$/i
 
 // Where an unquoted JSON value that starts at `at` ends: a list or object up
 // to its matching bracket (scanJson), else a scalar up to , } ] ) or space
@@ -761,6 +769,8 @@ export function credentialValueCarry(): (line: string) => string {
       // an empty line keeps the value pending
       if (i < 0) return line
       const { q, isAuth } = open
+      // only the scheme: it goes, the value stays pending (N219)
+      if (isAuth && AUTH_SCHEME_ONLY.test(line.slice(i))) return `${line.slice(0, i)}${SECRET}`
       open = undefined
       const v = quotedValue(line, i)
       let end: number
@@ -835,6 +845,8 @@ function redactQuoted(text: string, head: RegExp, keep?: (name: string, value: s
 // Nachtrag 1). Best effort by shape; it never makes text longer to read.
 const SECRET_PATTERNS: [RegExp, string | ((...args: string[]) => string)][] = [
   // quoted Authorization values are replaced before, by quotedValue (N156)
+  // `Authorization: Digest username="u", nonce="n"`: every parameter (N220)
+  [new RegExp(String.raw`\b((?:proxy-)?authorization)(\s*[:=]\s*)(digest)\s+${DIGEST_PARAMS}`, 'gi'), `$1$2$3 ${SECRET}`],
   // `Authorization: Bearer x`, `Proxy-Authorization: Basic x`
   [/\b((?:proxy-)?authorization)(\s*[:=]\s*)(?:(bearer|basic|token|digest)\s+)?[^\s"'\\,;]+/gi, `$1$2$3 ${SECRET}`],
   [/\b(bearer|basic)\s+[A-Za-z0-9._~+/=-]{8,}/gi, `$1 ${SECRET}`],

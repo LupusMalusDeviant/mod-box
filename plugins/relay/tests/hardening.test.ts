@@ -254,7 +254,7 @@ describe('finding 9: renames', () => {
     const w = fakeWorld(on)
     if (!(await w.start($))) return
     w.during(() => {
-      w.git.head = 'bbb'
+      w.git.head = 'b'.repeat(40)
       w.git.committed.push({ status: 'R100', from: 'docs/protected.md', path: 'src/protected.md' })
     })
     await w.send($, { role: 'a', task: 't', owns: ['src/'] })

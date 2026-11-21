@@ -426,7 +426,11 @@ async function recover($: EngineInterface) {
           ? deliverKept($, job, kept)
           : job.delivery === 'stored'
             ? deliverStored($, job)
-            : reportInterrupted($, job)
+            : storedReportOf($, job).then(own =>
+                // a finished report of this very job, stored before its
+                // delivery flag: delivered, not "interrupted" (N221)
+                own === 'own' ? deliverStored($, job) : own === 'none' ? reportInterrupted($, job) : own.keep,
+              )
     ).catch(err => `reporting failed (${message(err)})`)
     // A reported job left the queue in deliver; the rest stay and are shown.
     if (why) unreported.set(job.id, why)
@@ -880,7 +884,12 @@ async function writeCheckOf($: EngineInterface, owns: string[], dir: string, bef
   if (!after) return none('git status failed after the run', true)
   let committed: { path: string; change: Change }[] = []
   const gaps: string[] = []
-  if (before.head !== after.head) {
+  // the HEAD before the run must be a commit git knows before it is diffed (N222)
+  const isBeforeCommit =
+    before.head === after.head || !before.head || (await git($, dir, ['cat-file', '-e', `${before.head}^{commit}`])).exitCode === 0
+  if (!isBeforeCommit) {
+    gaps.push('the HEAD the snapshot names is no commit in this repository; what the run committed is unknown')
+  } else if (before.head !== after.head) {
     // A first commit has no parent: compare it with the empty tree.
     const empty = before.head && after.head ? '' : await emptyTree($, dir)
     const r = await git($, dir, ['diff', '--name-status', '-z', before.head || empty, after.head || empty])
@@ -1766,7 +1775,7 @@ async function deliver(
   const files: [string, string][] = noFiles ? [] : [
     [fullPath, `# ${role.name} · run ${run}\n\n## Task\n\n${redact(job.task)}\n\n## Answer\n\n${redact(stripPacket(answer))}\n`],
     // the headline is kept for a delivery after a restart (N92)
-    [runPath(role.name, run, 'packet.json'), JSON.stringify(redactDeep({ run, backend: extra.backend, usage: extra.usage, head, ...packet }), null, 2)],
+    [runPath(role.name, run, 'packet.json'), JSON.stringify(redactDeep({ run, backend: extra.backend, jobId: job.id, usage: extra.usage, head, ...packet }), null, 2)],
   ]
   role.isBusy = false
   role.lastStatus = packet.status
@@ -1882,6 +1891,30 @@ function storedHeadOf(text: string, role: string, run: number): string | undefin
     return typeof head === 'string' && !head.includes('\n') && head.startsWith(`[relay] ${role} · run ${run} `) ? redact(head) : undefined
   } catch {
     return undefined
+  }
+}
+
+// Whether the slot's packet.json is this job's finished report (run, backend
+// and job id, N221); a check or read that fails keeps the job (N208, N216).
+async function storedReportOf($: EngineInterface, job: QueuedJob): Promise<'own' | 'none' | { keep: string }> {
+  if (!roles[job.role] || job.run === undefined) return 'none'
+  const path = runPath(job.role, job.run, 'packet.json')
+  const verdict = await storageVerdict($, path)
+  const keep = (why: string) => ({ keep: redact(`the stored report could not be checked (${why}); the job stays queued for the next start`) })
+  if (verdict?.kind === 'unchecked') return keep(verdict.why)
+  if (verdict) return 'none'
+  let text: string
+  try {
+    if (!(await $.fs.exists(path))) return 'none'
+    text = String(await $.fs.read(path))
+  } catch (err) {
+    return keep(message(err))
+  }
+  try {
+    const v = JSON.parse(text) as { run?: unknown; backend?: unknown; jobId?: unknown }
+    return v.jobId === job.id && v.run === job.run && v.backend === job.backend ? 'own' : 'none'
+  } catch {
+    return 'none'
   }
 }
 

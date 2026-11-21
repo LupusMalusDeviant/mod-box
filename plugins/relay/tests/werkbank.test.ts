@@ -2255,7 +2255,7 @@ describe('werkbank, Nachtrag 2i (ninth Codex review)', () => {
   })
 
   for (const [name, snapshot] of [
-    ['a list entry that is no text', { head: 'aaa', dirty: { 'docs/x.md': 5 } }],
+    ['a list entry that is no text', { head: 'a'.repeat(40), dirty: { 'docs/x.md': 5 } }],
     ['a HEAD that reads as an option', { head: '--output=x', dirty: {} }],
   ] as const) {
     test(`N217: a snapshot with ${name} makes the check incomplete`, async ($: any, on: any) => {
@@ -2269,6 +2269,63 @@ describe('werkbank, Nachtrag 2i (ninth Codex review)', () => {
       await w.until(() => w.submitted.length === 1)
       expect(w.submitted[0]).toContain('⚠ write check incomplete')
       expect(w.submitted[0]).toContain('the snapshot of the run is malformed')
+    })
+  }
+
+  test('N219: an Authorization value two lines after its name still goes', { options: WB }, async ($: any, on: any) => {
+    const w = world(on)
+    w.play('pending-auth-3')
+    if (!(await w.start($))) return
+    await w.send($, { role: 'coder', task: 't' })
+    await w.until(() => w.submitted.length === 1)
+    expect(w.files.get('.relay/runs/coder/live.log') ?? '').not.toContain('opaque0x80')
+    expect(w.submitted[0]).not.toContain('opaque0x80')
+  })
+
+  test('N220: a Digest Authorization goes with all its parameters', { options: WB }, async ($: any, on: any) => {
+    const w = world(on)
+    w.play('digest-auth')
+    if (!(await w.start($))) return
+    await w.send($, { role: 'coder', task: 't' })
+    await w.until(() => w.submitted.length === 1)
+    for (const text of [w.files.get('.relay/runs/coder/live.log') ?? '', w.submitted[0]!]) {
+      for (const v of ['u0x81', 'n0x82', 'r0x83']) expect(text).not.toContain(v)
+    }
+  })
+
+  test('N221: a finished report stored before its delivery flag is delivered after a restart', { options: WB }, async ($: any, on: any) => {
+    const packet = { run: 1, backend: 'werkbank', jobId: 'j_1', usage: {}, head: '[relay] coder · run 1 finished (werkbank)', status: 'done', summary: 'run one finished0x84', decisions: [], facts: [], artifacts: [], open_questions: [], needs_from_main: [], risks: [], next_suggested: [], sections: [] }
+    const full = '# coder · run 1\n\n## Task\n\nt\n\n## Answer\n\nall done\n'
+    const w = world(on, {
+      files: { '.relay/queue.json': JSON.stringify(runningJob(1)), '.relay/runs/coder/001.packet.json': JSON.stringify(packet), '.relay/runs/coder/001.full.md': full },
+      store: { 'roles:/w': { coder: { name: 'coder', runs: 1, isBusy: true } } },
+    })
+    await w.clock.set(10 * 60_000)
+    if (!(await w.start($))) return
+    await w.until(() => w.submitted.length === 1)
+    expect(w.submitted[0]).toContain('finished0x84')
+    expect(w.submitted[0]).toContain('Status: done')
+    expect(w.submitted[0]).not.toContain('interrupted')
+    expect(w.files.get('.relay/runs/coder/001.packet.json')).toBe(JSON.stringify(packet))
+    expect(w.files.get('.relay/runs/coder/001.full.md')).toBe(full)
+  })
+
+  for (const [name, head, reason] of [
+    ['a ref name as HEAD is malformed', 'a', 'the snapshot of the run is malformed'],
+    ['a full id that is no commit makes the check incomplete', 'c'.repeat(40), 'the HEAD the snapshot names is no commit'],
+  ] as const) {
+    test(`N222: ${name}`, async ($: any, on: any) => {
+      const job = { id: 'j_1', role: 'docs', task: 't', enqueuedAt: '1970-01-01T00:00:00.000Z', state: 'running', run: 1, backend: 'claude' }
+      const w = world(on, {
+        files: { '.relay/queue.json': JSON.stringify({ version: 1, jobs: [job] }), '.relay/tmp/docs-1.snapshot.json': JSON.stringify({ head, dirty: {} }) },
+        store: { 'roles:/w': { docs: { name: 'docs', runs: 1, isBusy: true } } },
+      })
+      w.git.missing.add('c'.repeat(40))
+      await w.clock.set(10 * 60_000)
+      if (!(await w.start($))) return
+      await w.until(() => w.submitted.length === 1)
+      expect(w.submitted[0]).toContain('⚠ write check incomplete')
+      expect(w.submitted[0]).toContain(reason)
     })
   }
 

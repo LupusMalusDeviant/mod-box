@@ -647,6 +647,17 @@ describe('werkbank: write check and rules', () => {
     expect(p([`src/file${String.fromCharCode(0)}`])?.isFileListMalformed).toBe(true)
   })
 
+  test('N223: shown werkbank fields stay within 120 characters, marks included', () => {
+    const long = (c: string) => `${c}0x90\n${c.repeat(300)}`
+    const r = BACKENDS.werkbank.parse(done(JSON.stringify(job({ jobId: long('j'), state: long('s'), branch: long('b') })))).remote!
+    for (const v of [r.jobId, r.state, r.branch]) {
+      expect(v.length).toBeLessThanOrEqual(120)
+      expect(v).toContain('…')
+    }
+    expect(r.state).toContain('(not exact)')
+    expect(r.branch).toContain('(not exact)')
+  })
+
   test('N200: only a whole counter name keeps its number', () => {
     expect(redact('access_tokenSecret=123456')).not.toContain('123456')
     expect(redact('secret_tokens=123456')).not.toContain('123456')

@@ -643,7 +643,12 @@ const werkbank: Backend = {
     // free text of the server: one line, at most 120 characters (N176)
     // nothing is trimmed: only exact values count as a state or the role's
     // branch (N178)
-    const oneLine = (s: string | undefined) => (s === undefined ? undefined : cut(s.replace(/\s+/g, ' '), 120))
+    // the ellipsis and a " (not exact)" mark count toward the 120 (N223)
+    const fit = (s: string, n: number) => {
+      const t = redact(s.replace(/\s+/g, ' '))
+      return t.length > n ? `${t.slice(0, n - 1)}…` : t
+    }
+    const oneLine = (s: string | undefined) => (s === undefined ? undefined : fit(s, 120))
     // a whole number counts as the job id's text (N183); only spaces is no
     // job id (N90)
     const rawJobId = typeof json.jobId === 'number' && Number.isSafeInteger(json.jobId) && json.jobId >= 0 ? String(json.jobId) : str(json.jobId)
@@ -653,7 +658,9 @@ const werkbank: Backend = {
     // so it never equals a known state or the role's branch (N191)
     const exact = (s: string | undefined) => {
       const shown = oneLine(s)
-      return shown === undefined || shown === s ? shown : `${shown} (not exact)`
+      if (shown === undefined || shown === s) return shown
+      const mark = ' (not exact)'
+      return `${fit(s!, 120 - mark.length)}${mark}`
     }
     const state = exact(str(json.state)) ?? 'unknown'
     const strings = (v: unknown) => (Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : [])

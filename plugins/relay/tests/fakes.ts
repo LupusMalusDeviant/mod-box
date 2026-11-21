@@ -206,6 +206,12 @@ export type Scenario =
   // werkbank-relay: once-escaped JSON with both quote spellings in a
   // password list (N214)
   | 'mixed-quote-list'
+  // werkbank-relay: an Authorization name, Bearer and the value on three
+  // lines, no JSON (N219)
+  | 'pending-auth-3'
+  // werkbank-relay: an Authorization Digest line with its parameters, no
+  // JSON (N220)
+  | 'digest-auth'
 
 export type Call = { argv: string[]; cwd?: string; env: Record<string, string>; input?: string; attachment?: string; protocolFile?: string }
 
@@ -295,7 +301,10 @@ export function fakeWorld(
   const git = {
     isRepo: init.isGit ?? true,
     // '' is an unborn HEAD (no commit yet)
-    head: 'aaa',
+    // full object ids, as git prints them (N222)
+    head: 'a'.repeat(40),
+    // object ids that are no commit for git cat-file (N222)
+    missing: new Set<string>(),
     status: [] as StatusEntry[],
     committed: [] as Committed[],
     // paths git cannot hash (a submodule folder): hash-object stops there
@@ -427,6 +436,10 @@ export function fakeWorld(
       }
       return ok(out.map(h => `${h}\n`).join(''))
     }
+    if (sub === 'cat-file') {
+      const id = String(args[2] ?? '').replace('^{commit}', '')
+      return git.missing.has(id) ? ok('', 128, 'fatal: Not a valid object name') : ok('')
+    }
     if (sub === 'diff') {
       const [from, to] = args.slice(-2)
       if (!from || !to) return ok('', 128, 'fatal: bad revision')
@@ -471,7 +484,7 @@ export function fakeWorld(
     const cli = String(argv[0]).replace(/^.*[\\/]/, '').replace(/\.(exe|cmd)$/, '')
     if (scenario === 'write-outside') git.status.push({ code: '??', path: 'other/x.md', hash: 'h1' })
     if (scenario === 'commit') {
-      git.head = 'bbb'
+      git.head = 'b'.repeat(40)
       git.committed.push('docs/c.md')
     }
     if (scenario === 'crash') return { value: { code: 2, signal: null } }
@@ -703,6 +716,14 @@ export function fakeWorld(
       }
       if (scenario === 'pending-auth') {
         yield { stream: 'stderr', text: ['{"Authorization":', '  Bearer opaque0x60,', '"n": 1}', ''].join('\n') }
+        return { value: { code: 1, signal: null } }
+      }
+      if (scenario === 'pending-auth-3') {
+        yield { stream: 'stderr', text: ['{"Authorization":', '  Bearer', '  opaque0x80,', '"n": 1}', ''].join('\n') }
+        return { value: { code: 1, signal: null } }
+      }
+      if (scenario === 'digest-auth') {
+        yield { stream: 'stderr', text: 'Authorization: Digest username="u0x81", nonce="n0x82", response="r0x83"\n' }
         return { value: { code: 1, signal: null } }
       }
       if (scenario === 'cut-list') {
