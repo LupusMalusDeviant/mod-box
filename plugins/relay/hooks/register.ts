@@ -644,8 +644,15 @@ async function realOf($: EngineInterface, path: string) {
 // resolve to its own place in the project. Checked before the first write
 // to relay's folders and before `git worktree add` (contract 0001, N17).
 async function storageProblem($: EngineInterface, rel: string): Promise<string | undefined> {
+  return (await storageVerdict($, rel))?.why
+}
+
+// The same check, telling a confirmed link or place outside (unsafe) from a
+// check that could not be made (unchecked): recovery keeps the job for the
+// second (N216).
+async function storageVerdict($: EngineInterface, rel: string): Promise<{ kind: 'unsafe' | 'unchecked'; why: string } | undefined> {
   projectRoot ??= await realOf($, cwd)
-  if (!projectRoot) return 'the project folder could not be resolved'
+  if (!projectRoot) return { kind: 'unchecked', why: 'the project folder could not be resolved' }
   const root = projectRoot.replace(/[\\/]+$/, '')
   const parts = rel.replace(/\\/g, '/').split('/').filter(Boolean)
   for (let i = 1; i <= parts.length; i++) {
@@ -655,14 +662,14 @@ async function storageProblem($: EngineInterface, rel: string): Promise<string |
     try {
       isThere = await $.fs.exists(p)
     } catch (err) {
-      return `${p} could not be checked (${message(err)})`
+      return { kind: 'unchecked', why: `${p} could not be checked (${message(err)})` }
     }
     if (!isThere) return undefined
     const st = await $.fs.stat(p, { resolve: true }).catch(() => undefined)
-    if (!st?.realPath) return `${p} could not be resolved`
+    if (!st?.realPath) return { kind: 'unchecked', why: `${p} could not be resolved` }
     // Each part is spelled as on disk, so case does not decide here.
     if (st.isLink || !isSamePath(st.realPath, `${root}/${p}`, { caseInsensitive: true })) {
-      return `${p} resolves to ${st.realPath}, outside the project; relay writes nothing there`
+      return { kind: 'unsafe', why: `${p} resolves to ${st.realPath}, outside the project; relay writes nothing there` }
     }
   }
   return undefined
@@ -1502,7 +1509,8 @@ async function compress($: EngineInterface, role: string, answer: string): Promi
   const backend = !config.fallbackCompress ? 'off' : config.fallbackBackend
   if (backend === 'claude') {
     const r = await $.model.complete({ model: config.fallbackModel, system: fallbackPrompt(role), prompt: answer })
-    return { packet: r.isAnswered ? parsePacket(r.text) : undefined, by: config.fallbackModel }
+    // the answer is redacted before it is read (N215)
+    return { packet: r.isAnswered ? parsePacket(redact(r.text)) : undefined, by: config.fallbackModel }
   }
   if (backend === 'ollama' && config.ollamaModel.trim()) {
     try {
@@ -1510,7 +1518,7 @@ async function compress($: EngineInterface, role: string, answer: string): Promi
         stdin: `${fallbackPrompt(role)}\n\n---\n${answer}`,
         timeoutMs: 120_000,
       })
-      return { packet: r.exitCode === 0 ? parsePacket(r.stdout) : undefined, by: `ollama/${config.ollamaModel.trim()}` }
+      return { packet: r.exitCode === 0 ? parsePacket(redact(r.stdout)) : undefined, by: `ollama/${config.ollamaModel.trim()}` }
     } catch {
       return { by: `ollama/${config.ollamaModel.trim()}` }
     }
@@ -1922,8 +1930,10 @@ async function keptMessageOf($: EngineInterface, job: QueuedJob): Promise<KeptMe
   if (job.run === undefined) return undefined
   const path = undeliveredPath(job.role, job.run)
   // a link out is no missing file: the run is reported as interrupted (N118)
-  const unsafe = await storageProblem($, path)
-  if (unsafe) return { unsafe }
+  // a check that could not be made keeps the job like an unreadable file (N216)
+  const verdict = await storageVerdict($, path)
+  if (verdict?.kind === 'unchecked') return { unreadable: verdict.why }
+  if (verdict) return { unsafe: verdict.why }
   // only a confirmed missing file is no kept message; one that is there but
   // cannot be read keeps the job for the next start (N208)
   let text = ''
@@ -1967,7 +1977,10 @@ async function deliverStored($: EngineInterface, job: QueuedJob): Promise<string
   }
   // the kept message was looked for first, in recover (N97, N103); the
   // stored packet is read only when it is no link out (N108)
-  const unsafe = role ? await storageProblem($, runPath(job.role, run, 'packet.json')) : undefined
+  const verdict = role ? await storageVerdict($, runPath(job.role, run, 'packet.json')) : undefined
+  // a check that could not be made keeps the job (N216)
+  if (verdict?.kind === 'unchecked') return redact(`the stored report could not be checked (${verdict.why}); the job stays queued for the next start`)
+  const unsafe = verdict?.why
   if (unsafe) return reportInterrupted($, job, redact(`the stored report was not read: ${unsafe}`), { noFiles: 'its stored files are not safe to use' })
   // a stored report that is there but cannot be read keeps the job (N208)
   let text = ''
@@ -2092,11 +2105,22 @@ async function reportInterrupted($: EngineInterface, job: QueuedJob, note?: stri
     // the snapshot file is read only when it is no link out (N206)
     const unsafe = await storageProblem($, snapshotPath(role.name, run))
     let before: Snapshot | undefined
+    // a file that was read but holds no valid snapshot is named (N217)
+    let isMalformed = false
     if (!unsafe) {
+      let text: string | undefined
       try {
-        before = restoreSnapshot(JSON.parse(await $.fs.read(snapshotPath(role.name, run))))
+        text = String(await $.fs.read(snapshotPath(role.name, run)))
       } catch {
-        before = undefined
+        text = undefined
+      }
+      if (text !== undefined) {
+        try {
+          before = restoreSnapshot(JSON.parse(text))
+        } catch {
+          before = undefined
+        }
+        isMalformed = !before
       }
     }
     const dir = eff.isolation === 'worktree' ? absolute(relayPath(`worktrees/${role.name}`)) : cwd
@@ -2104,7 +2128,9 @@ async function reportInterrupted($: EngineInterface, job: QueuedJob, note?: stri
       packet,
       unsafe
         ? notChecked(redact(`the snapshot of the run was not read: ${unsafe}`))
-        : await writeCheckOf($, eff.owns, dir, before, await gitStateOf($, dir)),
+        : isMalformed
+          ? notChecked('the snapshot of the run is malformed, so what it wrote is unknown')
+          : await writeCheckOf($, eff.owns, dir, before, await gitStateOf($, dir)),
     )
   }
   // the headline marks the check like a live report does (N10, N86)

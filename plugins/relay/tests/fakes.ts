@@ -198,6 +198,14 @@ export type Scenario =
   // werkbank-relay: credential names that end their line, the values on the
   // next lines (N204)
   | 'pending-password'
+  // werkbank-relay: an Authorization name at the line end, Bearer and its
+  // value on the next line, no JSON (N212)
+  | 'pending-auth'
+  // werkbank-relay: stops in the middle of a password list, no JSON (N213)
+  | 'cut-list'
+  // werkbank-relay: once-escaped JSON with both quote spellings in a
+  // password list (N214)
+  | 'mixed-quote-list'
 
 export type Call = { argv: string[]; cwd?: string; env: Record<string, string>; input?: string; attachment?: string; protocolFile?: string }
 
@@ -320,6 +328,8 @@ export function fakeWorld(
     failAppend: () => false,
     // $.model.complete (the Haiku fallback) rejects
     failModel: false,
+    // the fallback compressor's answer instead of the default one (N215)
+    modelText: undefined as string | undefined,
     // runs after a tool registered (between the start's queue read and the claim)
     afterRegister: (_name: string) => {},
   }
@@ -350,7 +360,7 @@ export function fakeWorld(
   // notifyMode note: an appended packet counts as submitted
   on('session.append', (_$: any, e: any, next: any) => (io.failAppend() ? { deny: 'the session could not be appended to' } : (submitted.push(String(e.message?.content?.[0]?.text ?? '')), next(e))))
   on('model.complete', () => io.failModel ? { deny: 'model unavailable' } : ({
-    value: { isAnswered: true, text: JSON.stringify({ status: 'done', summary: 'Built by haiku.' }), usage: { input_tokens: 1, output_tokens: 1, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 } },
+    value: { isAnswered: true, text: io.modelText ?? JSON.stringify({ status: 'done', summary: 'Built by haiku.' }), usage: { input_tokens: 1, output_tokens: 1, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 } },
   }))
   on('fs.exists', async (_$: any, e: any) => {
     const p = rel(e.path)
@@ -688,6 +698,21 @@ export function fakeWorld(
       if (scenario === 'pending-password') {
         const text = ['{"password":', '', '  [', '  "opaque0pw0x40",', '  {"inner": "opaque0pw0x41"}', '], "next": 1}', '{"api_key":', '  "opaque0pw0x42", "keep": "after0x43"}', '']
         yield { stream: 'stderr', text: text.join('\n') }
+        yield { stream: 'stdout', text: JSON.stringify({ jobId: WERKBANK_JOB, state: 'done', answer: PACKET(), sessionId: 'fsn1-5:9b1f', branch: `agent/relay/${role}`, commits: [], changedFiles: [] }) }
+        return { value: { code: 0, signal: null } }
+      }
+      if (scenario === 'pending-auth') {
+        yield { stream: 'stderr', text: ['{"Authorization":', '  Bearer opaque0x60,', '"n": 1}', ''].join('\n') }
+        return { value: { code: 1, signal: null } }
+      }
+      if (scenario === 'cut-list') {
+        yield { stream: 'stderr', text: ['{"password": [', '  "opaque0x61",', '  "opaque0x62"', ''].join('\n') }
+        return { value: { code: 1, signal: null } }
+      }
+      if (scenario === 'mixed-quote-list') {
+        const bs = String.fromCharCode(92)
+        const uq = `${bs}u0022`
+        yield { stream: 'stderr', text: `{"detail":"{${bs}"password${bs}":[${uq}x]${uq},${bs}"opaque0x64${bs}"],${bs}"n${bs}":1}"}\n` }
         yield { stream: 'stdout', text: JSON.stringify({ jobId: WERKBANK_JOB, state: 'done', answer: PACKET(), sessionId: 'fsn1-5:9b1f', branch: `agent/relay/${role}`, commits: [], changedFiles: [] }) }
         return { value: { code: 0, signal: null } }
       }

@@ -40,6 +40,7 @@ export function toProjectPath(repoPath: string, prefix: string): string {
 }
 
 export type Change = 'created' | 'modified' | 'deleted'
+const CHANGES: readonly unknown[] = ['created', 'modified', 'deleted']
 
 export type WriteCheck = {
   checked: boolean
@@ -137,7 +138,8 @@ function normalise(value: unknown): Packet | undefined {
     artifacts: Array.isArray(v.artifacts)
       ? v.artifacts
           .filter(a => a && typeof a.path === 'string')
-          .map(a => ({ path: a.path, change: a.change ?? 'modified', ...(a.note ? { note: String(a.note) } : {}) }))
+          // change is one of its three words, else modified (N215)
+          .map(a => ({ path: a.path, change: CHANGES.includes(a.change) ? (a.change as Change) : 'modified', ...(a.note ? { note: String(a.note) } : {}) }))
       : [],
     open_questions: [],
     needs_from_main: [],
@@ -286,14 +288,22 @@ export function dict<T>(entries?: Record<string, T>): Record<string, T> {
 const ownEntry = (dirty: Record<string, string>, path: string): string | undefined =>
   Object.prototype.hasOwnProperty.call(dirty, path) ? dirty[path] : undefined
 
+// A HEAD as a snapshot keeps it: empty (unborn) or a Git object id, hex
+// only, so it never reads as an option to git (N217).
+const isSnapshotHead = (h: unknown): h is string => typeof h === 'string' && (h === '' || /^[0-9a-fA-F]{1,64}$/.test(h))
+
 // A snapshot read back from its file, its file list as a dict (N207).
+// Undefined when any part of it is malformed: a list entry that is no text,
+// a HEAD that is neither empty nor an object id, a prefix that is no text (N217).
 export function restoreSnapshot(v: unknown): Snapshot | undefined {
   const s = v as Partial<Snapshot> | null
-  if (!s || typeof s !== 'object' || typeof s.head !== 'string' || !s.dirty || typeof s.dirty !== 'object') return undefined
+  if (!s || typeof s !== 'object' || !isSnapshotHead(s.head) || !s.dirty || typeof s.dirty !== 'object' || Array.isArray(s.dirty)) return undefined
+  if (s.prefix !== undefined && typeof s.prefix !== 'string') return undefined
   const dirty = dict<string>()
   for (const k of Object.keys(s.dirty)) {
     const value = (s.dirty as Record<string, unknown>)[k]
-    if (typeof value === 'string') dirty[k] = value
+    if (typeof value !== 'string') return undefined
+    dirty[k] = value
   }
   return { head: s.head, dirty, ...(typeof s.prefix === 'string' ? { prefix: s.prefix } : {}) }
 }
@@ -650,24 +660,33 @@ export function quotedValue(text: string, at: number): Quoted | undefined {
   return { start, stop: text.length, end: text.length, isClosed: false }
 }
 
-// Reads a JSON list or object from `from` on, starting at bracket depth
-// `depth`, over line breaks too: `end` is just after the bracket that brings
-// the depth back to 0, undefined when the text ends first. Strings inside are
-// read by quotedValue at the level of the name's quote `q`, so no bracket in
-// one counts (N198).
-function scanJson(text: string, from: number, q: string, depth: number): { end?: number; depth: number } {
-  const opensString = (i: number) =>
-    q === '"' ? text[i] === '"' : q === '\\"' ? text.startsWith('\\"', i) : text.slice(i, i + q.length).toLowerCase() === q.toLowerCase()
+// The quote of once-escaped JSON written as a Unicode escape (backslash, u,
+// 0022), built here so this file needs no such escape in its own text.
+const UNICODE_QUOTE = `${String.fromCharCode(92)}u0022`
+const isUnicodeQuoteAt = (text: string, i: number) => text.slice(i, i + UNICODE_QUOTE.length).toLowerCase() === UNICODE_QUOTE
+
+// Reads a JSON list or object from `from` on, with `stack` the closers still
+// owed (innermost last), over line breaks too: `end` is just after the
+// bracket that closes the outermost one, undefined when the text ends first.
+// Strings inside are read by quotedValue at the level of the name's quote
+// `q`; on the escaped level both spellings of the quote count (N198, N214).
+// A closer that does not match the innermost opener is passed over (N214).
+function scanJson(text: string, from: number, q: string, stack: string): { end?: number; stack: string } {
+  const opensString = (i: number) => (q === '"' ? text[i] === '"' : text.startsWith('\\"', i) || isUnicodeQuoteAt(text, i))
   for (let i = from; i < text.length; ) {
     if (opensString(i)) {
       const v = quotedValue(text, i)
-      if (!v?.isClosed) return { depth }
+      if (!v?.isClosed) return { stack }
       i = v.end
       continue
     }
     const d = text[i]
-    if (d === '[' || d === '{') depth++
-    else if ((d === ']' || d === '}') && --depth <= 0) return { end: i + 1, depth: 0 }
+    if (d === '[') stack += ']'
+    else if (d === '{') stack += '}'
+    else if ((d === ']' || d === '}') && stack.endsWith(d)) {
+      stack = stack.slice(0, -1)
+      if (!stack) return { end: i + 1, stack: '' }
+    }
     // at the plain level a backslash outside a string escapes nothing JSON
     // knows; it is passed over with the next character
     else if (d === '\\' && q === '"') {
@@ -676,33 +695,36 @@ function scanJson(text: string, from: number, q: string, depth: number): { end?:
     }
     i++
   }
-  return { depth }
+  return { stack }
 }
+
+// An unquoted Authorization value: its scheme and the value after it (N212).
+const AUTH_SCALAR = /^(?:(?:bearer|basic|token|digest)\s+)?[^\s,}\])"'\\;]+/i
 
 // Where an unquoted JSON value that starts at `at` ends: a list or object up
 // to its matching bracket (scanJson), else a scalar up to , } ] ) or space
-// (N192). Without a matching bracket in the whole text, the value runs to the
-// line end (N198).
-function jsonValueEnd(text: string, at: number, q: string): number {
+// (N192), for Authorization with its scheme (N212). Without a matching
+// bracket in the whole text, the value runs to the end of the text (N213).
+function jsonValueEnd(text: string, at: number, q: string, isAuth = false): number {
   const c = text[at]
   if (c !== '[' && c !== '{') {
-    const scalar = /^[^\s,}\])"'\\]+/.exec(text.slice(at))
+    const scalar = (isAuth ? AUTH_SCALAR : /^[^\s,}\])"'\\]+/).exec(text.slice(at))
     return scalar ? at + scalar[0].length : at
   }
-  const r = scanJson(text, at, q, 0)
-  if (r.end !== undefined) return r.end
-  const lineEnd = text.slice(at).search(/[\r\n]/)
-  return lineEnd < 0 ? text.length : at + lineEnd
+  const r = scanJson(text, at, q, '')
+  return r.end ?? text.length
 }
 
 // A credential value left open at the end of a text: a list or object with
-// its depth, or (isPending) a name and separator whose value has not begun
-// yet; with the quote level it is read at. Undefined when none (N198, N204).
-type OpenValue = { depth: number; q: string; isPending?: true }
+// the closers it still owes, or (isPending) a name and separator whose value
+// has not begun yet; with the quote level it is read at and whether the name
+// is Authorization. Undefined when none (N198, N204, N212).
+type OpenValue = { stack: string; q: string; isPending?: true; isAuth?: true }
 function openValueAfter(text: string): OpenValue | undefined {
   const t = decodeNameEscapes(text)
   let first: (OpenValue & { at: number }) | undefined
   for (const head of [AUTH_HEAD, KEY_HEAD]) {
+    const auth = head === AUTH_HEAD ? { isAuth: true as const } : {}
     head.lastIndex = 0
     for (let m = head.exec(t); m; m = head.exec(t)) {
       if (m[0].length === 0) head.lastIndex++
@@ -711,22 +733,24 @@ function openValueAfter(text: string): OpenValue | undefined {
       if (q === undefined || (first && at >= first.at)) continue
       // nothing after the separator: the value comes on a later line (N204)
       if (!t.slice(at).trim()) {
-        first = { depth: 0, q, isPending: true, at }
+        first = { stack: '', q, isPending: true, ...auth, at }
         continue
       }
       if (quotedValue(t, at) || (t[at] !== '[' && t[at] !== '{')) continue
-      const r = scanJson(t, at, q, 0)
-      if (r.end === undefined) first = { depth: r.depth, q, at }
+      const r = scanJson(t, at, q, '')
+      if (r.end === undefined) first = { stack: r.stack, q, ...auth, at }
     }
   }
-  return first && { depth: first.depth, q: first.q, ...(first.isPending ? { isPending: true as const } : {}) }
+  if (!first) return undefined
+  const { at: _at, ...open } = first
+  return open
 }
 
 // For text read line by line (live.log): a credential list or object that a
 // line leaves open is replaced in the following lines too, up to its closing
 // bracket (N198); a credential name that ends a line has its value replaced
-// in the first line with content after it (N204). Returns the line as it may
-// be passed on to redact().
+// in the first line with content after it (N204), an Authorization value with
+// its scheme (N212). Returns the line as it may be passed on to redact().
 export function credentialValueCarry(): (line: string) => string {
   let open: OpenValue | undefined
   return (line: string) => {
@@ -736,27 +760,27 @@ export function credentialValueCarry(): (line: string) => string {
       const i = line.search(/\S/)
       // an empty line keeps the value pending
       if (i < 0) return line
-      const q = open.q
+      const { q, isAuth } = open
       open = undefined
       const v = quotedValue(line, i)
       let end: number
       if (v) end = v.isClosed ? v.end : line.length
       else if (line[i] === '[' || line[i] === '{') {
-        const r = scanJson(line, i, q, 0)
+        const r = scanJson(line, i, q, '')
         if (r.end === undefined) {
-          open = { depth: r.depth, q }
+          open = { stack: r.stack, q }
           return `${line.slice(0, i)}${SECRET}`
         }
         end = r.end
-      } else end = jsonValueEnd(line, i, q)
+      } else end = jsonValueEnd(line, i, q, !!isAuth)
       if (end > i) {
         head = `${line.slice(0, i)}${SECRET}`
         rest = line.slice(end)
       }
     } else if (open) {
-      const r = scanJson(line, 0, open.q, open.depth)
+      const r = scanJson(line, 0, open.q, open.stack)
       if (r.end === undefined) {
-        open = { depth: r.depth, q: open.q }
+        open = { stack: r.stack, q: open.q }
         return SECRET
       }
       head = SECRET
@@ -775,8 +799,9 @@ function nameQuote(head: string): string | undefined {
 }
 
 // Replaces the quoted value after each match of `head` (N156); after a quoted
-// JSON name an unquoted value goes whole too, as a string (N192).
-function redactQuoted(text: string, head: RegExp, keep?: (name: string, value: string) => boolean): string {
+// JSON name an unquoted value goes whole too, as a string (N192), for
+// Authorization with its scheme (N212).
+function redactQuoted(text: string, head: RegExp, keep?: (name: string, value: string) => boolean, isAuth = false): string {
   let out = ''
   let last = 0
   head.lastIndex = 0
@@ -785,7 +810,7 @@ function redactQuoted(text: string, head: RegExp, keep?: (name: string, value: s
     const v = at >= last ? quotedValue(text, at) : undefined
     const q = !v && at >= last ? nameQuote(m[0]) : undefined
     if (q !== undefined) {
-      const end = jsonValueEnd(text, at, q)
+      const end = jsonValueEnd(text, at, q, isAuth)
       if (end > at && !keep?.(m[1] ?? '', text.slice(at, end))) {
         out += `${text.slice(last, at)}${q}${SECRET}${q}`
         last = end
@@ -849,7 +874,7 @@ export function hasCredential(text: string): boolean {
 export function redact(text: string): string {
   let out = redactKeys(decodeNameEscapes(text))
   // quoted values first, read with their escapes (N156)
-  out = redactQuoted(out, AUTH_HEAD)
+  out = redactQuoted(out, AUTH_HEAD, undefined, true)
   out = redactQuoted(out, KEY_HEAD, (name, value) => isCounterName(name) && isCount(value))
   for (const [re, by] of SECRET_PATTERNS) out = typeof by === 'string' ? out.replace(re, by) : out.replace(re, by)
   return out

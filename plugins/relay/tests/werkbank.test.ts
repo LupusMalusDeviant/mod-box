@@ -2194,6 +2194,84 @@ describe('werkbank, Nachtrag 2i (ninth Codex review)', () => {
     expect(await w.status($)).toContain('relay left out 3 job(s)')
   })
 
+  test('N212: an Authorization value on the next line goes with its scheme', { options: WB }, async ($: any, on: any) => {
+    const w = world(on)
+    w.play('pending-auth')
+    if (!(await w.start($))) return
+    await w.send($, { role: 'coder', task: 't' })
+    await w.until(() => w.submitted.length === 1)
+    expect(w.files.get('.relay/runs/coder/live.log') ?? '').not.toContain('opaque0x60')
+    expect(w.submitted[0]).not.toContain('opaque0x60')
+  })
+
+  test('N213: a werkbank run that stops inside a password list leaks none of it', { options: WB }, async ($: any, on: any) => {
+    const w = world(on)
+    w.play('cut-list')
+    if (!(await w.start($))) return
+    await w.send($, { role: 'coder', task: 't' })
+    await w.until(() => w.submitted.length === 1)
+    for (const text of [w.files.get('.relay/runs/coder/live.log') ?? '', w.files.get('.relay/runs/coder/001.packet.json') ?? '', w.submitted[0]!]) {
+      expect(text).not.toContain('opaque0x61')
+      expect(text).not.toContain('opaque0x62')
+    }
+  })
+
+  test('N214: both quote spellings count inside an escaped password list', { options: WB }, async ($: any, on: any) => {
+    const w = world(on)
+    w.play('mixed-quote-list')
+    if (!(await w.start($))) return
+    await w.send($, { role: 'coder', task: 't' })
+    await w.until(() => w.submitted.length === 1)
+    expect(w.files.get('.relay/runs/coder/live.log') ?? '').not.toContain('opaque0x64')
+  })
+
+  test('N215: the fallback compressor answer is redacted, change is one of its words', async ($: any, on: any) => {
+    const w = world(on)
+    w.play('no-packet')
+    w.io.modelText = JSON.stringify({ status: 'done', summary: 's', artifacts: [{ path: 'src/a.ts', change: { password: 'opaque0x65' } }] })
+    if (!(await w.start($))) return
+    await w.send($, { role: 'docs', task: 't' })
+    await w.until(() => w.submitted.length === 1)
+    const text = w.files.get('.relay/runs/docs/001.packet.json') ?? ''
+    expect(text).not.toContain('opaque0x65')
+    expect(JSON.parse(text).artifacts[0].change).toBe('modified')
+  })
+
+  test('N216: a path check of the kept message that fails once keeps the job', { options: WB }, async ($: any, on: any) => {
+    const message = '[relay] coder · run 1 finished (werkbank)\nStatus: done\nrun one did it'
+    const file = `<!-- relay job j_1 length ${message.length} -->\n${message}`
+    const w = world(on, {
+      files: { '.relay/queue.json': JSON.stringify(runningJob(1)), '.relay/runs/coder/undelivered-1.md': file },
+      store: { 'roles:/w': { coder: { name: 'coder', runs: 1, isBusy: true } } },
+    })
+    let failures = 1
+    w.io.failExists = (p: string) => p === '.relay/runs/coder/undelivered-1.md' && failures-- > 0
+    await w.clock.set(10 * 60_000)
+    if (!(await w.start($))) return
+    await w.until(() => false, 20)
+    expect(w.submitted).toHaveLength(0)
+    expect(w.files.get('.relay/runs/coder/undelivered-1.md')).toBe(file)
+    expect(w.files.get('.relay/queue.json') ?? '').toContain('"j_1"')
+  })
+
+  for (const [name, snapshot] of [
+    ['a list entry that is no text', { head: 'aaa', dirty: { 'docs/x.md': 5 } }],
+    ['a HEAD that reads as an option', { head: '--output=x', dirty: {} }],
+  ] as const) {
+    test(`N217: a snapshot with ${name} makes the check incomplete`, async ($: any, on: any) => {
+      const job = { id: 'j_1', role: 'docs', task: 't', enqueuedAt: '1970-01-01T00:00:00.000Z', state: 'running', run: 1, backend: 'claude' }
+      const w = world(on, {
+        files: { '.relay/queue.json': JSON.stringify({ version: 1, jobs: [job] }), '.relay/tmp/docs-1.snapshot.json': JSON.stringify(snapshot) },
+        store: { 'roles:/w': { docs: { name: 'docs', runs: 1, isBusy: true } } },
+      })
+      await w.clock.set(10 * 60_000)
+      if (!(await w.start($))) return
+      await w.until(() => w.submitted.length === 1)
+      expect(w.submitted[0]).toContain('⚠ write check incomplete')
+      expect(w.submitted[0]).toContain('the snapshot of the run is malformed')
+    })
+  }
+
   test('N112: worker_status shows no worktree for werkbank', { options: WB }, async ($: any, on: any) => {
     const w = world(on)
     if (!(await w.start($))) return
