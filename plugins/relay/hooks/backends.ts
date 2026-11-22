@@ -623,6 +623,11 @@ const werkbank: Backend = {
       const cause = r.exitCode === undefined && (r.signal || r.streamError) ? cliFailure(r) : undefined
       return { answer: '', usage: {}, error: cause ?? { kind: 'cli', message: cut(r.stderr.trim() || 'werkbank-relay printed no JSON') } }
     }
+    // werkbank-relay writes every field, the empty ones as null: a null
+    // counts as a missing field (N224, replaces N77)
+    for (const key of ['error', 'sessionId', 'commits', 'changedFiles']) {
+      if (json[key] === null) delete json[key]
+    }
     const u = obj(json.usage)
     const usage = clean({
       costUsd: num(u.costUsd),
@@ -633,7 +638,7 @@ const werkbank: Backend = {
     })
     const e = json.error && typeof json.error === 'object' && !Array.isArray(json.error) ? obj(json.error) : undefined
     // an error that is there but no object is a protocol failure (N69)
-    // a present key with anything but an object, null included (N69, N77)
+    // a present key with anything but an object (N69); null is gone already (N224)
     const isErrorMalformed = Object.prototype.hasOwnProperty.call(json, 'error') && !e
     // only the table's own keys count, anything else is unknown (N69)
     const errKind = str(e?.kind) ?? ''

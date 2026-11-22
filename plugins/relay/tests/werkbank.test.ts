@@ -415,6 +415,16 @@ describe('werkbank, Nachtrag 2c (third Codex review)', () => {
     expect(w.submitted[0]).toContain('werkbank-relay reported an error (cli): werkbank-relay sent a malformed error field')
   })
 
+  test('N224: a done job with "error": null stays done', { options: WB }, async ($: any, on: any) => {
+    const w = world(on)
+    w.play('real-nulls')
+    if (!(await w.start($))) return
+    await w.send($, { role: 'coder', task: 't' })
+    await w.until(() => w.submitted.length === 1)
+    expect(w.submitted[0]).toContain('Status: done')
+    expect(w.submitted[0]).not.toContain('malformed')
+  })
+
   test('N71: killed before the JSON names the signal, not "could not start"', { options: WB }, async ($: any, on: any) => {
     const w = world(on)
     w.play('killed-early')

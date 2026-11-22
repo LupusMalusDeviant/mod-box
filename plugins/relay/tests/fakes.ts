@@ -56,6 +56,8 @@ export type Scenario =
   | 'bad-commits'
   // werkbank-relay: a done job whose error field is a string, not an object
   | 'error-malformed'
+  // werkbank-relay: a done job with "error": null, as the real program prints it (N224)
+  | 'real-nulls'
   // werkbank-relay: progress on stderr, then killed before any JSON
   | 'killed-early'
   // werkbank-relay: a session id that looks like a credential
@@ -881,6 +883,8 @@ export function fakeWorld(
         verify: { command: 'npm test', exitCode: isRed ? 1 : 0, tests: { total: 147, passed: isRed ? 145 : 147, failed: isRed ? 2 : 0 } },
         ...(error ? { error } : {}),
         ...(scenario === 'error-malformed' ? { error: 'lost the Leitstand' } : {}),
+        // the real program writes every field, the empty ones as null (N224)
+        ...(scenario === 'real-nulls' ? { error: null } : {}),
       }
       if (scenario === 'signal-after-done') {
         yield { stream: 'stdout', text: JSON.stringify(json) }

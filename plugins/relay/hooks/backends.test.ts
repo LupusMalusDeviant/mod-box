@@ -558,8 +558,8 @@ describe('werkbank: parsing', () => {
     expect(parse(job({ error: 'lost it' })).error).toEqual(malformed)
     expect(parse(job({ error: ['x'] })).error).toEqual(malformed)
     expect(parse(job({ error: 7 })).error).toEqual(malformed)
-    // N77: a present null is no object either; a missing key is no error
-    expect(parse(job({ error: null })).error).toEqual(malformed)
+    // N224 (replaces N77): a null error is a missing one, no error
+    expect(parse(job({ error: null })).error).toBeUndefined()
     expect(parse(job()).error).toBeUndefined()
     for (const kind of ['constructor', 'toString', 'hasOwnProperty']) {
       expect(parse({ error: { kind, message: 'm' } }, 2).error).toEqual({ kind: 'unknown', message: 'm' })
@@ -813,8 +813,33 @@ describe('werkbank: write check and rules', () => {
     const p = (o: Record<string, unknown>) => BACKENDS.werkbank.parse(done(JSON.stringify(job(o)))).isSessionRejected
     expect(p({ sessionId: '' })).toBe(true)
     expect(p({ sessionId: 5 })).toBe(true)
-    expect(p({ sessionId: null })).toBe(true)
+    // N224: null is a missing session id, not a rejected one
+    expect(p({ sessionId: null })).toBeUndefined()
     expect(p({})).toBeUndefined()
+  })
+
+  test('N224: the real werkbank-relay output with its null fields', () => {
+    // exactly what werkbank-relay.exe prints when its token file is missing (exit 2)
+    const authFail =
+      '{"jobId":null,"state":null,"answer":"","sessionId":null,"usage":null,"branch":null,"commits":null,"changedFiles":null,"verify":null,"error":{"kind":"auth","message":"Token-Datei fehlt: C:/nope/x.token."}}'
+    const a = BACKENDS.werkbank.parse(done(authFail, 2))
+    expect(a.error?.kind).toBe('auth')
+    expect(a.error?.message).not.toContain('malformed')
+    expect(a.isSessionRejected).toBeUndefined()
+    // a done job as the real program writes it: every field, the empty ones null
+    const ok = BACKENDS.werkbank.parse(
+      done(JSON.stringify(job({ error: null, sessionId: null, verify: { command: 'npm test', exitCode: 0, tests: { total: 3, passed: 3, failed: 0, skipped: null } } }))),
+    )
+    expect(ok.error).toBeUndefined()
+    expect(ok.isSessionRejected).toBeUndefined()
+    expect(ok.remote?.state).toBe('done')
+    // a job that failed after it was queued: its lists are null, not malformed
+    const lost = BACKENDS.werkbank.parse(
+      done(JSON.stringify({ jobId: 'wb-1', state: null, answer: '', sessionId: null, usage: null, branch: null, commits: null, changedFiles: null, verify: null, error: { kind: 'network', message: 'gone' } }), 2),
+    )
+    expect(lost.error?.kind).toBe('network')
+    expect(lost.remote?.isFileListMalformed).toBeUndefined()
+    expect(lost.remote?.changedFiles).toBeUndefined()
   })
 
   test('N93: every job dropped for its role or run is counted', () => {

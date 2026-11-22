@@ -649,6 +649,7 @@ Ein zweites Codex-Review (Stand `63ba3bf`) fand 14 weitere Befunde (6 hoch, 8 mi
 | W-P1 | Nachtrag 2 abnehmen | [braucht Nutzer/Unreal/Hardware] |
 | W-P2 | Backend, Einstellungen, Fake, Tests nach 15.1 und 15.2; README und Skill `relay-orchestrator` um werkbank ergänzen; Fassung 0.5.0 | [Claude-prüfbar] |
 | W-P3 | Echter Lauf mit dem gebauten `werkbank-relay.exe` gegen den Leitstand: Fassung (N46), JSON-Felder wie im Fake (`jobId` als Text oder ganze Zahl, N183), Abbruch bei Timeout (N45), Stopp nach einem Lesefehler (N180) | [braucht Nutzer/Unreal/Hardware] |
+| W-P4 | Zurückgestellt nach dem Probelauf (Sortierung vom 22. November 2026, siehe 15.32): `werkbank-relay` kennt kein `--version`, die Fassungsprüfung (N46) bleibt still (Sache des Werkbank-Repos); festgehaltene Grenzen N2 (Aufträge im Klartext in `queue.json`), N16 (nicht atomarer Anspruch), N20 (nicht erkannte Zugangsdaten im Brief), N79 (eigener Testlauf ohne relay), N116 und N186 (Wettläufe, die die Vorrichtung nicht nachstellt), N45 (nur hartes Beenden); offen K5/P3 (echte CLI-Vorlagen für codex/opencode) und V5/P9 (Prozessbaum unter Windows) | [braucht Nutzer/Unreal/Hardware] |
 
 **Stand 18. November 2026:** W-P1 erledigt (abgenommen), W-P2 in relay 0.5.0 gebaut und mit `claude plugin test plugins/relay` geprüft (neue Datei `tests/werkbank.test.ts`, reine Fälle in `hooks/backends.test.ts`). Offen ist W-P3. Ein unterbrochener werkbank-Lauf (Neustart des Plugins) wird wie jeder andere als `interrupted` gemeldet; seine Schreibprüfung findet keinen Schnappschuss und heißt `incomplete` (bisheriges Verhalten aus 7.2, unverändert; ersetzt durch N53).
 
@@ -1234,3 +1235,17 @@ Anmerkungen:
 - **N221:** Ein `packet.json` von vor diesem Nachtrag hat keine `jobId`. Für einen solchen Lauf bleibt es beim Verhalten von N15 und N103.
 - **N222:** Die Test-Vorrichtung liefert jetzt volle Objekt-IDs (40 Hex-Zeichen) statt kurzer Platzhalter. `git cat-file` läuft nur, wenn sich HEAD während des Laufs geändert hat.
 - **N223:** Gekürzt wird erst nach der Bereinigung. „…“ und „ (not exact)“ zählen mit.
+
+### 15.32 Nachtrag 2γ (22. November 2026): Abgleich mit dem echten `werkbank-relay`
+
+**Status: abgenommen am 22. November 2026.** Kein Review-Befund, sondern ein Abgleich vor dem Probelauf (W-P3): Das gebaute `werkbank-relay.exe` (Werkbank-Repo, `src/Werkbank.Relay`, Stand `73cdaef`) schreibt sein End-JSON mit jedem Feld, auch den leeren. Bei Erfolg steht dort immer `"error": null`, bei einem eigenen Fehler zusätzlich `"sessionId": null`, `"commits": null` und `"changedFiles": null`. Nach N77 galt `"error": null` als Protokollfehler, damit wäre jeder fertige Auftrag als Fehler „werkbank-relay sent a malformed error field“ angekommen. Entschieden vom Nutzer am 22. November 2026: relay passt sich an, nur dieser Punkt wird vor dem Probelauf behoben; alles andere steht unter W-P4.
+
+| Nr. | Änderung | Ersetzt / ergänzt |
+|---|---|---|
+| N224 | **Ein Feld mit `null` zählt wie ein fehlendes.** Steht `error`, `sessionId`, `commits` oder `changedFiles` im End-JSON mit dem Wert `null`, behandelt relay das Feld, als fehlte es. `error: null` ist also kein Fehler; `sessionId: null` verwirft die alte Session nicht (es gilt „keine Session gemeldet“, N78); `changedFiles: null` ist keine fehlerhafte Liste (N49), sondern keine. Jeder andere Wert, der kein Objekt bzw. kein brauchbarer Text oder keine Liste ist, bleibt ein Fehler wie bisher (N69, N91, N49). | N77 (zurückgenommen), N91 (für `null`) |
+
+**Tests:** je ein Fall, der mit `193560f` fehlschlägt:
+- **N224 (rein, `hooks/backends.test.ts`):** genau die Ausgabe des echten Programms bei fehlender Token-Datei (`auth`, alle Felder `null`) sowie ein `done` mit `error: null` und `sessionId: null`. Kein Protokollfehler, keine abgelehnte Session, keine fehlerhafte Dateiliste.
+- **N224 (mit Fake, `tests/werkbank.test.ts`):** Szenario `real-nulls`, ein `done` mit `"error": null` wie vom echten Programm. Das Paket bleibt `done`.
+
+**Stand (22. November 2026):** N224 umgesetzt. `claude plugin test plugins/relay`: 340 pass, 0 fail. Ohne die Änderung in `backends.ts` schlagen 4 Fälle fehl (336 pass, 4 fail): die beiden neuen N224-Fälle und die angepassten Fälle zu N69/N77 und N91. `claude plugin test .`: 498 pass, 0 fail.
