@@ -24,12 +24,219 @@ export type Scenario =
   | 'done-then-error'
   // a done packet, no error event, but exit 1
   | 'answer-exit1'
+  // werkbank-relay: the job's end states (contract 0002, section 1)
+  | 'red'
+  | 'needs-approval'
+  | 'timed-out'
+  | 'limit'
+  | 'failed'
+  | 'cancelled'
+  // werkbank-relay: the job ran fresh on another worker (new sessionId)
+  | 'session-moved'
+  // werkbank-relay: the program itself could not work (exit 2, error only)
+  | 'error-auth'
+  | 'error-network'
+  | 'error-repo'
+  | 'error-budget'
+  // werkbank-relay: text instead of JSON on stdout
+  | 'not-json'
+  // werkbank-relay: a red job whose answer is prose without a packet
+  | 'red-prose'
+  // codex (stdout) and werkbank-relay (stderr): a private key printed over
+  // several lines, its body inside an event, then an ok answer
+  | 'key-lines'
+  // werkbank-relay: two progress lines a clock tick apart, then waits for
+  // releaseHeld() before it answers like ok
+  | 'progress-held'
+  // werkbank-relay: all progress at once, then silent until releaseHeld()
+  | 'progress-quiet'
+  // werkbank-relay: a done object, then the process is killed (no exit code)
+  | 'signal-after-done'
+  // werkbank-relay: commits with entries that are no commit ids
+  | 'bad-commits'
+  // werkbank-relay: a done job whose error field is a string, not an object
+  | 'error-malformed'
+  // werkbank-relay: a done job with "error": null, as the real program prints it (N224)
+  | 'real-nulls'
+  // werkbank-relay: progress on stderr, then killed before any JSON
+  | 'killed-early'
+  // werkbank-relay: a session id that looks like a credential
+  | 'session-token'
+  // werkbank-relay: a packet with status ["done"] and a write outside owns
+  | 'status-array'
+  // werkbank-relay: an answer with a key whose END is of another kind
+  | 'key-mismatch'
+  // codex: key markers JSON-escaped, each in its own event, then an ok answer
+  | 'key-escaped'
+  // werkbank-relay: a whole JSON-escaped key in one stderr line, then exit 1
+  // without JSON on stdout
+  | 'key-escaped-stderr'
+  // werkbank-relay: a failed job (repo error), then killed by SIGTERM
+  | 'failed-signal'
+  // werkbank-relay: a whole key in one stderr JSON line, a letter of its
+  // markers escaped (BEGIN), then exit 1 without JSON on stdout
+  | 'key-letter-stderr'
+  // werkbank-relay: a packet whose risks hold a key's start, body and end
+  | 'key-split-risks'
+  // werkbank-relay: a packet whose JSON holds a key's start in decisions, its
+  // body in summary and its end in risks (N100)
+  | 'key-across-fields'
+  // codex: one event with a key's start, body and end in three fields; the
+  // shown field holds only the body (N101)
+  | 'key-fields-event'
+  // werkbank-relay: a key opens on stderr and never ends; the JSON error
+  // carries the body (N101)
+  | 'key-open-error'
+  // codex: an error event, then killed by SIGTERM (N106)
+  | 'error-signal'
+  // werkbank-relay: a key opens in the answer's prose and goes on in the
+  // packet's summary (N107)
+  | 'key-into-packet'
+  // codex: a key opens on stderr, its body is an error event on stdout (N114)
+  | 'key-stderr-event'
+  // werkbank-relay: a key opens on stderr, its body is in the answer (N114)
+  | 'key-stderr-answer'
+  // werkbank-relay: a JSON example in the prose, then a key around the relay
+  // block; the redaction removes the block (N117)
+  | 'key-fence-example'
+  // werkbank-relay: BEGIN on stderr, the body in the answer, END on stderr
+  // after it (N120)
+  | 'key-closed-around-answer'
+  // codex: BEGIN on stderr, the body as an error event, END on stderr (N121)
+  | 'key-closed-around-event'
+  // werkbank-relay: an example relay block marked done, then a key around the
+  // real one (N123)
+  | 'key-example-block'
+  // werkbank-relay: a key marker in a stdout field, the body as the error
+  // message (N127)
+  | 'key-marker-error'
+  // werkbank-relay: BEGIN on stdout without its line end, the body on stderr
+  // before the stdout line ends (N128)
+  | 'key-fragment'
+  // werkbank-relay: stdout opens a key, stderr gets the body without its line
+  // end, stdout closes the key, then stderr ends the line (N134)
+  | 'key-split-fragment'
+  // werkbank-relay: a key marker in the answer, the body as verify.command
+  // (N135)
+  | 'key-verify-command'
+  // werkbank-relay: a key marker on stderr, the body in sessionId and
+  // usage.model (N141)
+  | 'key-session-model'
+  // werkbank-relay: a quoted Authorization value on stderr (N142)
+  | 'quoted-auth'
+  // werkbank-relay: quoted Authorization values with an escaped quote inside,
+  // plain and as JSON (N149)
+  | 'quoted-auth-escaped'
+  // werkbank-relay: a key marker on stderr, placeholders in jobId and state
+  // (N150)
+  | 'key-bad-state'
+  // werkbank-relay: a whole answer, then the stream read fails with an error
+  // that holds a key marker (N155)
+  | 'key-read-error'
+  // werkbank-relay: once-escaped JSON on stderr, a key value with a quote
+  // inside and an Authorization value ending in a backslash (N156)
+  | 'quoted-escaped-json'
+  // werkbank-relay: once-escaped JSON on stderr whose key value holds a
+  // \u005c before a quote (N160)
+  | 'quoted-unicode-escape'
+  // werkbank-relay: once-escaped JSON on stderr whose values are quoted with
+  // \u0022 (N166)
+  | 'quoted-unicode-quotes'
+  // werkbank-relay: a failed job whose usage.model holds a line break and a
+  // Status: done line (N168)
+  | 'multiline-model'
+  // werkbank-relay: a job in a state relay does not know, with an error (N171)
+  | 'unknown-state'
+  // werkbank-relay: a key marker on stderr, changed files, no valid commit id
+  // (N172)
+  | 'key-files-no-commit'
+  // werkbank-relay: the read fails at once, with no output (a missing
+  // executable, N173)
+  | 'no-start-read-error'
+  // werkbank-relay: a key marker on stderr, then output without JSON (N174)
+  | 'key-no-json'
+  // werkbank-relay: an unusable file list and only invalid commit ids (N175)
+  | 'malformed-both'
+  // werkbank-relay: a state of several thousand characters over many lines
+  // (N176)
+  | 'long-state'
+  // werkbank-relay: a job without state, with an error (N177)
+  | 'no-state'
+  // werkbank-relay: a done job whose state has a line break at its end (N178)
+  | 'padded-state'
+  // werkbank-relay: a job whose branch and jobId are long and span lines (N179)
+  | 'long-branch-job'
+  // werkbank-relay: one stderr line, then the read fails (N181)
+  | 'read-error-after-output'
+  // werkbank-relay: the job id as a whole number, and as a fraction (N183)
+  | 'numeric-job'
+  | 'fraction-job'
+  // werkbank-relay: a credential name escaped as \u0077 on stderr (N185)
+  | 'escaped-name'
+  // werkbank-relay: a packet with an extra numeric password field (N187)
+  | 'packet-numeric-password'
+  // werkbank-relay: a key marker on stderr, then it hangs (N190)
+  | 'key-then-hang'
+  // werkbank-relay: a state that reads done once an escaped o is written out
+  // (N191)
+  | 'escaped-done-state'
+  // werkbank-relay: unquoted JSON credential values on stderr (N192)
+  | 'json-unquoted-credentials'
+  // werkbank-relay: a packet with a password list (N192)
+  | 'packet-password-list'
+  // werkbank-relay: a password list over several stderr lines (N198)
+  | 'pretty-password-list'
+  // werkbank-relay: a packet with a password list over several lines (N198)
+  | 'packet-pretty-list'
+  // werkbank-relay: once-escaped JSON whose password list has ] in an element (N198)
+  | 'escaped-bracket-list'
+  // werkbank-relay: a key opener with a hyphen escaped four times, the body
+  // on the next stderr line (N199)
+  | 'key-deep-escape'
+  // werkbank-relay: a changed file name with a NUL in it (N202)
+  | 'nul-file'
+  // claude: an answer with a private key marker (N203)
+  | 'claude-key'
+  // werkbank-relay: credential names that end their line, the values on the
+  // next lines (N204)
+  | 'pending-password'
+  // werkbank-relay: an Authorization name at the line end, Bearer and its
+  // value on the next line, no JSON (N212)
+  | 'pending-auth'
+  // werkbank-relay: stops in the middle of a password list, no JSON (N213)
+  | 'cut-list'
+  // werkbank-relay: once-escaped JSON with both quote spellings in a
+  // password list (N214)
+  | 'mixed-quote-list'
+  // werkbank-relay: an Authorization name, Bearer and the value on three
+  // lines, no JSON (N219)
+  | 'pending-auth-3'
+  // werkbank-relay: an Authorization Digest line with its parameters, no
+  // JSON (N220)
+  | 'digest-auth'
 
-export type Call = { argv: string[]; cwd?: string; env: Record<string, string>; input?: string; attachment?: string }
+export type Call = { argv: string[]; cwd?: string; env: Record<string, string>; input?: string; attachment?: string; protocolFile?: string }
+
+// A made-up private key over several lines (no real key), for N51.
+export const KEY_LINES = ['-----BEGIN RSA PRIVATE KEY-----', '-----END RSA PRIVATE KEY-----'] as const
+export const KEY_BODY = 'MIIEexampleNotARealKeyBody0001'
+
+// What the fake werkbank-relay reports, so tests can change it per world.
+export const WERKBANK_JOB = 'wb-20261118-7'
+export const WERKBANK_COMMIT = 'abc1234def5678'
+// A made-up key (no real one) whose first END is of another kind, for N74.
+export const MISMATCHED_BODY = 'afterTheWrongEndNotARealKey0002'
+const MISMATCHED_KEY = ['-----BEGIN RSA PRIVATE KEY-----', 'MIIEexample', '-----END EC PRIVATE KEY-----', MISMATCHED_BODY, '-----END RSA PRIVATE KEY-----'].join('\n')
+
+// A made-up session id the redaction would change (no real token), for N72.
+export const WERKBANK_TOKEN_SESSION = 'token:abcdef0123456789abcd'
 
 // Placeholder credentials (no real ones) the leak scenarios put into every
 // output channel, in the forms relay redacts: Authorization header,
 // key=value, user:password in a URL.
+// A JSON escape as text: a backslash, u and four hex digits (N191, N195).
+export const ESC = (hex: string) => `${String.fromCharCode(92)}u${hex}`
+
 export const SECRETS = {
   bearer: 'example-bearer-value-0001',
   token: 'example-token-value-0002',
@@ -80,7 +287,7 @@ export function fakeWorld(
   init: { files?: Record<string, string>; store?: Record<string, unknown>; isGit?: boolean; caseInsensitive?: boolean; env?: Record<string, string> } = {},
 ) {
   const clock = mock.clock(on)
-  mock.store(on, init.store)
+  const store = new Map<string, unknown>(Object.entries(init.store ?? {}))
   const files = new Map<string, string>(Object.entries(init.files ?? {}))
   const spawns: Call[] = []
   const runs: Call[] = []
@@ -96,7 +303,10 @@ export function fakeWorld(
   const git = {
     isRepo: init.isGit ?? true,
     // '' is an unborn HEAD (no commit yet)
-    head: 'aaa',
+    // full object ids, as git prints them (N222)
+    head: 'a'.repeat(40),
+    // object ids that are no commit for git cat-file (N222)
+    missing: new Set<string>(),
     status: [] as StatusEntry[],
     committed: [] as Committed[],
     // paths git cannot hash (a submodule folder): hash-object stops there
@@ -114,6 +324,14 @@ export function fakeWorld(
   const links = new Map<string, string>()
   const io = {
     failRead: (_path: string) => false,
+    // $.store.set rejects this value (N163)
+    failStoreSet: (_value: unknown) => false,
+    // fs.exists itself fails for this path (N115); a string is its error (N125)
+    failExists: (_path: string): boolean | string => false,
+    // clock ms an fs.exists waits before it answers (N126)
+    existsDelay: (_path: string) => 0,
+    // clock ms an fs.stat waits before it answers (N116)
+    statDelay: (_path: string) => 0,
     failWrite: (_path: string) => false,
     // clock ms a write waits before it lands
     writeDelay: (_path: string) => 0,
@@ -121,6 +339,8 @@ export function fakeWorld(
     failAppend: () => false,
     // $.model.complete (the Haiku fallback) rejects
     failModel: false,
+    // the fallback compressor's answer instead of the default one (N215)
+    modelText: undefined as string | undefined,
     // runs after a tool registered (between the start's queue read and the claim)
     afterRegister: (_name: string) => {},
   }
@@ -133,6 +353,13 @@ export function fakeWorld(
   const isDir = (p: string) =>
     p === '/w' || p === '' || [...files.keys()].some(k => (init.caseInsensitive ? k.toLowerCase().startsWith(`${p.toLowerCase()}/`) : k.startsWith(`${p}/`)))
 
+  // the plugin store, kept here so a write can fail (N163)
+  on('store.get', (_$: any, e: any) => ({ value: structuredClone(store.get(String(e.key))) }))
+  on('store.set', (_$: any, e: any) => {
+    if (io.failStoreSet(e.value)) return { deny: 'the store could not be written' }
+    store.set(String(e.key), structuredClone(e.value))
+    return { value: undefined }
+  })
   on('session.id', () => ({ value: 's1' }))
   on('session.start', (_$: any, e: any) => ({ sessionId: 's1', cwd: e.cwd }))
   on('env.get', (_$: any, e: any) => (envAsked.push(String(e.name)), { value: init.env?.[String(e.name)] }))
@@ -144,14 +371,20 @@ export function fakeWorld(
   // notifyMode note: an appended packet counts as submitted
   on('session.append', (_$: any, e: any, next: any) => (io.failAppend() ? { deny: 'the session could not be appended to' } : (submitted.push(String(e.message?.content?.[0]?.text ?? '')), next(e))))
   on('model.complete', () => io.failModel ? { deny: 'model unavailable' } : ({
-    value: { isAnswered: true, text: JSON.stringify({ status: 'done', summary: 'Built by haiku.' }), usage: { input_tokens: 1, output_tokens: 1, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 } },
+    value: { isAnswered: true, text: io.modelText ?? JSON.stringify({ status: 'done', summary: 'Built by haiku.' }), usage: { input_tokens: 1, output_tokens: 1, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 } },
   }))
-  on('fs.exists', (_$: any, e: any) => {
+  on('fs.exists', async (_$: any, e: any) => {
     const p = rel(e.path)
+    const wait = io.existsDelay(p)
+    if (wait > 0) await clock.sleep(wait)
+    const failed = io.failExists(p)
+    if (failed) return { deny: typeof failed === 'string' ? failed : 'EACCES: permission denied, access' }
     return { value: has(p) || isDir(p) || links.has(p) || (p === '.git' && git.isRepo) }
   })
-  on('fs.stat', (_$: any, e: any) => {
+  on('fs.stat', async (_$: any, e: any) => {
     const p = rel(e.path)
+    const wait = io.statDelay(p)
+    if (wait > 0) await clock.sleep(wait)
     const link = links.get(p)
     if (link) return { value: { kind: 'dir', size: 0, mtimeMs: 0, isLink: true, ...(e.resolve ? { realPath: link } : {}) } }
     if (!has(p) && !isDir(p)) return { deny: 'ENOENT: no such file or directory' }
@@ -205,6 +438,10 @@ export function fakeWorld(
       }
       return ok(out.map(h => `${h}\n`).join(''))
     }
+    if (sub === 'cat-file') {
+      const id = String(args[2] ?? '').replace('^{commit}', '')
+      return git.missing.has(id) ? ok('', 128, 'fatal: Not a valid object name') : ok('')
+    }
     if (sub === 'diff') {
       const [from, to] = args.slice(-2)
       if (!from || !to) return ok('', 128, 'fatal: bad revision')
@@ -237,20 +474,28 @@ export function fakeWorld(
       const p = /^([A-Za-z]:)?[\\/]/.test(raw) ? rel(raw) : rel(`${e.cwd}/${raw}`)
       call.attachment = has(p) ? files.get(keyOf(p)) : undefined
     }
+    // What werkbank-relay would read through --protocol-file.
+    const pi = argv.indexOf('--protocol-file')
+    if (pi >= 0) {
+      const p = rel(String(argv[pi + 1]))
+      call.protocolFile = has(p) ? files.get(keyOf(p)) : undefined
+    }
     spawns.push(call)
     for (const fn of during.splice(0)) fn(call)
     const scenario = scenarios.shift() ?? fallback
     const cli = String(argv[0]).replace(/^.*[\\/]/, '').replace(/\.(exe|cmd)$/, '')
     if (scenario === 'write-outside') git.status.push({ code: '??', path: 'other/x.md', hash: 'h1' })
     if (scenario === 'commit') {
-      git.head = 'bbb'
+      git.head = 'b'.repeat(40)
       git.committed.push('docs/c.md')
     }
     if (scenario === 'crash') return { value: { code: 2, signal: null } }
     if (scenario === 'hang') {
+      // werkbank waits for an hour: one progress line a minute keeps the test fast
+      const step = cli === 'werkbank-relay' ? 60_000 : 1000
       for (;;) {
-        await clock.sleep(1000)
-        yield { stream: 'stderr', text: '.' }
+        await clock.sleep(step)
+        yield { stream: 'stderr', text: cli === 'werkbank-relay' ? 'running auf fsn1-5\n' : '.' }
       }
     }
     if (scenario === 'held') await new Promise<void>(r => held.push(r))
@@ -260,6 +505,7 @@ export function fakeWorld(
     if (cli === 'claude') {
       if (scenario === 'error') return yield* out(JSON.stringify({ is_error: true, subtype: 'error_max_budget_usd', result: answer, session_id: 'c-1', num_turns: 2, total_cost_usd: 2 }), 0)
       if (scenario === 'session-not-found') return yield* out('', 1, 'No conversation found with session ID')
+      if (scenario === 'claude-key') return yield* out(JSON.stringify({ result: [KEY_LINES[0], KEY_BODY, KEY_LINES[1]].join('\n'), session_id: 'c-1', num_turns: 1, total_cost_usd: 0.1 }), 0)
       if (scenario === 'leak-error') return yield* out('', 1, `${leakErr}\n${leakStderr}`)
       return yield* out(JSON.stringify({ result: answer, session_id: argv[argv.indexOf('--session-id') + 1] || argv[argv.indexOf('--resume') + 1], num_turns: 3, total_cost_usd: 0.1 }), 0)
     }
@@ -274,6 +520,36 @@ export function fakeWorld(
         for (;;) {
           await clock.sleep(1000)
           yield { stream: 'stdout', text: jsonl({ type: 'turn.completed', usage: { input_tokens: 9000, cached_input_tokens: 0, output_tokens: 1000, reasoning_output_tokens: 0 } }) }
+        }
+      }
+      if (scenario === 'key-escaped') {
+        // the markers JSON-escaped (- for -), each in its own event
+        const esc = (s: string) => s.replace(/-/g, '\\u002d')
+        const ev = (id: string, text: string) => `{"type":"item.completed","item":{"id":"${id}","type":"agent_message","text":"${text}"}}`
+        yield { stream: 'stdout', text: `${ev('e1', esc(KEY_LINES[0]))}\n${ev('e2', KEY_BODY)}\n${ev('e3', esc(KEY_LINES[1]))}\n${ev('e4', 'after the key')}\n` }
+      }
+      if (scenario === 'key-fields-event') {
+        yield { stream: 'stdout', text: jsonl({ type: 'item.completed', item: { a: KEY_LINES[0], id: 'k2', type: 'command_execution', command: KEY_BODY, z: KEY_LINES[1] } }) }
+      }
+      if (scenario === 'key-closed-around-event') {
+        yield { stream: 'stderr', text: `${KEY_LINES[0]}\n` }
+        yield { stream: 'stdout', text: jsonl({ type: 'error', message: KEY_BODY }) }
+        yield { stream: 'stderr', text: `${KEY_LINES[1]}\n` }
+        return { value: { code: 1, signal: null } }
+      }
+      if (scenario === 'key-stderr-event') {
+        yield { stream: 'stderr', text: `${KEY_LINES[0]}\n` }
+        yield { stream: 'stdout', text: jsonl({ type: 'error', message: KEY_BODY }) }
+        return { value: { code: 1, signal: null } }
+      }
+      if (scenario === 'error-signal') {
+        yield { stream: 'stdout', text: jsonl({ type: 'error', message: 'stream disconnected before completion' }) }
+        return { value: { code: null, signal: 'SIGTERM' } }
+      }
+      if (scenario === 'key-lines') {
+        yield {
+          stream: 'stdout',
+          text: `${KEY_LINES[0]}\n${jsonl({ type: 'item.completed', item: { id: 'k1', type: 'command_execution', command: KEY_BODY } })}${KEY_LINES[1]}\n`,
         }
       }
       if (scenario === 'leak') {
@@ -310,6 +586,311 @@ export function fakeWorld(
         ),
         scenario === 'done-then-error' || scenario === 'answer-exit1' ? 1 : 0,
       )
+    }
+    if (cli === 'werkbank-relay') {
+      const arg = (flag: string) => {
+        const i = argv.indexOf(flag)
+        return i >= 0 ? argv[i + 1] : undefined
+      }
+      const role = arg('--role') ?? 'x'
+      const progress = 'queued\nrunning auf fsn1-5\nverifying\n'
+      const fail = (kind: string, message: string) => out(JSON.stringify({ error: { kind, message } }), 2, `${progress}error: ${message}\n`)
+      if (scenario === 'error-auth') return yield* fail('auth', '401: relay token rejected')
+      if (scenario === 'error-network') return yield* fail('network', 'Leitstand http://100.73.150.87:5080 not reachable')
+      if (scenario === 'error-repo') return yield* fail('repo', 'git@github.com:o/n.git is not in the repo list')
+      if (scenario === 'error-budget') return yield* fail('budget', 'relay day budget used up (8 jobs)')
+      if (scenario === 'not-json') return yield* out('Unhandled exception. System.Exception: boom\n', 1, 'boom\n')
+      if (scenario === 'key-escaped-stderr') {
+        const esc = (s: string) => s.replace(/-/g, '\\u002d')
+        yield { stream: 'stderr', text: `{"level":"error","detail":"${esc(KEY_LINES[0])}\\n${KEY_BODY}\\n${esc(KEY_LINES[1])}"}\n` }
+        return { value: { code: 1, signal: null } }
+      }
+      if (scenario === 'key-letter-stderr') {
+        const esc = (s: string) => s.replace('BEGIN', '\\u0042EGIN').replace('END', '\\u0045ND')
+        yield { stream: 'stderr', text: `{"level":"error","detail":"${esc(KEY_LINES[0])}\\n${KEY_BODY}\\n${esc(KEY_LINES[1])}"}\n` }
+        return { value: { code: 1, signal: null } }
+      }
+      if (scenario === 'key-open-error') {
+        return yield* out(JSON.stringify({ error: { kind: 'cli', message: KEY_BODY } }), 2, `queued\n${KEY_LINES[0]}\n`)
+      }
+      if (scenario === 'key-marker-error') {
+        yield { stream: 'stdout', text: JSON.stringify({ jobId: WERKBANK_JOB, state: 'failed', answer: '', note: KEY_LINES[0], sessionId: 'fsn1-5:9b1f', branch: `agent/relay/${role}`, commits: [], changedFiles: [], error: { kind: 'repo', message: KEY_BODY } }) }
+        return { value: { code: 1, signal: null } }
+      }
+      if (scenario === 'key-session-model') {
+        yield { stream: 'stderr', text: `${KEY_LINES[0]}\n` }
+        yield { stream: 'stdout', text: JSON.stringify({ jobId: WERKBANK_JOB, state: 'done', answer: 'done', sessionId: `fsn1-5:${KEY_BODY}`, usage: { inputTokens: 10, outputTokens: 5, model: KEY_BODY }, branch: `agent/relay/${role}`, commits: [], changedFiles: [] }) }
+        return { value: { code: 0, signal: null } }
+      }
+      if (scenario === 'quoted-auth') {
+        yield { stream: 'stderr', text: '{"Authorization": "opaque0value0x8"}\n' }
+        yield { stream: 'stdout', text: JSON.stringify({ jobId: WERKBANK_JOB, state: 'done', answer: PACKET(), sessionId: 'fsn1-5:9b1f', branch: `agent/relay/${role}`, commits: [], changedFiles: [] }) }
+        return { value: { code: 0, signal: null } }
+      }
+      if (scenario === 'quoted-auth-escaped') {
+        yield { stream: 'stderr', text: 'Authorization: "a\\"opaque0tail0x9"\n{"Authorization": "b\\"opaque0tail0x9"}\n' }
+        yield { stream: 'stdout', text: JSON.stringify({ jobId: WERKBANK_JOB, state: 'done', answer: PACKET(), sessionId: 'fsn1-5:9b1f', branch: `agent/relay/${role}`, commits: [], changedFiles: [] }) }
+        return { value: { code: 0, signal: null } }
+      }
+      if (scenario === 'key-read-error') {
+        yield { stream: 'stdout', text: JSON.stringify({ jobId: WERKBANK_JOB, state: 'done', answer: PACKET('opaque0answer0x16'), sessionId: 'fsn1-5:9b1f', branch: `agent/relay/${role}`, commits: [], changedFiles: [] }) }
+        return { deny: `stream reset ${KEY_LINES[0]}` }
+      }
+      if (scenario === 'quoted-escaped-json') {
+        yield { stream: 'stderr', text: '{"detail":"{\\"api_key\\": \\"opaque0head\\\\\\"opaque0tail0x13\\", \\"next\\": 1}"}\n' }
+        yield { stream: 'stderr', text: '{"detail":"{\\"Authorization\\": \\"opaque0auth0x14\\\\\\\\\\", \\"sibling\\": \\"keep0me0x15\\"}"}\n' }
+        yield { stream: 'stdout', text: JSON.stringify({ jobId: WERKBANK_JOB, state: 'done', answer: PACKET(), sessionId: 'fsn1-5:9b1f', branch: `agent/relay/${role}`, commits: [], changedFiles: [] }) }
+        return { value: { code: 0, signal: null } }
+      }
+      if (scenario === 'quoted-unicode-escape') {
+        const bs = '\\'
+        yield { stream: 'stderr', text: `{"detail":"{${bs}"api_key${bs}": ${bs}"opaque0head0x17${bs}u005c${bs}"opaque0tail0x18${bs}", ${bs}"next${bs}": ${bs}"keep0me0x19${bs}"}"}\n` }
+        yield { stream: 'stdout', text: JSON.stringify({ jobId: WERKBANK_JOB, state: 'done', answer: PACKET(), sessionId: 'fsn1-5:9b1f', branch: `agent/relay/${role}`, commits: [], changedFiles: [] }) }
+        return { value: { code: 0, signal: null } }
+      }
+      if (scenario === 'quoted-unicode-quotes') {
+        const q = '\\u0022'
+        yield { stream: 'stderr', text: `{"detail":"{${q}password${q}: ${q}opaque0pw0x20${q}, ${q}next${q}: ${q}keep0me0x21${q}}"}\n` }
+        yield { stream: 'stderr', text: `{"detail":"{${q}Authorization${q}: ${q}Bearer opaque0auth0x22${q}, ${q}sibling${q}: 1}"}\n` }
+        yield { stream: 'stdout', text: JSON.stringify({ jobId: WERKBANK_JOB, state: 'done', answer: PACKET(), sessionId: 'fsn1-5:9b1f', branch: `agent/relay/${role}`, commits: [], changedFiles: [] }) }
+        return { value: { code: 0, signal: null } }
+      }
+      if (scenario === 'no-start-read-error') return { deny: 'spawn werkbank-relay ENOENT' }
+      if (scenario === 'padded-state') {
+        yield { stream: 'stdout', text: JSON.stringify({ jobId: WERKBANK_JOB, state: 'done\n', answer: PACKET(), sessionId: 'fsn1-5:9b1f', branch: `agent/relay/${role}`, commits: [], changedFiles: [] }) }
+        return { value: { code: 0, signal: null } }
+      }
+      if (scenario === 'long-branch-job') {
+        yield { stream: 'stdout', text: JSON.stringify({ jobId: `job0x25\n${'j'.repeat(300)}`, state: 'done', answer: PACKET(), sessionId: 'fsn1-5:9b1f', branch: `branch0x26\n${'b'.repeat(300)}`, commits: [WERKBANK_COMMIT], changedFiles: [] }) }
+        return { value: { code: 0, signal: null } }
+      }
+      if (scenario === 'escaped-name') {
+        yield { stream: 'stderr', text: '{"pass\\u0077ord": "opaque0pw0x28"}\n' }
+        yield { stream: 'stdout', text: JSON.stringify({ jobId: WERKBANK_JOB, state: 'done', answer: PACKET(), sessionId: 'fsn1-5:9b1f', branch: `agent/relay/${role}`, commits: [], changedFiles: [] }) }
+        return { value: { code: 0, signal: null } }
+      }
+      if (scenario === 'packet-numeric-password') {
+        const answer = ['## Work', 'Done.', '```relay', '{"status":"done","summary":"Did it.","facts":["fact0x27"],"sections":["Work"],"password":123}', '```'].join('\n')
+        yield { stream: 'stdout', text: JSON.stringify({ jobId: WERKBANK_JOB, state: 'done', answer, sessionId: 'fsn1-5:9b1f', branch: `agent/relay/${role}`, commits: [], changedFiles: [] }) }
+        return { value: { code: 0, signal: null } }
+      }
+      if (scenario === 'escaped-done-state') {
+        yield { stream: 'stdout', text: JSON.stringify({ jobId: WERKBANK_JOB, state: `d${ESC('006f')}ne`, answer: PACKET(), sessionId: 'fsn1-5:9b1f', branch: `agent/relay/${role}`, commits: [], changedFiles: [] }) }
+        return { value: { code: 0, signal: null } }
+      }
+      if (scenario === 'json-unquoted-credentials') {
+        yield { stream: 'stderr', text: '{"Authorization":834291}\n{"password":[572913,640185],"next":1}\n' }
+        yield { stream: 'stdout', text: JSON.stringify({ jobId: WERKBANK_JOB, state: 'done', answer: PACKET(), sessionId: 'fsn1-5:9b1f', branch: `agent/relay/${role}`, commits: [], changedFiles: [] }) }
+        return { value: { code: 0, signal: null } }
+      }
+      if (scenario === 'packet-password-list') {
+        const answer = ['## Work', 'Done.', '```relay', '{"status":"done","summary":"Did it.","facts":["fact0x30"],"sections":["Work"],"password":[572913,{"a":"]"}]}', '```'].join('\n')
+        yield { stream: 'stdout', text: JSON.stringify({ jobId: WERKBANK_JOB, state: 'done', answer, sessionId: 'fsn1-5:9b1f', branch: `agent/relay/${role}`, commits: [], changedFiles: [] }) }
+        return { value: { code: 0, signal: null } }
+      }
+      if (scenario === 'pretty-password-list') {
+        yield { stream: 'stderr', text: ['{"password": [', '  "opaque0pw0x31",', '  {"inner": "opaque0pw0x32"}', '], "next": 1}', 'after0x33', ''].join('\n') }
+        yield { stream: 'stdout', text: JSON.stringify({ jobId: WERKBANK_JOB, state: 'done', answer: PACKET(), sessionId: 'fsn1-5:9b1f', branch: `agent/relay/${role}`, commits: [], changedFiles: [] }) }
+        return { value: { code: 0, signal: null } }
+      }
+      if (scenario === 'packet-pretty-list') {
+        const answer = ['## Work', 'Done.', '```relay', '{"status":"done","summary":"Did it.","facts":["fact0x34"],"sections":["Work"],"password":[', '  "opaque0pw0x35",', '  5', ']}', '```'].join('\n')
+        yield { stream: 'stdout', text: JSON.stringify({ jobId: WERKBANK_JOB, state: 'done', answer, sessionId: 'fsn1-5:9b1f', branch: `agent/relay/${role}`, commits: [], changedFiles: [] }) }
+        return { value: { code: 0, signal: null } }
+      }
+      if (scenario === 'escaped-bracket-list') {
+        const bs = String.fromCharCode(92)
+        yield { stream: 'stderr', text: `{"detail":"{${bs}"password${bs}":[${bs}"a]opaque0x36${bs}",${bs}"opaque0x37${bs}"],${bs}"next${bs}":1}"}\n` }
+        yield { stream: 'stdout', text: JSON.stringify({ jobId: WERKBANK_JOB, state: 'done', answer: PACKET(), sessionId: 'fsn1-5:9b1f', branch: `agent/relay/${role}`, commits: [], changedFiles: [] }) }
+        return { value: { code: 0, signal: null } }
+      }
+      if (scenario === 'key-deep-escape') {
+        const deep = KEY_LINES[0].replace(/-/g, `${String.fromCharCode(92).repeat(8)}u002d`)
+        yield { stream: 'stderr', text: `${deep}\n${KEY_BODY}\n` }
+        yield { stream: 'stdout', text: JSON.stringify({ jobId: WERKBANK_JOB, state: 'done', answer: PACKET(), sessionId: 'fsn1-5:9b1f', branch: `agent/relay/${role}`, commits: [], changedFiles: [] }) }
+        return { value: { code: 0, signal: null } }
+      }
+      if (scenario === 'pending-password') {
+        const text = ['{"password":', '', '  [', '  "opaque0pw0x40",', '  {"inner": "opaque0pw0x41"}', '], "next": 1}', '{"api_key":', '  "opaque0pw0x42", "keep": "after0x43"}', '']
+        yield { stream: 'stderr', text: text.join('\n') }
+        yield { stream: 'stdout', text: JSON.stringify({ jobId: WERKBANK_JOB, state: 'done', answer: PACKET(), sessionId: 'fsn1-5:9b1f', branch: `agent/relay/${role}`, commits: [], changedFiles: [] }) }
+        return { value: { code: 0, signal: null } }
+      }
+      if (scenario === 'pending-auth') {
+        yield { stream: 'stderr', text: ['{"Authorization":', '  Bearer opaque0x60,', '"n": 1}', ''].join('\n') }
+        return { value: { code: 1, signal: null } }
+      }
+      if (scenario === 'pending-auth-3') {
+        yield { stream: 'stderr', text: ['{"Authorization":', '  Bearer', '  opaque0x80,', '"n": 1}', ''].join('\n') }
+        return { value: { code: 1, signal: null } }
+      }
+      if (scenario === 'digest-auth') {
+        yield { stream: 'stderr', text: 'Authorization: Digest username="u0x81", nonce="n0x82", response="r0x83"\n' }
+        return { value: { code: 1, signal: null } }
+      }
+      if (scenario === 'cut-list') {
+        yield { stream: 'stderr', text: ['{"password": [', '  "opaque0x61",', '  "opaque0x62"', ''].join('\n') }
+        return { value: { code: 1, signal: null } }
+      }
+      if (scenario === 'mixed-quote-list') {
+        const bs = String.fromCharCode(92)
+        const uq = `${bs}u0022`
+        yield { stream: 'stderr', text: `{"detail":"{${bs}"password${bs}":[${uq}x]${uq},${bs}"opaque0x64${bs}"],${bs}"n${bs}":1}"}\n` }
+        yield { stream: 'stdout', text: JSON.stringify({ jobId: WERKBANK_JOB, state: 'done', answer: PACKET(), sessionId: 'fsn1-5:9b1f', branch: `agent/relay/${role}`, commits: [], changedFiles: [] }) }
+        return { value: { code: 0, signal: null } }
+      }
+      if (scenario === 'nul-file') {
+        yield { stream: 'stdout', text: JSON.stringify({ jobId: WERKBANK_JOB, state: 'done', answer: PACKET(), sessionId: 'fsn1-5:9b1f', branch: `agent/relay/${role}`, commits: [WERKBANK_COMMIT], changedFiles: [`src/file${String.fromCharCode(0)}`] }) }
+        return { value: { code: 0, signal: null } }
+      }
+      if (scenario === 'key-then-hang') {
+        yield { stream: 'stderr', text: `${KEY_LINES[0]}\n` }
+        for (;;) {
+          await clock.sleep(60_000)
+          yield { stream: 'stderr', text: 'running auf fsn1-5\n' }
+        }
+      }
+      if (scenario === 'numeric-job' || scenario === 'fraction-job') {
+        yield { stream: 'stdout', text: JSON.stringify({ jobId: scenario === 'numeric-job' ? 4711 : 1.5, state: 'done', answer: PACKET(), sessionId: 'fsn1-5:9b1f', branch: `agent/relay/${role}`, commits: [WERKBANK_COMMIT], changedFiles: [] }) }
+        return { value: { code: 0, signal: null } }
+      }
+      if (scenario === 'read-error-after-output') {
+        yield { stream: 'stderr', text: 'queued\n' }
+        return { deny: 'the stream was reset' }
+      }
+      if (scenario === 'key-no-json') {
+        yield { stream: 'stderr', text: `${KEY_LINES[0]}\n` }
+        return yield* out('Unhandled exception. System.Exception: boom\n', 1, 'boom\n')
+      }
+      if (scenario === 'malformed-both') {
+        yield { stream: 'stdout', text: JSON.stringify({ jobId: WERKBANK_JOB, state: 'done', answer: PACKET(), sessionId: 'fsn1-5:9b1f', branch: `agent/relay/${role}`, commits: ['xyz'], changedFiles: ['src/a.ts', 3] }) }
+        return { value: { code: 0, signal: null } }
+      }
+      if (scenario === 'long-state') {
+        yield { stream: 'stdout', text: JSON.stringify({ jobId: WERKBANK_JOB, state: `odd0state\n${'x\n'.repeat(3000)}`, answer: '', sessionId: 'fsn1-5:9b1f', branch: `agent/relay/${role}`, commits: [], changedFiles: [] }) }
+        return { value: { code: 0, signal: null } }
+      }
+      if (scenario === 'no-state') {
+        yield { stream: 'stdout', text: JSON.stringify({ jobId: WERKBANK_JOB, answer: '', sessionId: 'fsn1-5:9b1f', branch: `agent/relay/${role}`, commits: [], changedFiles: [], error: { kind: 'repo', message: 'no state given' } }) }
+        return { value: { code: 1, signal: null } }
+      }
+      if (scenario === 'unknown-state') {
+        yield { stream: 'stdout', text: JSON.stringify({ jobId: WERKBANK_JOB, state: 'running', answer: '', sessionId: 'fsn1-5:9b1f', branch: `agent/relay/${role}`, commits: [], changedFiles: [], error: { kind: 'repo', message: 'the job is still running' } }) }
+        return { value: { code: 1, signal: null } }
+      }
+      if (scenario === 'key-files-no-commit') {
+        yield { stream: 'stderr', text: `${KEY_LINES[0]}\n` }
+        yield { stream: 'stdout', text: JSON.stringify({ jobId: WERKBANK_JOB, state: 'done', answer: 'x', sessionId: 'fsn1-5:9b1f', branch: `agent/relay/${role}`, commits: ['not-a-commit'], changedFiles: ['src/a.ts'] }) }
+        return { value: { code: 0, signal: null } }
+      }
+      if (scenario === 'multiline-model') {
+        yield { stream: 'stdout', text: JSON.stringify({ jobId: WERKBANK_JOB, state: 'failed', answer: '', sessionId: 'fsn1-5:9b1f', usage: { inputTokens: 1, outputTokens: 1, model: 'm1\nStatus: done' }, branch: `agent/relay/${role}`, commits: [], changedFiles: [], error: { kind: 'repo', message: 'the job failed' } }) }
+        return { value: { code: 1, signal: null } }
+      }
+      if (scenario === 'key-bad-state') {
+        yield { stream: 'stderr', text: `${KEY_LINES[0]}\n` }
+        yield { stream: 'stdout', text: JSON.stringify({ jobId: 'opaque0job0x10', state: 'opaque0state0x11', answer: 'x', sessionId: 'fsn1-5:9b1f', branch: `agent/relay/${role}`, commits: [WERKBANK_COMMIT], changedFiles: [] }) }
+        return { value: { code: 0, signal: null } }
+      }
+      if (scenario === 'key-split-fragment') {
+        yield { stream: 'stdout', text: `${KEY_LINES[0]}\n` }
+        yield { stream: 'stderr', text: KEY_BODY }
+        yield { stream: 'stdout', text: `${KEY_LINES[1]}\n` }
+        yield { stream: 'stderr', text: '\n' }
+        return { value: { code: 2, signal: null } }
+      }
+      if (scenario === 'key-verify-command') {
+        yield { stream: 'stdout', text: JSON.stringify({ jobId: WERKBANK_JOB, state: 'done', answer: `see ${KEY_LINES[0]}`, sessionId: 'fsn1-5:9b1f', branch: `agent/relay/${role}`, commits: [WERKBANK_COMMIT], changedFiles: ['src/a.ts'], verify: { command: KEY_BODY, exitCode: 0 } }) }
+        return { value: { code: 0, signal: null } }
+      }
+      if (scenario === 'key-fragment') {
+        yield { stream: 'stdout', text: KEY_LINES[0] }
+        yield { stream: 'stderr', text: `${KEY_BODY}\n` }
+        yield { stream: 'stdout', text: `\n${KEY_LINES[1]}\n` }
+        return { value: { code: 2, signal: null } }
+      }
+      if (scenario === 'key-closed-around-answer') {
+        yield { stream: 'stderr', text: `queued\n${KEY_LINES[0]}\n` }
+        yield { stream: 'stdout', text: JSON.stringify({ jobId: WERKBANK_JOB, state: 'done', answer: PACKET(KEY_BODY), sessionId: 'fsn1-5:9b1f', branch: `agent/relay/${role}`, commits: [], changedFiles: [] }) }
+        yield { stream: 'stderr', text: `${KEY_LINES[1]}\n` }
+        return { value: { code: 0, signal: null } }
+      }
+      if (scenario === 'failed-signal') {
+        yield { stream: 'stdout', text: JSON.stringify({ jobId: WERKBANK_JOB, state: 'failed', answer: '', sessionId: 'fsn1-5:9b1f', branch: `agent/relay/${role}`, commits: [], changedFiles: [], error: { kind: 'repo', message: 'the repo is gone' } }) }
+        return { value: { code: null, signal: 'SIGTERM' } }
+      }
+      if (scenario === 'killed-early') {
+        yield { stream: 'stderr', text: 'queued\n' }
+        return { value: { code: null, signal: 'SIGTERM' } }
+      }
+      if (scenario === 'key-lines') yield { stream: 'stderr', text: `verifying\n${KEY_LINES[0]}\n${KEY_BODY}\n${KEY_LINES[1]}\nverify done\n` }
+      if (scenario === 'key-stderr-answer') yield { stream: 'stderr', text: `queued\n${KEY_LINES[0]}\n` }
+      if (scenario === 'progress-quiet') {
+        yield { stream: 'stderr', text: 'queued\nrunning auf fsn1-5\n' }
+        await new Promise<void>(r => held.push(r))
+      }
+      if (scenario === 'progress-held') {
+        yield { stream: 'stderr', text: 'queued\n' }
+        await clock.sleep(3000)
+        yield { stream: 'stderr', text: 'running auf fsn1-5\n' }
+        await new Promise<void>(r => held.push(r))
+      }
+      const state =
+        scenario === 'red-prose'
+          ? 'red'
+          : scenario === 'red' || scenario === 'needs-approval' || scenario === 'timed-out' || scenario === 'limit' || scenario === 'failed' || scenario === 'cancelled'
+          ? scenario
+          : 'done'
+      const error =
+        scenario === 'needs-approval'
+          ? { kind: 'cli', message: 'the push needs the user\'s approval' }
+          : scenario === 'limit'
+            ? { kind: 'limit', message: 'Claude usage limit reached' }
+            : scenario === 'failed'
+              ? { kind: 'cli', message: 'claude exited 1' }
+              : undefined
+      const isRed = scenario === 'red' || scenario === 'red-prose'
+      const json = {
+        jobId: WERKBANK_JOB,
+        state,
+        answer:
+          scenario === 'timed-out' || scenario === 'failed'
+            ? ''
+            : scenario === 'red-prose'
+              ? 'Plain prose, no packet.'
+              : scenario === 'status-array'
+                ? ['## Work', '```relay', JSON.stringify({ status: ['done'], summary: 'Did it.', sections: ['Work'] }), '```'].join('\n')
+                : scenario === 'key-mismatch'
+                  ? [MISMATCHED_KEY, PACKET()].join('\n')
+                  : scenario === 'key-split-risks'
+                    ? ['## Work', '```relay', JSON.stringify({ status: 'done', summary: 'Did it.', risks: [KEY_LINES[0], KEY_BODY, KEY_LINES[1], 'nothing else'], sections: ['Work'] }), '```'].join('\n')
+                    : scenario === 'key-across-fields'
+                      ? ['## Work', '```relay', JSON.stringify({ status: 'done', decisions: [KEY_LINES[0]], summary: KEY_BODY, risks: [KEY_LINES[1], 'nothing else'], sections: ['Work'] }), '```'].join('\n')
+                      : scenario === 'key-into-packet'
+                        ? ['## Work', KEY_LINES[0], '```relay', JSON.stringify({ status: 'done', summary: KEY_BODY, sections: ['Work'] }), '```'].join('\n')
+                        : scenario === 'key-stderr-answer'
+                          ? PACKET(KEY_BODY)
+                          : scenario === 'key-fence-example'
+                            ? ['Example: {"status":"done","summary":"example only"}', KEY_LINES[0], '```relay', JSON.stringify({ status: 'failed', summary: 'the real packet' }), '```', KEY_LINES[1], 'after the key'].join('\n')
+                            : scenario === 'key-example-block'
+                              ? ['For example:', '```relay', '{"status":"done","summary":"example only"}', '```', KEY_LINES[0], '```relay', JSON.stringify({ status: 'failed', summary: 'the real packet' }), '```', KEY_LINES[1]].join('\n')
+                              : answer,
+        sessionId: scenario === 'session-moved' ? 'fsn1-4:fresh2' : scenario === 'session-token' ? WERKBANK_TOKEN_SESSION : (arg('--session') ?? 'fsn1-5:9b1f'),
+        usage: { costUsd: 0.42, turns: 6, inputTokens: 12000, outputTokens: 3100, model: 'claude-opus-5-5' },
+        branch: `agent/relay/${role}`,
+        commits: scenario === 'failed' ? [] : scenario === 'bad-commits' ? [WERKBANK_COMMIT, `token=${SECRETS.token}`, 'nope'] : [WERKBANK_COMMIT],
+        changedFiles: scenario === 'failed' ? [] : scenario === 'write-outside' || scenario === 'status-array' ? ['src/a.ts', 'other/x.md'] : ['src/a.ts'],
+        verify: { command: 'npm test', exitCode: isRed ? 1 : 0, tests: { total: 147, passed: isRed ? 145 : 147, failed: isRed ? 2 : 0 } },
+        ...(error ? { error } : {}),
+        ...(scenario === 'error-malformed' ? { error: 'lost the Leitstand' } : {}),
+        // the real program writes every field, the empty ones as null (N224)
+        ...(scenario === 'real-nulls' ? { error: null } : {}),
+      }
+      if (scenario === 'signal-after-done') {
+        yield { stream: 'stdout', text: JSON.stringify(json) }
+        return { value: { code: null, signal: 'SIGKILL' } }
+      }
+      return yield* out(JSON.stringify(json), scenario === 'answer-exit1' ? 1 : 0, scenario === 'progress-held' || scenario === 'progress-quiet' ? 'verifying\n' : progress)
     }
     return { value: { code: 127, signal: null } }
   })

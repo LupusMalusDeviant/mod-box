@@ -1,9 +1,16 @@
 import type { Register, EngineInterface } from 'claude-code'
 import {
   BACKEND_IDS,
+  BuildError,
+  isRemoteFailed,
+  WERKBANK_STATES,
+  liveStream,
+  remoteEndLine,
+  remoteVerifyLine,
   BACKENDS,
   CHECKED_VERSIONS,
   ignoredRules,
+  isWerkbankBinSafe,
   liveLine,
   majorOf,
   ollamaArgv,
@@ -22,6 +29,13 @@ import {
 } from './backends.ts'
 import {
   applyWriteCheck,
+  baseName,
+  eventTexts,
+  hasKeyBegin,
+  credentialValueCarry,
+  dict,
+  restoreSnapshot,
+  REDACTED_KEY_LINE,
   compareSnapshots,
   extractSection,
   fallbackPrompt,
@@ -31,8 +45,12 @@ import {
   parsePacket,
   parsePorcelain,
   parseWorktreeList,
+  notChecked,
+  privateKeyFilter,
+  remoteWriteCheck,
   toProjectPath,
   protocolPrompt,
+  hasCredential,
   redact,
   redactDeep,
   safeRelayDir,
@@ -55,7 +73,9 @@ import {
   mayOwn,
   newJobId,
   newToken,
+  isRunNumber,
   parseQueue,
+  ROLE_NAME,
   serializeQueue,
   type QueueFile,
   type QueuedJob,
@@ -91,7 +111,6 @@ type Role = RoleDef & {
   totals?: Usage
 }
 
-const ROLE_NAME = /^[a-z0-9][a-z0-9_-]{0,31}$/
 
 const config = {
   claudeBin: 'claude',
@@ -123,10 +142,26 @@ const config = {
   fallbackBackend: 'claude' as 'claude' | 'ollama' | 'off',
   ollamaModel: '',
   ollamaBin: 'ollama',
+  werkbankBin: 'werkbank-relay',
+  werkbankLeitstand: 'http://100.73.150.87:5080',
+  werkbankTokenFile: '~/.werkbank/relay.token',
+  // relay's own timeout for a werkbank run: wait in the Leitstand plus the run
+  werkbankTimeoutMin: 60,
+}
+
+// The timeout relay applies to a run of this backend (contract 0001, N44).
+const timeoutOf = (id: BackendId) => (id === 'werkbank' ? config.werkbankTimeoutMin : config.runTimeoutMin)
+
+// `~/x` → <home>/x: children start without a shell, nothing else expands it.
+async function expandHome($: EngineInterface, path: string) {
+  if (!/^~(?=$|[\\/])/.test(path)) return path
+  const home = (await $.env.get('USERPROFILE')) || (await $.env.get('HOME'))
+  return home ? `${home.replace(/[\\/]+$/, '')}${path.slice(1)}` : path
 }
 
 let cwd = ''
-let roles: Record<string, Role> = {}
+// a dict: a role named constructor is no inherited entry (N209)
+let roles: Record<string, Role> = dict<Role>()
 let queue: QueueFile = emptyQueue()
 let running = 0
 let unread: string[] = []
@@ -143,6 +178,8 @@ let queueError: string | undefined
 let dispatchError: string | undefined
 let session = ''
 let lastQueueText: string | undefined
+// what the next write keeps as queue.json.bak (N193)
+let lastBackupText: string | undefined
 let notices: string[] = []
 let configNotes: string[] = []
 let heartbeat: { cancel: () => void } | undefined
@@ -205,26 +242,44 @@ async function readText($: EngineInterface, path: string) {
   return String(await $.fs.read(path))
 }
 
+// Both queue files are checked like relay's other files before every read
+// and write: a link or a place outside the project locks them (N197).
+async function checkQueueFile($: EngineInterface, name: 'queue.json' | 'queue.json.bak') {
+  const path = relayPath(name)
+  const why = await storageProblem($, path)
+  if (why) throw new Error(why)
+  return path
+}
+
+async function readQueueFile($: EngineInterface, name: 'queue.json' | 'queue.json.bak') {
+  return readText($, await checkQueueFile($, name))
+}
+
 async function readQueue($: EngineInterface) {
-  const text = await readText($, relayPath('queue.json'))
-  const loaded = loadQueue(text, await readText($, relayPath('queue.json.bak')))
+  const text = await readQueueFile($, 'queue.json')
+  const loaded = loadQueue(text, await readQueueFile($, 'queue.json.bak'))
   return { ...loaded, text }
 }
 
 // Takes a queue as read: only a main file that parsed may become the backup
 // of the next write, never an empty or broken one over a good .bak.
+// The backup is the checked queue as relay writes it, never the raw text,
+// so a job left out as unsafe never reaches it (N193).
 function adopt(loaded: Awaited<ReturnType<typeof readQueue>>) {
   queue = loaded.queue
   lastQueueText = loaded.isBroken || loaded.isFromBackup ? undefined : loaded.text
+  lastBackupText = lastQueueText !== undefined || loaded.dropped ? serializeQueue(loaded.queue) : undefined
 }
 
 async function writeQueueText($: EngineInterface) {
   await ensureGitignore($)
   const text = serializeQueue(queue)
   if (text === lastQueueText) return
-  if (lastQueueText !== undefined) await $.fs.write(relayPath('queue.json.bak'), lastQueueText)
-  await $.fs.write(relayPath('queue.json'), text)
+  // each file is checked right before its own write (N197, N205)
+  if (lastBackupText !== undefined) await $.fs.write(await checkQueueFile($, 'queue.json.bak'), lastBackupText)
+  await $.fs.write(await checkQueueFile($, 'queue.json'), text)
   lastQueueText = text
+  lastBackupText = text
 }
 
 function stepDown(who: string) {
@@ -238,7 +293,7 @@ function stepDown(who: string) {
 // Before each write: is the file still ours? Another session's fresh claim
 // wins, and this one steps down instead of overwriting it.
 async function fence($: EngineInterface) {
-  const text = await readText($, relayPath('queue.json'))
+  const text = await readQueueFile($, 'queue.json')
   if (text === undefined || text === lastQueueText) return
   const owner = parseQueue(text)?.owner
   if (!owner || owner.token === ownerToken) return
@@ -283,7 +338,7 @@ async function claimQueue($: EngineInterface) {
       return
     }
     await $.clock.sleep(CLAIM_SETTLE_MS)
-    const disk = parseQueue(await readText($, relayPath('queue.json')))
+    const disk = parseQueue(await readQueueFile($, 'queue.json'))
     if (disk?.owner?.token !== ownerToken) {
       if (disk) queue = disk
       notices.push(`Session ${disk?.owner?.session ?? 'unknown'} claimed this project's relay queue at the same time; this session only reads it.`)
@@ -295,13 +350,26 @@ async function claimQueue($: EngineInterface) {
     return
   }
   isOwner = true
+  // the claim is renewed from now on, but nothing starts before every
+  // interrupted run is handled and its run number taken over (N167)
+  isRecovering = true
   heartbeat = $.clock.every(HEARTBEAT_MS, () => void beat($))
   showStatus($)
   await recover($).catch(err => notices.push(`relay could not finish taking over the queue (${message(err)}).`))
+  isRecovering = false
 }
 
 async function beat($: EngineInterface) {
   if (!isOwner) return
+  // a temp file that could not be cleared is tried again, whether or not the
+  // queue can be written (N132, N139), but only while no other session holds
+  // the queue now (N144)
+  const isStillOwner = await fence($).then(
+    () => true,
+    () => false,
+  )
+  if (!isStillOwner) return
+  await retryTempClears($)
   queue.owner = { session, heartbeatAt: await iso($), token: ownerToken }
   const isWritten = await writeQueue($).then(
     () => true,
@@ -320,10 +388,50 @@ async function beat($: EngineInterface) {
 async function recover($: EngineInterface) {
   const dead = queue.jobs.filter(j => j.state === 'running')
   for (const job of dead) {
-    // An opencode task file the dead run left behind is cleared first.
-    const attachment = relayPath(`tmp/${job.role}-${job.run ?? 0}.md`)
-    if (await $.fs.exists(attachment).catch(() => false)) await $.fs.write(attachment, '').catch(() => undefined)
-    const why = await (job.delivery === 'stored' ? deliverStored($, job) : reportInterrupted($, job)).catch(err => `reporting failed (${message(err)})`)
+    // the role comes from the job and keeps its run number before anything
+    // is delivered, known to the roles file or not (N158)
+    if (isRunNumber(job.run)) {
+      const role = (roles[job.role] ??= { name: job.role, runs: job.run, isBusy: false })
+      if (role.runs < job.run) role.runs = job.run
+      // nothing is delivered before the run number is stored; the job, its
+      // kept message and packet.json stay for the next start (N163)
+      const notSaved = await save($).then(
+        () => undefined,
+        err => `the run number could not be stored (${message(err)})`,
+      )
+      if (notSaved) {
+        unreported.set(job.id, redact(notSaved))
+        continue
+      }
+    }
+    // An opencode task file or a werkbank protocol file the dead run left
+    // behind is cleared first, each checked like a live run's (N52, N53).
+    for (const name of [`${job.role}-${job.run ?? 0}.md`, `${job.role}-${job.run ?? 0}.protocol.md`]) {
+      const attachment = relayPath(`tmp/${name}`)
+      if (await $.fs.exists(attachment).catch(() => false)) await clearTempFile($, attachment)
+    }
+    // the kept message of this very job first, stored or not (N103); a kept
+    // file that is a link out means interrupted, without files (N118)
+    const kept = await keptMessageOf($, job).catch(err => ({ unreadable: message(err) }))
+    // a kept message that is there but cannot be read: nothing is reported,
+    // the job and its files stay for the next start (N208)
+    if (kept && 'unreadable' in kept) {
+      unreported.set(job.id, redact(`the kept message could not be read (${kept.unreadable}); the job stays queued for the next start`))
+      continue
+    }
+    const why = await (
+      kept && 'unsafe' in kept
+        ? reportInterrupted($, job, redact(`the kept message was not read: ${kept.unsafe}`), { noFiles: 'its stored files are not safe to use' })
+        : kept !== undefined
+          ? deliverKept($, job, kept)
+          : job.delivery === 'stored'
+            ? deliverStored($, job)
+            : storedReportOf($, job).then(own =>
+                // a finished report of this very job, stored before its
+                // delivery flag: delivered, not "interrupted" (N221)
+                own === 'own' ? deliverStored($, job) : own === 'none' ? reportInterrupted($, job) : own.keep,
+              )
+    ).catch(err => `reporting failed (${message(err)})`)
     // A reported job left the queue in deliver; the rest stay and are shown.
     if (why) unreported.set(job.id, why)
   }
@@ -333,6 +441,8 @@ async function recover($: EngineInterface) {
   }
   await save($)
   await writeQueue($).catch(err => notices.push(`relay could not write the queue after the restart (${message(err)}).`))
+  // the restart is done: waiting jobs may start (N167)
+  isRecovering = false
   await pump($)
 }
 
@@ -350,16 +460,84 @@ function runPath(role: string, run: number, kind: 'full.md' | 'packet.json') {
   return relayPath(`runs/${role}/${String(slotOf(run)).padStart(3, '0')}.${kind}`)
 }
 
+// Not rotated: one file per run whose message waits for delivery (N97).
+function undeliveredPath(role: string, run: number) {
+  return relayPath(`runs/${role}/undelivered-${run}.md`)
+}
+
 function isRotatedOut(role: Role, run: number) {
   return config.keepRuns > 0 && run <= role.runs - config.keepRuns
 }
 
-async function loadRoleDefs($: EngineInterface): Promise<Record<string, RoleDef>> {
+// Why the slot may not be written for `run`, or undefined: only a confirmed
+// missing packet.json, or a readable one of this run or an earlier one, lets
+// relay write there; a later, unsafe, unreadable or invalid one does not
+// (N108, N129, N136).
+async function slotProblem($: EngineInterface, role: string, run: number): Promise<string | undefined> {
+  const path = runPath(role, run, 'packet.json')
+  const unsafe = await storageProblem($, path)
+  if (unsafe) return unsafe
+  let isThere: boolean
   try {
-    if (!(await $.fs.exists(config.rolesFile))) return {}
-    const parsed = JSON.parse(await $.fs.read(config.rolesFile)) as Record<string, unknown>
+    isThere = await $.fs.exists(path)
+  } catch (err) {
+    return `the slot could not be checked (${message(err)})`
+  }
+  if (isThere) {
+    try {
+      const stored = (JSON.parse(String(await $.fs.read(path))) as { run?: unknown }).run
+      // only a whole run number from 1 counts (N145)
+      if (typeof stored !== 'number' || !Number.isSafeInteger(stored) || stored < 1) return 'the slot could not be checked (its packet.json names no valid run)'
+      if (stored > run) return 'a later run holds this slot'
+    } catch (err) {
+      return `the slot could not be checked (${message(err)})`
+    }
+  }
+  // full.md too: a later run may have written it first (N161)
+  const full = runPath(role, run, 'full.md')
+  const fullUnsafe = await storageProblem($, full)
+  if (fullUnsafe) return fullUnsafe
+  try {
+    if (!(await $.fs.exists(full))) return undefined
+    const head = new RegExp(`^# ${role.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')} · run (\\d+)\\n`).exec(String(await $.fs.read(full)))
+    const stored = head ? Number(head[1]) : NaN
+    if (!Number.isSafeInteger(stored) || stored < 1) return 'the slot could not be checked (its full.md names no valid run)'
+    return stored > run ? 'a later run holds this slot' : undefined
+  } catch (err) {
+    return `the slot could not be checked (${message(err)})`
+  }
+}
+
+// A roles file that exists but cannot be read or parsed (N137).
+class RoleFileError extends Error {}
+
+// Missing roles file: no definitions. With isStrict, a file that exists but
+// cannot be read or parsed throws instead of counting as empty (N137).
+async function loadRoleDefs($: EngineInterface, opts: { isStrict?: boolean } = {}): Promise<Record<string, RoleDef>> {
+  try {
+    if (!(await $.fs.exists(config.rolesFile))) return dict<RoleDef>()
+    let parsed: Record<string, unknown>
+    try {
+      parsed = JSON.parse(await $.fs.read(config.rolesFile)) as Record<string, unknown>
+      if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) throw new Error('no JSON object')
+    } catch (err) {
+      if (opts.isStrict) throw new RoleFileError(`the roles file ${config.rolesFile} could not be read (${message(err)})`)
+      return dict<RoleDef>()
+    }
     const map = (parsed.roles ?? parsed) as Record<string, Record<string, unknown>>
-    const defs: Record<string, RoleDef> = {}
+    // before a start, the map and every rule that limits a worker must have
+    // its shape; else the job waits (N143)
+    if (opts.isStrict) {
+      const isObject = (v: unknown) => typeof v === 'object' && v !== null && !Array.isArray(v)
+      const isListish = (v: unknown) => v === undefined || typeof v === 'string' || (Array.isArray(v) && v.every(x => typeof x === 'string'))
+      // any invalid entry counts, also one with an empty name (N148)
+      const invalid = isObject(map)
+        ? Object.entries(map).find(([, d]) => !isObject(d) || !isListish(d.owns) || !isListish(d.allowedTools) || !isListish(d.disallowedTools))
+        : undefined
+      const bad = !isObject(map) ? 'roles is no JSON object' : invalid ? `role "${invalid[0] || '(empty name)'}" has an invalid entry` : undefined
+      if (bad !== undefined) throw new RoleFileError(`the roles file ${config.rolesFile} could not be read (${bad})`)
+    }
+    const defs = dict<RoleDef>()
     for (const [name, d] of Object.entries(map)) {
       if (!ROLE_NAME.test(name) || typeof d !== 'object' || d === null) continue
       defs[name] = {
@@ -374,8 +552,9 @@ async function loadRoleDefs($: EngineInterface): Promise<Record<string, RoleDef>
       }
     }
     return defs
-  } catch {
-    return {}
+  } catch (err) {
+    if (opts.isStrict) throw err instanceof RoleFileError ? err : new RoleFileError(`the roles file ${config.rolesFile} could not be checked (${message(err)})`)
+    return dict<RoleDef>()
   }
 }
 
@@ -396,6 +575,7 @@ function effective(role: Role, def: RoleDef | undefined) {
 }
 
 function binOf(id: BackendId) {
+  if (id === 'werkbank') return parseBin(config.werkbankBin, 'werkbank-relay')
   return parseBin(id === 'codex' ? config.codexBin : id === 'opencode' ? config.opencodeBin : config.claudeBin, id)
 }
 
@@ -423,8 +603,11 @@ async function probeCase($: EngineInterface): Promise<PathCase> {
   const token = newToken()
   try {
     await ensureGitignore($)
-    await $.fs.write(relayPath('tmp/case-probe'), token)
     const upper = relayPath('tmp/CASE-PROBE')
+    // both probe files are checked first; a link at either: no probe, the
+    // case stays unknown (N206)
+    if ((await storageProblem($, relayPath('tmp/case-probe'))) || (await storageProblem($, upper))) return {}
+    await $.fs.write(relayPath('tmp/case-probe'), token)
     const seen = (await $.fs.exists(upper)) ? String(await $.fs.read(upper)) : ''
     return { caseInsensitive: seen === token }
   } catch {
@@ -465,21 +648,82 @@ async function realOf($: EngineInterface, path: string) {
 // resolve to its own place in the project. Checked before the first write
 // to relay's folders and before `git worktree add` (contract 0001, N17).
 async function storageProblem($: EngineInterface, rel: string): Promise<string | undefined> {
+  return (await storageVerdict($, rel))?.why
+}
+
+// The same check, telling a confirmed link or place outside (unsafe) from a
+// check that could not be made (unchecked): recovery keeps the job for the
+// second (N216).
+async function storageVerdict($: EngineInterface, rel: string): Promise<{ kind: 'unsafe' | 'unchecked'; why: string } | undefined> {
   projectRoot ??= await realOf($, cwd)
-  if (!projectRoot) return 'the project folder could not be resolved'
+  if (!projectRoot) return { kind: 'unchecked', why: 'the project folder could not be resolved' }
   const root = projectRoot.replace(/[\\/]+$/, '')
   const parts = rel.replace(/\\/g, '/').split('/').filter(Boolean)
   for (let i = 1; i <= parts.length; i++) {
     const p = parts.slice(0, i).join('/')
-    if (!(await $.fs.exists(p).catch(() => false))) return undefined
+    // only a confirmed "missing" lets relay create it; a failed query locks (N115)
+    let isThere: boolean
+    try {
+      isThere = await $.fs.exists(p)
+    } catch (err) {
+      return { kind: 'unchecked', why: `${p} could not be checked (${message(err)})` }
+    }
+    if (!isThere) return undefined
     const st = await $.fs.stat(p, { resolve: true }).catch(() => undefined)
-    if (!st?.realPath) return `${p} could not be resolved`
+    if (!st?.realPath) return { kind: 'unchecked', why: `${p} could not be resolved` }
     // Each part is spelled as on disk, so case does not decide here.
     if (st.isLink || !isSamePath(st.realPath, `${root}/${p}`, { caseInsensitive: true })) {
-      return `${p} resolves to ${st.realPath}, outside the project; relay writes nothing there`
+      return { kind: 'unsafe', why: `${p} resolves to ${st.realPath}, outside the project; relay writes nothing there` }
     }
   }
   return undefined
+}
+
+// Temp files (opencode's task, werkbank's protocol) live in <relayDir>/tmp/;
+// the file itself is checked like its folder before relay writes it. $.fs
+// cannot create exclusively or refuse to follow a link (V3): a short window
+// between check and write remains (contract 0001, N52).
+const tempRel = (path: string) => relayPath(`tmp/${baseName(path)}`)
+
+async function tempFilesProblem($: EngineInterface, inv: Invocation): Promise<string | undefined> {
+  for (const f of inv.tempFiles ?? []) {
+    const problem = await storageProblem($, tempRel(f.path))
+    if (problem) return problem
+  }
+  return undefined
+}
+
+// Writes exactly the path it checked (N81).
+// Returns why the file was not cleared; a failed write is tried again with
+// each heartbeat of this session, a path that is no longer safe never (N132).
+const uncleared = new Set<string>()
+async function clearTempFile($: EngineInterface, path: string): Promise<string | undefined> {
+  const rel = tempRel(path)
+  const unsafe = await storageProblem($, rel)
+  if (unsafe) {
+    uncleared.delete(rel)
+    return unsafe
+  }
+  try {
+    await $.fs.write(rel, '')
+    uncleared.delete(rel)
+    return undefined
+  } catch (err) {
+    uncleared.add(rel)
+    return message(err)
+  }
+}
+
+async function retryTempClears($: EngineInterface) {
+  for (const rel of [...uncleared]) await clearTempFile($, rel)
+}
+
+// The project's place in its repository, or undefined when git cannot say
+// (never silently the top, contract 0001, N49).
+async function prefixOf($: EngineInterface, dir: string): Promise<string | undefined> {
+  const r = await git($, dir, ['rev-parse', '--show-prefix'])
+  // only git's line ending goes; the prefix itself stays literal (N60)
+  return r.exitCode === 0 ? r.stdout.replace(/\r?\n$/, '') : undefined
 }
 
 // Why the folder at `rel` is not the role's own worktree, or undefined: it
@@ -568,7 +812,8 @@ async function takeSnapshot($: EngineInterface, dir: string): Promise<Snapshot |
   const mine = (repoPath: string) => toProjectPath(repoPath, repo.prefix)
   const relayPrefix = `${config.relayDir}/`
   const isMine = (p: string) => !p.startsWith(relayPrefix)
-  const dirty: Record<string, string> = {}
+  // a dict, so a file named __proto__ is kept like any other (N207)
+  const dirty = dict<string>()
   const present: { repoPath: string; path: string; code: string }[] = []
   for (const e of parsePorcelain(status.stdout)) {
     const path = mine(e.path)
@@ -639,7 +884,12 @@ async function writeCheckOf($: EngineInterface, owns: string[], dir: string, bef
   if (!after) return none('git status failed after the run', true)
   let committed: { path: string; change: Change }[] = []
   const gaps: string[] = []
-  if (before.head !== after.head) {
+  // the HEAD before the run must be a commit git knows before it is diffed (N222)
+  const isBeforeCommit =
+    before.head === after.head || !before.head || (await git($, dir, ['cat-file', '-e', `${before.head}^{commit}`])).exitCode === 0
+  if (!isBeforeCommit) {
+    gaps.push('the HEAD the snapshot names is no commit in this repository; what the run committed is unknown')
+  } else if (before.head !== after.head) {
     // A first commit has no parent: compare it with the empty tree.
     const empty = before.head && after.head ? '' : await emptyTree($, dir)
     const r = await git($, dir, ['diff', '--name-status', '-z', before.head || empty, after.head || empty])
@@ -658,7 +908,13 @@ async function writeCheckOf($: EngineInterface, owns: string[], dir: string, bef
 // a time; a call while one runs makes it look again before it ends.
 let pumping: Promise<void> | undefined
 let isPumpAsked = false
+// roles already named as having no safe next run number (N194)
+const exhaustedNoted = new Set<string>()
+// true while the restart handles the interrupted runs (N167)
+let isRecovering = false
 function pump($: EngineInterface): Promise<void> {
+  // no start during the restart; it pumps itself once it is done (N167)
+  if (isRecovering) return Promise.resolve()
   if (pumping) {
     isPumpAsked = true
     return pumping
@@ -678,18 +934,56 @@ function pump($: EngineInterface): Promise<void> {
 }
 
 async function pumpOnce($: EngineInterface) {
+  // a waiting job whose role is not in the store looks for it in the roles
+  // file again on every try, e.g. once that file is repaired (N146)
+  if (queued().some(j => !roles[j.role])) {
+    const defs = await loadRoleDefs($)
+    for (const j of queued()) {
+      if (!roles[j.role] && defs[j.role]) roles[j.role] = { name: j.role, runs: 0, isBusy: false }
+    }
+  }
+  // a role with no safe next run number is skipped, named once, and the
+  // others still start (N188, N194)
+  for (const j of queued()) {
+    const r = roles[j.role]
+    if (r && !isRunNumber(r.runs + 1) && !exhaustedNoted.has(r.name)) {
+      exhaustedNoted.add(r.name)
+      dispatchError = `${r.name} has no safe next run number (${r.runs} runs counted)`
+      notices.push(redact(`relay did not start ${r.name}: ${dispatchError}; its jobs stay queued.`))
+    }
+  }
+  const isStartable = (j: QueuedJob) => j.state === 'queued' && !!roles[j.role] && !roles[j.role]?.isBusy && isRunNumber(roles[j.role]!.runs + 1)
   while (isOwner && running < Math.max(1, config.maxParallel)) {
-    const job = queue.jobs.find(j => j.state === 'queued' && roles[j.role] && !roles[j.role]?.isBusy)
+    const candidate = queue.jobs.find(isStartable)
+    if (!candidate) break
+    // the roles file is checked and the start time taken before anything is
+    // reserved, so no heartbeat writes a job as running before (N162); a roles
+    // file that exists but cannot be read keeps the job queued (N137)
+    let defs: Record<string, RoleDef>
+    let startedAt: string
+    try {
+      defs = await loadRoleDefs($, { isStrict: true })
+      startedAt = await iso($)
+    } catch (err) {
+      dispatchError = message(err)
+      const name = candidate.role
+      if (err instanceof RoleFileError) notices.push(redact(`relay did not start ${name}: ${dispatchError}; the job stays queued and starts once the roles file can be read.`))
+      else notices.push(redact(`relay did not start ${name} (${dispatchError}); the job stays queued.`))
+      break
+    }
+    // looked for again after the awaits; reserved with no await in between:
+    // the job, its role and the slot
+    const job = queue.jobs.find(isStartable)
     const role = job && roles[job.role]
-    if (!job || !role) break
-    // Reserved before the first await: the job, its role and the slot.
+    if (!isOwner || !job || !role || running >= Math.max(1, config.maxParallel)) break
     const run = role.runs + 1
     role.isBusy = true
     role.runs = run
     running++
     job.state = 'running'
     job.run = run
-    if (!(await start($, job, role, run))) break
+    job.startedAt = startedAt
+    if (!(await start($, job, role, run, defs))) break
   }
 }
 
@@ -703,11 +997,10 @@ function snapshotPath(role: string, run: number) {
 
 // Starts a reserved job; false (and the reservation undone) when the queue
 // could not be persisted, so nothing runs that the file does not know.
-async function start($: EngineInterface, job: QueuedJob, role: Role, run: number): Promise<boolean> {
-  let eff: ReturnType<typeof effective>
+async function start($: EngineInterface, job: QueuedJob, role: Role, run: number, defs: Record<string, RoleDef>): Promise<boolean> {
+  // the roles file was read strictly before the reservation (N137, N162)
+  const eff = effective(role, defs[role.name])
   try {
-    eff = effective(role, (await loadRoleDefs($))[role.name])
-    job.startedAt = await iso($)
     await save($)
     await writeQueue($)
   } catch (err) {
@@ -719,7 +1012,9 @@ async function start($: EngineInterface, job: QueuedJob, role: Role, run: number
     delete job.startedAt
     await save($).catch(() => undefined)
     dispatchError = err instanceof NotOwnerError ? 'another session took over the queue' : message(err)
-    if (!(err instanceof NotOwnerError)) {
+    if (err instanceof RoleFileError) {
+      notices.push(redact(`relay did not start ${role.name}: ${dispatchError}; the job stays queued and starts once the roles file can be read.`))
+    } else if (!(err instanceof NotOwnerError)) {
       notices.push(`relay could not persist the queue before starting ${role.name} (${dispatchError}); the job stays queued and starts once the queue can be written.`)
     }
     return false
@@ -739,7 +1034,12 @@ async function start($: EngineInterface, job: QueuedJob, role: Role, run: number
     let check: WriteCheck | undefined
     let inv: Invocation | undefined
     let notStarted: string | undefined
+    // one rule for "the child ran": output, an exit code, a signal or the
+    // timeout; a read error with no output is no start (N173)
+    let hasStarted = false
     let mine: Activity | undefined
+    let passedSessionId: string | undefined
+    const isRemote = id === 'werkbank'
     const notes: string[] = []
     // Nothing is written where it could leave the project (N17).
     const escape = (await storageProblem($, relayPath('tmp'))) ?? (await storageProblem($, relayPath(`runs/${role.name}`)))
@@ -749,18 +1049,25 @@ async function start($: EngineInterface, job: QueuedJob, role: Role, run: number
       if (escape) {
         notStarted = escape
         outcome = { answer: '', usage: {}, error: { kind: 'cli', message: escape } }
-      } else work = await workdirOf($, role.name, eff.isolation)
+        // A werkbank worker has its own worktree on the server (N33).
+      } else work = await workdirOf($, role.name, isRemote ? 'shared' : eff.isolation)
       if (notStarted) {
         // already decided
       } else if (work.error) {
         notStarted = `isolation "worktree" could not be set up: ${work.error}`
         outcome = { answer: '', usage: {}, error: { kind: 'cli', message: notStarted } }
       } else {
-        mine = { role: role.name, owns: eff.owns, dir: work.dir, from: ++tick }
-        activity.push(mine)
+        // A werkbank run writes nothing here: no snapshot, and it takes no part
+        // in attributing what parallel runs wrote (N39).
+        if (!isRemote) {
+          mine = { role: role.name, owns: eff.owns, dir: work.dir, from: ++tick }
+          activity.push(mine)
+        }
         await checkVersion($, id)
-        const before = config.writeCheck === 'report' && work.isGit ? await takeSnapshot($, work.dir) : undefined
-        if (before) await $.fs.write(snapshotPath(role.name, run), JSON.stringify(before))
+        const before = config.writeCheck === 'report' && work.isGit && !isRemote ? await takeSnapshot($, work.dir) : undefined
+        // the file itself is checked before it is written; a run whose file
+        // is not safe checks against the snapshot in memory (N206)
+        if (before && !(await storageProblem($, snapshotPath(role.name, run)))) await $.fs.write(snapshotPath(role.name, run), JSON.stringify(before))
 
         // A session lives in one folder: a run elsewhere starts a fresh one (N23).
         const sessionDir = role.sessionDir ?? cwd
@@ -769,8 +1076,9 @@ async function start($: EngineInterface, job: QueuedJob, role: Role, run: number
         const isNew = role.sessionId === undefined || sessionBackendOf(role) !== id || isMoved
         // A brief that holds credentials stays out of argv (N20): the system
         // prompt gets it redacted, the task (stdin or file) carries it whole.
+        // written-out escapes alone do not count as a credential (N195)
         const safeBrief = redact(eff.brief)
-        const isBriefPrivate = safeBrief !== eff.brief
+        const isBriefPrivate = hasCredential(eff.brief)
         const spec: LaunchSpec = {
           role: role.name,
           run,
@@ -792,12 +1100,31 @@ async function start($: EngineInterface, job: QueuedJob, role: Role, run: number
             codexSandbox: config.codexSandbox,
             opencodeStandalone: config.opencodeStandalone,
             tmpDir: absolute(relayPath('tmp')),
+            ...(isRemote
+              ? {
+                  werkbankLeitstand: config.werkbankLeitstand,
+                  werkbankTokenFile: await expandHome($, config.werkbankTokenFile.trim()),
+                  runTimeoutMin: config.runTimeoutMin,
+                  isWindows: (await $.env.get('OS')) === 'Windows_NT',
+                }
+              : {}),
           },
         }
         try {
           inv = backend.build(spec)
         } catch (err) {
-          outcome = { answer: '', usage: {}, error: { kind: 'model', message: message(err) } }
+          // A refused werkbank call never starts and keeps the session (N32).
+          if (err instanceof BuildError) notStarted = message(err).replace(/\.$/, '')
+          outcome = { answer: '', usage: {}, error: { kind: err instanceof BuildError ? err.kind : 'model', message: message(err) } }
+        }
+        // The session that really went along, for "session moved" (N55).
+        if (inv && isRemote) passedSessionId = inv.sessionArg
+        // Each temp file itself must stay in the project, not only its folder (N52).
+        const tempProblem = inv ? await tempFilesProblem($, inv) : undefined
+        if (inv && tempProblem) {
+          notStarted = tempProblem
+          outcome = { answer: '', usage: {}, error: { kind: 'cli', message: tempProblem } }
+          inv = undefined
         }
         if (inv) {
           if (inv.presetSessionId) {
@@ -806,19 +1133,36 @@ async function start($: EngineInterface, job: QueuedJob, role: Role, run: number
             role.sessionDir = work.dir
             await save($)
           }
+          let sawOutput = false
           try {
             for (const f of inv.tempFiles ?? []) await $.fs.write(f.path, f.content)
-            await spawnRun($, role.name, eff.owns, work.dir, inv, backend.onLine?.bind(backend), proc, live)
+            sawOutput = (await spawnRun($, id, eff.owns, work.dir, inv, backend.onLine?.bind(backend), proc, live)).sawOutput
           } finally {
-            // The task file never outlives its run, whatever ended it (N25).
-            for (const f of inv.tempFiles ?? []) await $.fs.write(f.path, '').catch(() => undefined)
+            // The task file never outlives its run, whatever ended it (N25),
+            // and is checked again before it is cleared (N52).
+            for (const f of inv.tempFiles ?? []) {
+              const failed = await clearTempFile($, f.path)
+              // named, and tried again with each heartbeat (N132)
+              if (failed) notes.push(`${tempRel(f.path)} could not be cleared (${failed})${uncleared.has(tempRel(f.path)) ? "; relay tries again with each heartbeat of this session" : ""}`)
+            }
           }
           outcome = backend.parse(proc)
-          if (!outcome.answer.trim() && !proc.stdout.trim() && proc.exitCode === undefined && outcome.error?.kind === 'cli') {
+          hasStarted = sawOutput || proc.exitCode !== undefined || !!proc.signal || proc.isTimedOut
+          // only when the child never ran (N71, N173)
+          if (!hasStarted && !outcome.answer.trim() && outcome.error?.kind === 'cli') {
             outcome.error.message += ` · could not start ${inv.argv[0]}; set ${id}Bin to the full path of the executable`
           }
         }
-        check = config.writeCheck === 'report' ? await writeCheckOf($, eff.owns, work.dir, before, work.git, mine) : undefined
+        if (config.writeCheck !== 'report') check = undefined
+        else if (!isRemote) check = await writeCheckOf($, eff.owns, work.dir, before, work.git, mine)
+        // The files the job changed on its branch, against owns (N39).
+        else if (outcome.remote) check = remoteWriteCheck(outcome.remote, eff.owns, await prefixOf($, work.dir))
+        // no JSON at all from a run that did start: the job may have been
+        // handed in and run on (N170); a JSON error without jobId or a start
+        // that never happened has no check (N39, N71)
+        else if (!notStarted && hasStarted && !hasJsonObject(proc.stdout)) {
+          check = notChecked(`the werkbank job may still be running on the server; its changes would be on agent/relay/${role.name}`)
+        }
       }
     } catch (err) {
       proc.stderr += `\n${String(err)}`
@@ -828,8 +1172,12 @@ async function start($: EngineInterface, job: QueuedJob, role: Role, run: number
     pruneActivity()
     running--
     try {
-      await finish($, { role, run, job, id, model: model || outcome.usage.model || '', outcome, proc, check, work, notes, notStarted, presetSessionId: inv?.presetSessionId })
+      // the log's own writes may still be queued: let them run first (N88)
+      // live.log is finished, its end line written, before the report goes;
+      // a problem with it is still in the report (N88, N96)
       await live.close(outcome, proc)
+      if (live.problem) notes.push(`live.log was not written: ${live.problem}`)
+      await finish($, { role, run, job, id, model: model || outcome.usage.model || '', outcome, proc, check, work, notes, notStarted, presetSessionId: inv?.presetSessionId, passedSessionId })
     } catch (err) {
       // The report itself failed: free the role, keep the job, which the
       // next start reports as interrupted.
@@ -847,7 +1195,7 @@ async function start($: EngineInterface, job: QueuedJob, role: Role, run: number
 // token limit.
 async function spawnRun(
   $: EngineInterface,
-  role: string,
+  id: BackendId,
   owns: string[],
   dir: string,
   inv: Invocation,
@@ -862,32 +1210,65 @@ async function spawnRun(
   }
   const child = $.process.spawn({ argv: inv.argv, cwd: dir, ...(inv.input !== undefined ? { input: inv.input } : {}), env: { ...env, ...inv.env } })
   const stop = () => void child.return(undefined as never)
+  const timeoutMin = timeoutOf(id)
   const timer =
-    config.runTimeoutMin > 0
-      ? $.clock.after(config.runTimeoutMin * 60_000, () => {
+    timeoutMin > 0
+      ? $.clock.after(timeoutMin * 60_000, () => {
           proc.isTimedOut = true
           stop()
         })
       : undefined
+  // werkbank reports its progress on stderr; the others on stdout (N43).
+  const isLiveErr = liveStream(id) === 'stderr'
   let usage: Usage = {}
   let rest = ''
+  let errRest = ''
+  // whether the child printed anything at all (N71)
+  let sawOutput = false
+  // one key state over stdout and stderr, in the order they arrive (N114)
+  const keys = privateKeyFilter()
+  let isKeySeen = false
+  // an unfinished line with a key marker holds live.log back (N128)
+  const isFragmentKeyed = () => hasKeyBegin(rest) || hasKeyBegin(errRest)
+  const track = (line: string) => {
+    const seen = [line, ...eventTexts(line)].join('\n')
+    if (hasKeyBegin(seen)) isKeySeen = true
+    keys(seen)
+  }
   try {
     for (;;) {
       const step = await child.next()
       if (step.done) {
         proc.exitCode = step.value?.code ?? undefined
+        // no exit code: say why (N61)
+        if (step.value?.signal) proc.signal = String(step.value.signal)
         break
       }
       const chunk = step.value
+      if (chunk.text) sawOutput = true
       if (chunk.stream === 'stderr') {
         proc.stderr += chunk.text
+        const errLines = (errRest + chunk.text).split('\n')
+        errRest = errLines.pop() ?? ''
+        const isHeld = isFragmentKeyed()
+        if (isHeld) live.seal()
+        for (const line of errLines) {
+          track(line)
+          // the stream not shown still moves live.log's key state (N114)
+          if (isLiveErr) live.line(line, isHeld)
+          else live.other(line)
+        }
         continue
       }
       proc.stdout += chunk.text
       const lines = (rest + chunk.text).split('\n')
       rest = lines.pop() ?? ''
+      const isHeld = isFragmentKeyed()
+      if (isHeld) live.seal()
       for (const line of lines) {
-        live.line(line)
+        track(line)
+        if (!isLiveErr) live.line(line, isHeld)
+        else live.other(line)
         if (onLine) usage = onLine(line, usage)
       }
       if (config.maxTokensPerRun > 0 && onLine && totalTokens(usage) > config.maxTokensPerRun && !proc.isStoppedByLimit) {
@@ -896,36 +1277,186 @@ async function spawnRun(
       }
     }
   } catch (err) {
-    if (!proc.isTimedOut && !proc.isStoppedByLimit) proc.stderr += `\n${String(err)}`
+    // a read error stops the child like the timeout does, before its slot
+    // under maxParallel is given back (N180)
+    // (a stream that already failed may refuse the stop; that is no new error)
+    // the stop is waited for before the slot is given back (N186)
+    if (!proc.isTimedOut && !proc.isStoppedByLimit) {
+      try {
+        await child.return(undefined as never)
+      } catch {
+        // already ended
+      }
+    }
+    // the read error's text goes into the key check like a line (N155)
+    for (const line of String(err).split('\n')) {
+      track(line)
+      live.other(line)
+    }
+    if (!proc.isTimedOut && !proc.isStoppedByLimit) {
+      proc.stderr += `\n${String(err)}`
+      proc.streamError = redact(String(err)).slice(0, 300)
+    }
   }
-  if (rest) live.line(rest)
+  // a rest with a key marker first, so its key state applies to the other (N128)
+  const lastParts = [[errRest, isLiveErr], [rest, !isLiveErr]] as const
+  for (const [last, isShown] of [...lastParts].sort((x, y) => Number(hasKeyBegin(y[0])) - Number(hasKeyBegin(x[0])))) {
+    if (!last) continue
+    track(last)
+    if (isShown) live.line(last)
+    else live.other(last)
+  }
+  // a key still open at the end: its answer is passed on nowhere (N114)
+  proc.isKeyOpen = keys.isOpen
+  // any key marker at all: the answer is passed on nowhere (N120)
+  proc.isKeySeen = isKeySeen || keys.isOpen
   timer?.cancel()
+  return { sawOutput }
 }
 
 // <relayDir>/runs/<role>/live.log: one readable line per event, written in
 // batches (the plugin API cannot append). Every line is redacted first.
+const liveChains = new Map<string, Promise<void>>()
+const liveOwners = new Map<string, number>()
 function liveLog($: EngineInterface, role: string, run: number, id: BackendId, isEnabled = true) {
   const path = relayPath(`runs/${role}/live.log`)
   const lines = [`# ${role} · run ${run} · ${id} · started ${new Date().toISOString()}`]
-  let flushedAt = 0
-  const flush = async () => {
-    flushedAt = Date.now()
-    if (!isEnabled) return
-    await $.fs.write(path, `${lines.join('\n')}\n`).catch(() => undefined)
+  // A private key over several lines never reaches the log (N51).
+  const keyFilter = privateKeyFilter()
+  // a credential list left open by one line is replaced in the next ones (N198)
+  const carry = credentialValueCarry()
+  // After the first key marker the log takes no more lines (N134).
+  let isSealed = false
+  const seal = () => {
+    if (isSealed) return
+    isSealed = true
+    lines.push(REDACTED_KEY_LINE)
+    void flushSoon()
   }
-  void flush()
+  // Timed by the plugin's clock: at most every 2 seconds, and at the end.
+  const now = () => $.clock.now().catch(() => Date.now())
+  let flushedAt = 0
+  // The log belongs to the role's newest run: an older run never writes over
+  // it, and a closed run writes nothing more (N68).
+  liveOwners.set(role, run)
+  let isClosed = false
+  // Writes of all runs of a role run one after another, each with the lines
+  // of its moment (N63, N68).
+  let problem: string | undefined
+  const write = (isFinal = false) => {
+    const next = (liveChains.get(role) ?? Promise.resolve()).then(async () => {
+      if (!isEnabled || problem || (isClosed && !isFinal) || liveOwners.get(role) !== run) return
+      // the file itself, not only its folder: a link out stops the log (N88)
+      const why = await storageProblem($, path).catch(err => `live.log could not be checked (${String(err)})`)
+      if (why) {
+        problem = why
+        return
+      }
+      // a live.log a later run of this role began (in any session) is left
+      // alone (N144)
+      // only a confirmed missing live.log counts as empty; one that cannot be
+      // checked or read is left alone, and the packet says why (N164)
+      let current = ''
+      try {
+        if (await $.fs.exists(path)) current = String(await $.fs.read(path))
+      } catch (err) {
+        problem = `live.log could not be read (${message(err)})`
+        return
+      }
+      const head = /^# \S+ · run (\d+) · /.exec(current)
+      if (head && Number(head[1]) > run) {
+        problem = 'a later run holds it'
+        return
+      }
+      // a failed write is named like a link out (N104)
+      await $.fs.write(path, `${lines.join('\n')}\n`).catch(err => {
+        problem = `the write failed (${message(err)})`
+      })
+    })
+    liveChains.set(role, next)
+    return next
+  }
+  // A line within the 2 seconds gets one write at their end, so progress
+  // never waits for the next line or the run's end (N63); close cancels it.
+  let trailing: { cancel(): void } | undefined
+  const flushSoon = async () => {
+    const t = await now()
+    if (isClosed) return
+    if (t - flushedAt >= 2000) {
+      flushedAt = t
+      return write()
+    }
+    if (trailing) return
+    trailing = $.clock.after(flushedAt + 2000 - t, () => {
+      trailing = undefined
+      if (isClosed) return
+      void now().then(at => {
+        flushedAt = at
+        return write()
+      })
+    })
+  }
+  void now().then(t => {
+    flushedAt = t
+    return write()
+  })
   return {
-    line(raw: string) {
-      if (id === 'claude') return
-      const text = liveLine(id, raw)
+    line(raw: string, isHeld = false) {
+      // the raw line and every decoded text of its event, before any cut (N83)
+      const seen = [raw, ...eventTexts(raw)].join('\n')
+      // Claude's output stays out of the log; a key marker in it still
+      // seals the log with its one line (N203)
+      if (id === 'claude') {
+        if (isHeld || hasKeyBegin(seen)) seal()
+        return
+      }
+      const kept = keyFilter(seen)
+      if (kept === undefined) return
+      // from the first key marker on (any stream, also in an unfinished
+      // line) live.log shows one [redacted private key] line and nothing
+      // more of the run but its end line (N101, N128, N134)
+      if (isHeld || hasKeyBegin(seen)) seal()
+      if (isSealed) return
+      // the carry reads the raw line, before liveLine cuts and redacts it (N198)
+      const text = kept === seen ? liveLine(id, carry(raw)) : kept
       if (!text) return
       lines.push(redact(text))
-      if (Date.now() - flushedAt >= 2000) void flush()
+      void flushSoon()
+    },
+    // a line of the stream not shown: it moves the key state and seals (N114, N134)
+    other(raw: string) {
+      const seen = [raw, ...eventTexts(raw)].join('\n')
+      if (id === 'claude') {
+        if (hasKeyBegin(seen)) seal()
+        return
+      }
+      keyFilter(seen)
+      if (hasKeyBegin(seen)) seal()
+    },
+    seal,
+    // why live.log is not written, once known (N88)
+    get problem() {
+      return problem
     },
     async close(outcome: RunOutcome, proc: ProcessResult) {
-      const state = proc.isTimedOut ? 'stopped (timeout)' : proc.isStoppedByLimit ? 'stopped (token limit)' : outcome.error ? `error: ${outcome.error.message}` : 'finished'
+      // a stopped run names a key marker too (N190)
+      // a marker seen anywhere in the run seals the log before its end line (N203)
+      if (proc.isKeySeen) seal()
+      const keyNote = keyFilter.isOpen || proc.isKeySeen ? '; answer hidden: a private key marker was in the output' : ''
+      const state = proc.isTimedOut ? `stopped (timeout)${keyNote}` : proc.isStoppedByLimit ? `stopped (token limit)${keyNote}` : outcome.error
+            ? // any key marker in either stream or in the error itself hides
+              // the error text, closed or not (N101, N121)
+              keyFilter.isOpen || proc.isKeySeen || hasKeyBegin(outcome.error.message)
+              ? 'error (text hidden: a private key marker was in the output)'
+              : `error: ${outcome.error.message}`
+            : proc.isKeySeen
+              ? 'failed (answer hidden: a private key marker was in the output)' // never "finished" (N133)
+              : 'finished'
       lines.push(redact(`# ${state} · ${new Date().toISOString()}`))
-      await flush()
+      isClosed = true
+      trailing?.cancel()
+      trailing = undefined
+      await write(true)
     },
   }
 }
@@ -933,6 +1464,8 @@ function liveLog($: EngineInterface, role: string, run: number, id: BackendId, i
 async function checkVersion($: EngineInterface, id: BackendId) {
   if (versions[id] !== undefined) return
   versions[id] = ''
+  // a werkbankBin that looks like a credential is never run, not even for --version (N82)
+  if (id === 'werkbank' && !isWerkbankBinSafe(binOf(id))) return
   try {
     const r = await $.process.run(BACKENDS[id].versionArgv(binOf(id)), { timeoutMs: 15_000 })
     const v = versionOf(`${r.stdout} ${r.stderr}`)
@@ -960,6 +1493,8 @@ type RunResult = {
   // Why the worker never started (its working folder could not be had).
   notStarted?: string
   presetSessionId?: string
+  // the session the run was asked to continue (werkbank reports a move, N41)
+  passedSessionId?: string
 }
 
 function failedPacket(summary: string): Packet {
@@ -983,7 +1518,8 @@ async function compress($: EngineInterface, role: string, answer: string): Promi
   const backend = !config.fallbackCompress ? 'off' : config.fallbackBackend
   if (backend === 'claude') {
     const r = await $.model.complete({ model: config.fallbackModel, system: fallbackPrompt(role), prompt: answer })
-    return { packet: r.isAnswered ? parsePacket(r.text) : undefined, by: config.fallbackModel }
+    // the answer is redacted before it is read (N215)
+    return { packet: r.isAnswered ? parsePacket(redact(r.text)) : undefined, by: config.fallbackModel }
   }
   if (backend === 'ollama' && config.ollamaModel.trim()) {
     try {
@@ -991,7 +1527,7 @@ async function compress($: EngineInterface, role: string, answer: string): Promi
         stdin: `${fallbackPrompt(role)}\n\n---\n${answer}`,
         timeoutMs: 120_000,
       })
-      return { packet: r.exitCode === 0 ? parsePacket(r.stdout) : undefined, by: `ollama/${config.ollamaModel.trim()}` }
+      return { packet: r.exitCode === 0 ? parsePacket(redact(r.stdout)) : undefined, by: `ollama/${config.ollamaModel.trim()}` }
     } catch {
       return { by: `ollama/${config.ollamaModel.trim()}` }
     }
@@ -1014,20 +1550,80 @@ function headMeta(r: RunResult): string {
   }
   const tail = [
     r.notStarted ? 'not started' : r.outcome.error ? (r.id === 'claude' ? r.outcome.error.message : `error (${r.outcome.error.kind})`) : '',
-    r.proc.isTimedOut ? `stopped after ${config.runTimeoutMin} min` : '',
+    r.proc.isTimedOut ? `stopped after ${timeoutOf(r.id)} min` : '',
     r.proc.isStoppedByLimit ? `stopped at ${tokens(totalTokens(u))} tokens` : '',
   ].filter(Boolean)
   return [parts.join(' · '), ...tail].join(', ')
 }
 
-async function finish($: EngineInterface, r: RunResult) {
+// A run whose output shows a key marker anywhere: its error texts and stderr
+// are passed on nowhere, since a key may open in one stream and go on in
+// another (N107).
+const KEY_HIDDEN = "(text hidden: the run's output contains a private key marker)"
+// the werkbank job states of N37 (N150, N171)
+const KNOWN_REMOTE_STATES = WERKBANK_STATES
+// a whole relay block, as parsePacket looks for it (N117)
+const RELAY_FENCE = /```relay\s*\n[\s\S]*?```/g
+const fencesIn = (text: string) => [...text.matchAll(RELAY_FENCE)].length
+function withoutKeyTexts(r: RunResult): RunResult {
+  const { outcome, proc } = r
+  const texts = [proc.stderr, outcome.answer, outcome.error?.message, outcome.remote?.reason]
+  // the run-wide verdict counts too, not only these fields (N127)
+  if (!proc.isKeySeen && !texts.some(t => t && hasKeyBegin(t))) return r
+  return {
+    ...r,
+    // a model name taken from the output goes too (N141)
+    model: outcome.usage.model !== undefined && r.model === outcome.usage.model ? '' : r.model,
+    outcome: {
+      ...outcome,
+      error: outcome.error && { ...outcome.error, message: KEY_HIDDEN },
+      // no reported session id and no model name: the role keeps its own
+      // session or starts fresh; numbers stay (N141)
+      sessionId: undefined,
+      usage: { ...outcome.usage, model: undefined },
+      // every free text of the werkbank job goes too; state, commit ids and
+      // numbers stay; without its file list the write check is incomplete
+      // (N135)
+      remote: outcome.remote && {
+        ...outcome.remote,
+        // the job id is hidden, the state kept only as a known one (N150)
+        jobId: '(hidden)',
+        state: KNOWN_REMOTE_STATES.includes(outcome.remote.state) ? outcome.remote.state : 'unknown',
+        ...(outcome.remote.reason ? { reason: KEY_HIDDEN } : {}),
+        branch: outcome.remote.branch === `agent/relay/${r.role.name}` ? outcome.remote.branch : KEY_HIDDEN,
+        ...(outcome.remote.verify ? { verify: { ...outcome.remote.verify, ...(outcome.remote.verify.command !== undefined ? { command: KEY_HIDDEN } : {}) } } : {}),
+        changedFiles: undefined,
+        // whether it reported changed files is kept, for its branch line (N172)
+        ...(outcome.remote.changedFiles?.length ? { hadChangedFiles: true as const } : {}),
+      },
+    },
+    // only a file list werkbank reported is replaced; any other check, the
+    // one of N170 say, stays (N174)
+    check: r.check && r.id === 'werkbank' && outcome.remote?.changedFiles ? notChecked('the run printed a private key marker, so the file list werkbank reported is not shown') : r.check,
+    proc: { ...proc, stderr: proc.stderr.trim() ? KEY_HIDDEN : '' },
+  }
+}
+
+async function finish($: EngineInterface, raw: RunResult) {
+  const r = withoutKeyTexts(raw)
   const { role, run, outcome, proc } = r
-  const answer = outcome.answer
-  let packet = parsePacket(answer)
+  // the whole answer is redacted before its packet is read: a key opened in
+  // the prose may go on in the packet (N107); a key still open at the end of
+  // the output hides the answer entirely (N114)
+  const answer = proc.isKeySeen ? '' : redact(outcome.answer)
+  // a relay block the redaction destroyed is a missing packet, never a bare
+  // JSON object from the prose (N117);
+  // fewer relay blocks after the redaction: no packet, not even an earlier
+  // example block (N117, N123)
+  const isFenceLost = fencesIn(answer) < fencesIn(outcome.answer)
+  let packet = isFenceLost ? undefined : parsePacket(answer)
   let compressedBy: string | undefined
   let compressError: string | undefined
+  const remote = r.notStarted ? undefined : outcome.remote
+  // A werkbank job that did not end done gets no fallback compression (N54).
+  const isRemoteEnd = !!remote && remote.state !== 'done'
   if (packet) packet.compressed_by = 'worker'
-  else if (answer.trim()) {
+  else if (answer.trim() && !isRemoteEnd) {
     // A failing compressor is a missing packet, never a lost answer (N15).
     const c = await compress($, role.name, answer).catch(err => ((compressError = message(err)), {} as { packet?: Packet; by?: string }))
     packet = c.packet
@@ -1036,14 +1632,21 @@ async function finish($: EngineInterface, r: RunResult) {
       compressedBy = c.by
     }
   }
+  if (proc.isKeySeen) packet = failedPacket('answer hidden: the output contains a private key marker')
   const isGone = outcome.error?.kind === 'session-not-found'
+  // A werkbank job that did not end done and left no packet: partial, since
+  // commits may be on its branch; failed only when the job failed (N37, N54).
+  if (!packet && remote && isRemoteEnd) {
+    packet = failedPacket(`werkbank job ${remote.jobId} ended ${remote.state} without a relay packet; the full answer is in full.md.`)
+    if (!isRemoteFailed(remote)) packet.status = 'partial'
+  }
   packet ??= failedPacket(
     r.notStarted
       ? `Worker was not started: ${r.notStarted}.`
       : isGone
         ? `The worker's ${r.id} session is gone; the next task for this role starts fresh. (${outcome.error?.message ?? ''})`
         : proc.isTimedOut
-          ? `Worker was stopped after ${config.runTimeoutMin} minutes without a packet.`
+          ? `Worker was stopped after ${timeoutOf(r.id)} minutes without a packet.`
           : proc.isStoppedByLimit
             ? `Worker was stopped at the token limit (${config.maxTokensPerRun}) without a packet.`
             : answer.trim()
@@ -1054,9 +1657,40 @@ async function finish($: EngineInterface, r: RunResult) {
   )
   if ((proc.isTimedOut || proc.isStoppedByLimit || outcome.error?.kind === 'budget') && packet.status === 'done') packet.status = 'partial'
   // A backend that failed after the packet: never done, and the error is named (N26).
-  if (outcome.error && !isGone && !r.notStarted && packet.compressed_by !== 'none') {
+  // A werkbank job's end is reported below instead.
+  if (outcome.error && !isGone && !r.notStarted && !remote && packet.compressed_by !== 'none') {
     if (packet.status === 'done') packet.status = 'partial'
     packet.risks.push(`${r.id} reported an error after the answer (${outcome.error.kind}): ${outcome.error.message}`)
+  }
+  if (remote) {
+    // N37: why the job did not end done; N38: its verify command; N40: its branch.
+    const end = remoteEndLine(remote)
+    if (end) packet.risks.push(end)
+    // a state relay does not know, missing or hidden after a key marker, is
+    // failed: isRemoteFailed says so (N150, N171)
+    if (isRemoteFailed(remote)) packet.status = 'failed'
+    else if (remote.state !== 'done' && packet.status === 'done') packet.status = 'partial'
+    // N48: a CLI error never leaves a job done, and is named
+    if (outcome.error && !isRemoteFailed(remote)) {
+      if (packet.status === 'done') packet.status = 'partial'
+      packet.risks.push(`werkbank-relay reported an error (${outcome.error.kind}): ${outcome.error.message}`)
+    }
+    // a failed or cancelled job: the error beyond its reason (a signal, a
+    // broken stream) stays visible too (N85, N89)
+    if (outcome.error && isRemoteFailed(remote) && outcome.error.message !== remote.reason) {
+      packet.risks.push(`werkbank-relay reported an error (${outcome.error.kind}): ${outcome.error.message}`)
+    }
+    if (remote.verify) packet.facts.push({ id: `F${packet.facts.length + 1}`, text: remoteVerifyLine(remote.verify) })
+    // N66: only real commit ids are shown; the rest is counted
+    if (remote.malformedCommits) packet.risks.push(`werkbank reported ${remote.malformedCommits} malformed commit id(s) (not shown)`)
+    const shas = remote.commits.map(c => c.slice(0, 7))
+    for (const sha of shas) packet.artifacts.push({ path: `commit ${sha}`, change: 'created', note: `on ${remote.branch || 'the werkbank branch'}` })
+    // also when its file list or commit ids were unusable (N175)
+    if (remote.commits.length || remote.changedFiles?.length || remote.hadChangedFiles || remote.isFileListMalformed || remote.malformedCommits) {
+      packet.needs_from_main.push(
+        `The changes are on branch ${remote.branch || '(not reported)'} (werkbank job ${remote.jobId}${shas.length ? `, commits ${shas.join(', ')}` : ''}); relay does not merge them.`,
+      )
+    }
   }
 
   // The role's session for its next run; a run that never started keeps it.
@@ -1065,14 +1699,22 @@ async function finish($: EngineInterface, r: RunResult) {
     role.sessionBackend = undefined
     role.sessionDir = undefined
   } else if (!r.notStarted) {
-    const next = outcome.sessionId ?? r.presetSessionId ?? (sessionBackendOf(role) === r.id ? role.sessionId : undefined)
+    // a reported id relay does not keep drops the old one too (N78)
+    const next = outcome.isSessionRejected
+      ? undefined
+      : (outcome.sessionId ?? r.presetSessionId ?? (sessionBackendOf(role) === r.id ? role.sessionId : undefined))
     role.sessionId = next
     role.sessionBackend = next ? r.id : undefined
     role.sessionDir = next ? r.work.dir : undefined
-    if (!next && r.id !== 'claude') packet.risks.push(`No ${r.id} session id was reported; the next task for ${role.name} starts a fresh session.`)
+    if (outcome.isSessionRejected) packet.risks.push(`werkbank reported a session id relay does not keep; the next task for ${role.name} starts a fresh session.`)
+    else if (!next && r.id !== 'claude') packet.risks.push(`No ${r.id} session id was reported; the next task for ${role.name} starts a fresh session.`)
+    // The role's worker was gone: the job ran fresh elsewhere (N41).
+    if (r.id === 'werkbank' && r.passedSessionId && outcome.sessionId && outcome.sessionId !== r.passedSessionId) {
+      packet.risks.push(`the werkbank session moved (${r.passedSessionId} → ${outcome.sessionId}); the worker started fresh, repeat the context it needs.`)
+    }
   }
 
-  if (r.check) applyWriteCheck(packet, r.check)
+  if (r.check) applyWriteCheck(packet, r.check, { isLiteral: r.id === 'werkbank' })
   // Without git the check is skipped; that is said once per session (N27).
   if (r.check && !r.check.checked && !r.check.incomplete?.length && r.work.git.state === 'no' && !isNoGitNoticed) {
     isNoGitNoticed = true
@@ -1096,7 +1738,17 @@ async function finish($: EngineInterface, r: RunResult) {
 
 // A run's report on its way: its files, then its notification. The job
 // leaves the queue only when both went through (N15).
-type Delivery = { role: Role; run: number; job: QueuedJob; files: [string, string][]; text: string; status: Packet['status']; isStored: boolean }
+type Delivery = {
+  role: Role
+  run: number
+  job: QueuedJob
+  files: [string, string][]
+  text: string
+  status: Packet['status']
+  isStored: boolean
+  // undelivered-<run>.md holds the message until it is delivered (N97)
+  hasUndelivered?: boolean
+}
 const pendingDeliveries: Delivery[] = []
 
 // Stores the run's files, updates the role and reports; true once the job
@@ -1110,14 +1762,20 @@ async function deliver(
   answer: string,
   raw: Packet,
   rawHead: string,
-  extra: { backend: BackendId; usage: Usage },
+  // a slot a later run holds: no files there, only the message (N102)
+  extra: { backend: BackendId; usage: Usage; noFiles?: string },
 ): Promise<boolean> {
   const packet = redactDeep(raw)
-  const head = redact(rawHead)
-  const fullPath = runPath(role.name, run, 'full.md')
-  const files: [string, string][] = [
+  // the headline is always one line: a line break in its fields (usage.model,
+  // say) becomes a space (N168)
+  const head = redact(rawHead).replace(/[\r\n]+/g, ' ')
+  // a later run holds the slot (N102, N110) or a file there is unsafe (N108)
+  const noFiles = extra.noFiles ?? (isRotatedOut(role, run) ? 'a later run holds this slot' : undefined)
+  const fullPath = noFiles ? `(not stored: ${noFiles})` : runPath(role.name, run, 'full.md')
+  const files: [string, string][] = noFiles ? [] : [
     [fullPath, `# ${role.name} · run ${run}\n\n## Task\n\n${redact(job.task)}\n\n## Answer\n\n${redact(stripPacket(answer))}\n`],
-    [runPath(role.name, run, 'packet.json'), JSON.stringify(redactDeep({ run, backend: extra.backend, usage: extra.usage, ...packet }), null, 2)],
+    // the headline is kept for a delivery after a restart (N92)
+    [runPath(role.name, run, 'packet.json'), JSON.stringify(redactDeep({ run, backend: extra.backend, jobId: job.id, usage: extra.usage, head, ...packet }), null, 2)],
   ]
   role.isBusy = false
   role.lastStatus = packet.status
@@ -1128,16 +1786,18 @@ async function deliver(
 }
 
 async function notify($: EngineInterface, d: Delivery) {
+  // redacted where it leaves relay, whatever built it (N130)
+  const text = redact(d.text)
   if (config.notifyMode === 'note') {
     // A refused append or a dropped prompt is no delivery: it is retried.
-    const r = await $.session.append({ message: { type: 'user', content: [{ type: 'text', text: d.text }] } })
+    const r = await $.session.append({ message: { type: 'user', content: [{ type: 'text', text }] } })
     if (r?.deny) throw new Error(`the packet could not be appended (${r.deny})`)
     $.ui.toast(`relay: ${d.role.name} run ${d.run} ${d.status}`)
   } else if (config.notifyMode === 'toast') {
-    unread.push(d.text)
+    unread.push(text)
     $.ui.toast(`relay: ${d.role.name} run ${d.run} ${d.status} – worker_status shows it`)
   } else {
-    const r = await $.prompt.submit({ text: d.text })
+    const r = await $.prompt.submit({ text })
     if (r?.drop) throw new Error(`the packet prompt was dropped (${r.drop})`)
   }
 }
@@ -1146,13 +1806,43 @@ async function attemptDelivery($: EngineInterface, d: Delivery): Promise<boolean
   try {
     if (!d.isStored) {
       await ensureGitignore($)
+      // Never written where a check fails; the notification still goes out,
+      // its warnings rebuilt on every attempt.
+      const warnings = new Set<string>()
       const escape = await storageProblem($, relayPath(`runs/${d.role.name}`))
-      if (escape) {
-        // Never written there; the notification still goes out.
-        d.text += `\nNot stored: ${escape}.`
-      } else {
-        for (const [path, text] of d.files) await $.fs.write(path, text)
+      if (escape) warnings.add(escape)
+      else {
+        // every file is checked itself right before it is written (N99), and
+        // never into a slot a later run holds, on any attempt (N110)
+        for (const [path, text] of d.files) {
+          // the slot is checked again after the awaited path check (N116)
+          // and the slot's packet.json may name a later run, written by any
+          // session (N129); the rotation check stays last, with no await after it
+          const why =
+            (await storageProblem($, path)) ??
+            (await slotProblem($, d.role.name, d.run)) ??
+            (isRotatedOut(d.role, d.run) ? 'a later run holds this slot' : undefined)
+          if (why) warnings.add(why)
+          else await $.fs.write(path, text)
+        }
       }
+      // redacted once its warnings are in: they may name a resolved path (N109)
+      const withWarnings = () => redact(d.text + [...warnings].map(w => `\nNot stored: ${w}.`).join(''))
+      let text = withWarnings()
+      if (!escape) {
+        // the message itself, outside the rotation, until it is delivered,
+        // under its job's id and length (N97, N103, N111)
+        const keptPath = undeliveredPath(d.role.name, d.run)
+        const why = await storageProblem($, keptPath)
+        if (why) {
+          warnings.add(why)
+          text = withWarnings()
+        } else {
+          await $.fs.write(keptPath, `${jobLine(d.job.id, text.length, d.status)}\n${text}`)
+          d.hasUndelivered = true
+        }
+      }
+      d.text = text
       d.isStored = true
       // Durable: a restart now delivers the stored packet, not "interrupted".
       d.job.delivery = 'stored'
@@ -1172,9 +1862,19 @@ async function attemptDelivery($: EngineInterface, d: Delivery): Promise<boolean
   if (i >= 0) pendingDeliveries.splice(i, 1)
   unreported.delete(d.job.id)
   queue.jobs = queue.jobs.filter(j => j.id !== d.job.id)
-  await writeQueue($).catch(err => {
-    if (!(err instanceof NotOwnerError)) notices.push(`relay could not write the queue after ${d.role.name} run ${d.run} (${message(err)}).`)
-  })
+  // the queue first: only once the job is gone from it is the kept message
+  // cleared, so a crash in between delivers twice, never "interrupted" (N124)
+  const isQueueWritten = await writeQueue($).then(
+    () => true,
+    err => {
+      if (!(err instanceof NotOwnerError)) notices.push(`relay could not write the queue after ${d.role.name} run ${d.run} (${message(err)}).`)
+      return false
+    },
+  )
+  // delivered: the kept message is cleared, checked like any relay file (N97)
+  if (isQueueWritten && d.hasUndelivered && !(await storageProblem($, undeliveredPath(d.role.name, d.run)))) {
+    await $.fs.write(undeliveredPath(d.role.name, d.run), '').catch(() => undefined)
+  }
   return true
 }
 
@@ -1184,21 +1884,244 @@ async function retryDeliveries($: EngineInterface) {
 
 // A job whose files were stored but whose packet never arrived: deliver the
 // stored packet; when it is gone, report the run as interrupted.
+// The headline packet.json kept, only when it is this run's own one line.
+function storedHeadOf(text: string, role: string, run: number): string | undefined {
+  try {
+    const head = (JSON.parse(text) as { head?: unknown }).head
+    return typeof head === 'string' && !head.includes('\n') && head.startsWith(`[relay] ${role} · run ${run} `) ? redact(head) : undefined
+  } catch {
+    return undefined
+  }
+}
+
+// Whether the slot's packet.json is this job's finished report (run, backend
+// and job id, N221); a check or read that fails keeps the job (N208, N216).
+async function storedReportOf($: EngineInterface, job: QueuedJob): Promise<'own' | 'none' | { keep: string }> {
+  if (!roles[job.role] || job.run === undefined) return 'none'
+  const path = runPath(job.role, job.run, 'packet.json')
+  const verdict = await storageVerdict($, path)
+  const keep = (why: string) => ({ keep: redact(`the stored report could not be checked (${why}); the job stays queued for the next start`) })
+  if (verdict?.kind === 'unchecked') return keep(verdict.why)
+  if (verdict) return 'none'
+  let text: string
+  try {
+    if (!(await $.fs.exists(path))) return 'none'
+    text = String(await $.fs.read(path))
+  } catch (err) {
+    return keep(message(err))
+  }
+  try {
+    const v = JSON.parse(text) as { run?: unknown; backend?: unknown; jobId?: unknown }
+    return v.jobId === job.id && v.run === job.run && v.backend === job.backend ? 'own' : 'none'
+  } catch {
+    return 'none'
+  }
+}
+
+// Whether packet.json is the envelope of this run on this backend (N97).
+function isEnvelopeOf(text: string, run: number, backend: BackendId): boolean {
+  try {
+    const v = JSON.parse(text) as { run?: unknown; backend?: unknown }
+    return v.run === run && v.backend === backend
+  } catch {
+    return false
+  }
+}
+
+// Whether werkbank-relay printed a JSON object, as its parse reads it (N170).
+function hasJsonObject(stdout: string): boolean {
+  try {
+    const v = JSON.parse(stdout.trim()) as unknown
+    return !!v && typeof v === 'object' && !Array.isArray(v)
+  } catch {
+    return false
+  }
+}
+
+// Whether packet.json names this run (N131).
+function isEnvelopeRun(text: string, run: number): boolean {
+  try {
+    return (JSON.parse(text) as { run?: unknown }).run === run
+  } catch {
+    return false
+  }
+}
+
+// The first line of undelivered-<run>.md: whose message it is and how long,
+// so a partly written one is told apart (N103, N111).
+// It carries the checked packet status too, so a restart never reads it from
+// the text (N168).
+const jobLine = (id: string, length: number, status?: Packet['status']) => `<!-- relay job ${id} length ${length}${status ? ` status ${status}` : ''} -->`
+const JOB_LINE = /^<!-- relay job (\S+) length (\d+)(?: status (done|partial|blocked|failed))? -->$/
+type KeptMessage = { body: string; status?: Packet['status'] }
+const RESTART_MARK = ' · delivered after a restart'
+
+// The kept message of this job, without its id line; undefined when the file
+// is missing, empty, unsafe, carries another (or no) job id or is not as
+// long as its id line says (N103, N111).
+async function keptMessageOf($: EngineInterface, job: QueuedJob): Promise<KeptMessage | { unsafe: string } | { unreadable: string } | undefined> {
+  if (job.run === undefined) return undefined
+  const path = undeliveredPath(job.role, job.run)
+  // a link out is no missing file: the run is reported as interrupted (N118)
+  // a check that could not be made keeps the job like an unreadable file (N216)
+  const verdict = await storageVerdict($, path)
+  if (verdict?.kind === 'unchecked') return { unreadable: verdict.why }
+  if (verdict) return { unsafe: verdict.why }
+  // only a confirmed missing file is no kept message; one that is there but
+  // cannot be read keeps the job for the next start (N208)
+  let text = ''
+  try {
+    if (await $.fs.exists(path)) text = String(await $.fs.read(path))
+  } catch (err) {
+    return { unreadable: message(err) }
+  }
+  const nl = text.indexOf('\n')
+  const body = text.slice(nl + 1)
+  const line = nl < 0 ? undefined : JOB_LINE.exec(text.slice(0, nl))
+  if (!line || line[1] !== job.id || Number(line[2]) !== body.length) return undefined
+  return body.trim() ? { body, status: line[3] as Packet['status'] | undefined } : undefined
+}
+
+// Delivers a kept message; its headline says it came after a restart (N105).
+async function deliverKept($: EngineInterface, job: QueuedJob, kept: KeptMessage): Promise<string | undefined> {
+  const body = kept.body
+  const run = job.run ?? 0
+  // the role is kept with at least this run, before any later task starts (N152)
+  const role = (roles[job.role] ??= { name: job.role, runs: run, isBusy: false })
+  role.runs = Math.max(role.runs, run)
+  await save($).catch(() => undefined)
+  const nl = body.indexOf('\n')
+  const text = nl < 0 ? `${body}${RESTART_MARK}` : `${body.slice(0, nl)}${RESTART_MARK}${body.slice(nl)}`
+  // the status of the id line; a file from before 2r: only the line right
+  // after the headline (N168)
+  const second = nl < 0 ? '' : (body.slice(nl + 1).split('\n')[0] ?? '')
+  const status = kept.status ?? ((/^Status: (done|partial|blocked|failed)\b/.exec(second)?.[1] ?? 'partial') as Packet['status'])
+  const d: Delivery = { role, run, job, files: [], text: redact(text), status, isStored: true, hasUndelivered: true }
+  return (await attemptDelivery($, d)) ? undefined : 'reporting failed (the stored packet could not be delivered)'
+}
+
 async function deliverStored($: EngineInterface, job: QueuedJob): Promise<string | undefined> {
   const role = roles[job.role]
   const run = job.run ?? 0
-  const stored = role ? parsePacket(await $.fs.read(runPath(job.role, run, 'packet.json')).catch(() => '')) : undefined
+  // the run number is kept before any later task starts (N152)
+  if (role && role.runs < run) {
+    role.runs = run
+    await save($).catch(() => undefined)
+  }
+  // the kept message was looked for first, in recover (N97, N103); the
+  // stored packet is read only when it is no link out (N108)
+  const verdict = role ? await storageVerdict($, runPath(job.role, run, 'packet.json')) : undefined
+  // a check that could not be made keeps the job (N216)
+  if (verdict?.kind === 'unchecked') return redact(`the stored report could not be checked (${verdict.why}); the job stays queued for the next start`)
+  const unsafe = verdict?.why
+  if (unsafe) return reportInterrupted($, job, redact(`the stored report was not read: ${unsafe}`), { noFiles: 'its stored files are not safe to use' })
+  // a stored report that is there but cannot be read keeps the job (N208)
+  let text = ''
+  if (role) {
+    try {
+      const p = runPath(job.role, run, 'packet.json')
+      if (await $.fs.exists(p)) text = String(await $.fs.read(p))
+    } catch (err) {
+      return redact(`the stored report could not be read (${message(err)}); the job stays queued for the next start`)
+    }
+  }
+  // packet.json only when it is this run's: a later run may have taken its
+  // slot, whose files then stay as they are (N97, N102)
+  if (role && text.trim() && !isEnvelopeOf(text, run, job.backend)) {
+    return reportInterrupted($, job, 'the stored report was overwritten by a later run (keepRuns)', { noFiles: 'a later run holds this slot' })
+  }
+  const stored = role ? parsePacket(text) : undefined
   if (!role || !stored) return reportInterrupted($, job)
-  const head = `[relay] ${role.name} · run ${run} finished (${job.backend}, delivered after a restart)`
+  // the stored headline with its warnings, else the plain one (N92)
+  const storedHead = storedHeadOf(text, role.name, run)
+  const head = storedHead ? `${storedHead} · delivered after a restart` : `[relay] ${role.name} · run ${run} finished (${job.backend}, delivered after a restart)`
   const d: Delivery = { role, run, job, files: [], text: renderPacket(head, stored, runPath(role.name, run, 'full.md'), config.packetDetail), status: stored.status, isStored: true }
   return (await attemptDelivery($, d)) ? undefined : 'reporting failed (the stored packet could not be delivered)'
+}
+
+// worker_expand without the final redaction, which its handler applies (N157)
+async function expandRun($: EngineInterface, e: unknown): Promise<{ result: string }> {
+  const input = e as { role: string; run?: number; section?: string; maxChars?: number }
+  const role = roles[input.role]
+  if (!role || role.runs === 0) return { result: `No runs for role "${input.role}".` }
+  // only whole run numbers from 1 (N159)
+  if (input.run !== undefined && !(Number.isSafeInteger(input.run) && input.run >= 1)) {
+    return { result: `Run must be a whole number from 1 (got ${String(input.run).slice(0, 40)}).` }
+  }
+  const run = input.run ?? (role.isBusy ? role.runs - 1 : role.runs)
+  if (run < 1) return { result: `${role.name} has no finished run yet.` }
+  // no run that has not begun (N131)
+  if (run > role.runs) return { result: `${role.name} has no run ${run} yet (${role.runs} begun).` }
+  if (isRotatedOut(role, run)) return { result: `${role.name} run ${run} was rotated out (keepRuns ${config.keepRuns}).` }
+  // a slot file that belongs to another run is never shown as this one (N131)
+  const otherRun = { result: `No stored report for ${role.name} run ${run} (the slot holds another run, or its two files do not match).` }
+  // both files of the slot must name this run before either is shown (N138)
+  // a missing or unreadable file of the pair is named itself (N154)
+  const pairProblem = async () => {
+    const p = runPath(role.name, run, 'packet.json')
+    const f = runPath(role.name, run, 'full.md')
+    if ((await storageProblem($, p)) || (await storageProblem($, f))) return otherRun
+    const texts: string[] = []
+    for (const path of [p, f]) {
+      try {
+        texts.push(String(await $.fs.read(path)))
+      } catch {
+        return { result: `No stored report for ${role.name} run ${run} (${path} is missing or unreadable).` }
+      }
+    }
+    return isEnvelopeRun(texts[0]!, run) && texts[1]!.startsWith(`# ${role.name} · run ${run}\n`) ? undefined : otherRun
+  }
+  // a report file is read only when it is no link out, like before its
+  // write (N99, N108)
+  const refused = async (path: string) => {
+    const why = await storageProblem($, path)
+    return why ? { result: redact(`relay does not read ${path} (${why}).`) } : undefined
+  }
+  if (input.section?.trim().toLowerCase() === 'packet') {
+    const path = runPath(role.name, run, 'packet.json')
+    // either file of the slot that is unsafe is named itself (N147)
+    const no = (await refused(path)) ?? (await refused(runPath(role.name, run, 'full.md')))
+    if (no) return no
+    try {
+      const raw = String(await $.fs.read(path))
+      if (!isEnvelopeRun(raw, run)) return otherRun
+      const pair = await pairProblem()
+      if (pair) return pair
+      const packet = parsePacket(raw)
+      if (packet) return { result: redact(renderPacket(`[relay] ${role.name} · run ${run}`, packet, runPath(role.name, run, 'full.md'), 'full')) }
+    } catch {
+      // fall through
+    }
+    return { result: `No stored packet for ${role.name} run ${run}.` }
+  }
+  const fullPath = runPath(role.name, run, 'full.md')
+  const no = (await refused(fullPath)) ?? (await refused(runPath(role.name, run, 'packet.json')))
+  if (no) return no
+  let text: string
+  try {
+    // redacted before a section is looked for or the text is cut (N108)
+    text = redact(String(await $.fs.read(fullPath)))
+  } catch {
+    return { result: `No stored answer for ${role.name} run ${run}.` }
+  }
+  if (!text.startsWith(`# ${role.name} · run ${run}\n`)) return otherRun
+  const pair = await pairProblem()
+  if (pair) return pair
+  let out = text
+  if (input.section) {
+    const found = extractSection(text, input.section)
+    if (!found) return { result: redact(`No section "${input.section}" in ${role.name} run ${run}.`) }
+    out = found
+  }
+  const max = input.maxChars ?? 12000
+  return { result: out.length > max ? `${out.slice(0, max)}\n… [cut at ${max} of ${out.length} chars]` : out }
 }
 
 // A job the file still marks running died with the last module: report it
 // as failed, with the write check against its snapshot, and never restart it.
 // Returns why it could not be reported yet, or undefined once it was (the job
 // then left the queue).
-async function reportInterrupted($: EngineInterface, job: QueuedJob): Promise<string | undefined> {
+async function reportInterrupted($: EngineInterface, job: QueuedJob, note?: string, opts: { noFiles?: string } = {}): Promise<string | undefined> {
   const defs = await loadRoleDefs($)
   let role = roles[job.role]
   if (!role && defs[job.role]) role = roles[job.role] = { name: job.role, runs: job.run ?? 0, isBusy: false }
@@ -1207,17 +2130,47 @@ async function reportInterrupted($: EngineInterface, job: QueuedJob): Promise<st
   role.runs = Math.max(role.runs, run)
   const eff = effective(role, defs[role.name])
   const packet = failedPacket('Interrupted: the plugin was reloaded or the session ended while this run was working. It was not restarted.')
-  if (config.writeCheck === 'report') {
+  if (note) packet.risks.push(note)
+  if (config.writeCheck === 'report' && job.backend === 'werkbank') {
+    // No local snapshot exists; the job may still run on the server (N53).
+    applyWriteCheck(packet, notChecked(`the werkbank job may still be running on the server; its changes would be on agent/relay/${role.name}`))
+  } else if (config.writeCheck === 'report') {
+    // the snapshot file is read only when it is no link out (N206)
+    const unsafe = await storageProblem($, snapshotPath(role.name, run))
     let before: Snapshot | undefined
-    try {
-      before = JSON.parse(await $.fs.read(snapshotPath(role.name, run))) as Snapshot
-    } catch {
-      before = undefined
+    // a file that was read but holds no valid snapshot is named (N217)
+    let isMalformed = false
+    if (!unsafe) {
+      let text: string | undefined
+      try {
+        text = String(await $.fs.read(snapshotPath(role.name, run)))
+      } catch {
+        text = undefined
+      }
+      if (text !== undefined) {
+        try {
+          before = restoreSnapshot(JSON.parse(text))
+        } catch {
+          before = undefined
+        }
+        isMalformed = !before
+      }
     }
     const dir = eff.isolation === 'worktree' ? absolute(relayPath(`worktrees/${role.name}`)) : cwd
-    applyWriteCheck(packet, await writeCheckOf($, eff.owns, dir, before, await gitStateOf($, dir)))
+    applyWriteCheck(
+      packet,
+      unsafe
+        ? notChecked(redact(`the snapshot of the run was not read: ${unsafe}`))
+        : isMalformed
+          ? notChecked('the snapshot of the run is malformed, so what it wrote is unknown')
+          : await writeCheckOf($, eff.owns, dir, before, await gitStateOf($, dir)),
+    )
   }
-  const isDone = await deliver($, role, run, job, '', packet, `[relay] ${role.name} · run ${run} interrupted (${job.backend})`, { backend: job.backend, usage: {} })
+  // the headline marks the check like a live report does (N10, N86)
+  let head = `[relay] ${role.name} · run ${run} interrupted (${job.backend})`
+  if (packet.write_check?.outside.length) head += ` ⚠ wrote outside owns (${packet.write_check.outside.length})`
+  if (packet.write_check?.incomplete?.length) head += ' ⚠ write check incomplete'
+  const isDone = await deliver($, role, run, job, '', packet, head, { backend: job.backend, usage: {}, noFiles: opts.noFiles })
   return isDone ? undefined : 'reporting failed (relay retries with the next heartbeat)'
 }
 
@@ -1239,7 +2192,8 @@ function roleLine(name: string, r: Role | undefined, def: RoleDef | undefined) {
     (r?.lastStatus ? `, last ${r.lastStatus}: ${r.lastSummary ?? ''}` : '') +
     ` · ${eff.backend}${versions[eff.backend] ? ` ${versions[eff.backend]}` : ''}` +
     (eff.model ? ` · ${eff.model}` : '') +
-    (eff.isolation === 'worktree' ? ' · worktree' : '') +
+    // only where the backend applies it (N112)
+    (eff.isolation === 'worktree' && !ignored.includes('isolation') ? ' · worktree' : '') +
     (eff.owns.length ? ` · owns ${eff.owns.join(', ')}` : '') +
     (total ? ` · total ${total}` : '') +
     (ignored.length ? ` · ignored: ${ignored.join(', ')}` : '')
@@ -1284,6 +2238,21 @@ export const register: Register = (on, options) => {
   config.fallbackBackend = fb === 'ollama' || fb === 'off' ? fb : 'claude'
   config.ollamaModel = str('ollamaModel', config.ollamaModel)
   config.ollamaBin = str('ollamaBin', config.ollamaBin)
+  config.werkbankBin = str('werkbankBin', config.werkbankBin)
+  config.werkbankLeitstand = str('werkbankLeitstand', config.werkbankLeitstand).trim()
+  config.werkbankTokenFile = str('werkbankTokenFile', config.werkbankTokenFile)
+  config.werkbankTimeoutMin = num('werkbankTimeoutMin', config.werkbankTimeoutMin)
+  if (config.werkbankTimeoutMin > 0 && config.runTimeoutMin > 0 && config.werkbankTimeoutMin <= config.runTimeoutMin) {
+    configNotes.push(
+      `werkbankTimeoutMin (${config.werkbankTimeoutMin}) is not above runTimeoutMin (${config.runTimeoutMin}): relay may stop a werkbank run before the worker on the server ends it.`,
+    )
+  }
+  // a worker without a limit outlives any werkbankTimeoutMin (N182)
+  if (config.werkbankTimeoutMin > 0 && config.runTimeoutMin === 0) {
+    configNotes.push(
+      `runTimeoutMin is 0 (no limit for the worker on the server), but werkbankTimeoutMin (${config.werkbankTimeoutMin}) stops werkbank-relay after ${config.werkbankTimeoutMin} min; the job may run on in the Leitstand.`,
+    )
+  }
 
   on('session.start', async ($, e, next) => {
     const started = await next(e)
@@ -1301,7 +2270,7 @@ export const register: Register = (on, options) => {
     }
     cwd = e.cwd
     session = started?.sessionId ?? (await $.session.id().catch(() => '')) ?? ''
-    roles = ((await $.store.get(storeKey())) as Record<string, Role> | undefined) ?? {}
+    roles = dict((await $.store.get(storeKey())) as Record<string, Role> | undefined)
     // Children die with the module: a role still marked busy is stale.
     for (const r of Object.values(roles)) r.isBusy = false
     running = 0
@@ -1333,10 +2302,12 @@ export const register: Register = (on, options) => {
     }
     if (loaded?.isBroken) notices.push(loaded.isFromBackup ? 'queue.json was broken; relay read queue.json.bak instead.' : 'queue.json was broken and had no usable backup; the queue starts empty.')
     else if (loaded?.isFromBackup) notices.push('queue.json was empty or missing; relay read queue.json.bak instead.')
+    if (loaded?.dropped) notices.push(`relay left out ${loaded.dropped} job(s) from the queue with an invalid role name, run number, id or field.`)
     if (loaded) adopt(loaded)
     else {
       queue = emptyQueue()
       lastQueueText = undefined
+      lastBackupText = undefined
     }
     await save($)
 
@@ -1344,7 +2315,7 @@ export const register: Register = (on, options) => {
       name: 'worker_send',
       isDeferred: false,
       description:
-        'Send a task to a persistent worker session (its own Claude Code, Codex or OpenCode session, started via CLI). ' +
+        'Send a task to a persistent worker session (its own Claude Code, Codex or OpenCode session, started via CLI, or a Claude session on the Werkbank servers with backend werkbank). ' +
         'Returns immediately; the worker runs in the background (or waits in the queue) and its compact relay packet arrives later. ' +
         'The same role keeps its context across tasks unless fresh is true. Roles may be predefined in the roles file; ' +
         'brief/owns/model/effort/tools/backend/isolation given here are stored for the role and win over the file.',
@@ -1445,35 +2416,9 @@ export const register: Register = (on, options) => {
   })
 
   on('tool.call', { tool: 'mcp__relay__worker_expand' }, async ($, e) => {
-    const input = e as unknown as { role: string; run?: number; section?: string; maxChars?: number }
-    const role = roles[input.role]
-    if (!role || role.runs === 0) return { result: `No runs for role "${input.role}".` }
-    const run = input.run ?? (role.isBusy ? role.runs - 1 : role.runs)
-    if (run < 1) return { result: `${role.name} has no finished run yet.` }
-    if (isRotatedOut(role, run)) return { result: `${role.name} run ${run} was rotated out (keepRuns ${config.keepRuns}).` }
-    if (input.section?.trim().toLowerCase() === 'packet') {
-      try {
-        const packet = parsePacket(await $.fs.read(runPath(role.name, run, 'packet.json')))
-        if (packet) return { result: renderPacket(`[relay] ${role.name} · run ${run}`, packet, runPath(role.name, run, 'full.md'), 'full') }
-      } catch {
-        // fall through
-      }
-      return { result: `No stored packet for ${role.name} run ${run}.` }
-    }
-    let text: string
-    try {
-      text = await $.fs.read(runPath(role.name, run, 'full.md'))
-    } catch {
-      return { result: `No stored answer for ${role.name} run ${run}.` }
-    }
-    let out = text
-    if (input.section) {
-      const found = extractSection(text, input.section)
-      if (!found) return { result: `No section "${input.section}" in ${role.name} run ${run}.` }
-      out = found
-    }
-    const max = input.maxChars ?? 12000
-    return { result: out.length > max ? `${out.slice(0, max)}\n… [cut at ${max} of ${out.length} chars]` : out }
+    // every answer is redacted as a whole, diagnostics included (N157)
+    const r = await expandRun($, e)
+    return { result: redact(r.result) }
   })
 
   on('tool.call', { tool: 'mcp__relay__worker_send' }, async ($, e) => {
@@ -1492,7 +2437,7 @@ export const register: Register = (on, options) => {
     }
     await claim
     if (!isOwner) {
-      if (queueError) return { result: `relay takes no tasks in this session: ${queueError}. Fix the file (or its permissions) and reload the plugin.` }
+      if (queueError) return { result: redact(`relay takes no tasks in this session: ${queueError}. Fix the file (or its permissions) and reload the plugin.`) }
       const fresh = await readQueue($).catch(() => undefined)
       if (fresh && mayOwn(fresh.queue, session, await $.clock.now())) {
         return { result: 'The session that worked this project\'s queue is gone; reload the plugin (or start a new session) to take it over.' }
@@ -1504,7 +2449,14 @@ export const register: Register = (on, options) => {
     if (input.backend !== undefined && !isBackend(input.backend)) return { result: `Unknown backend "${input.backend}": use ${BACKEND_IDS.join(', ')}.` }
     const role: Role = roles[name] ?? { name, runs: 0, isBusy: false }
     const inFlight = role.isBusy || queue.jobs.some(j => j.role === name && j.state === 'queued')
-    const def = (await loadRoleDefs($))[name]
+    // an unreadable roles file takes no task: its backend and rules are unknown (N151)
+    let def: RoleDef | undefined
+    try {
+      def = (await loadRoleDefs($, { isStrict: true }))[name]
+    } catch (err) {
+      if (!(err instanceof RoleFileError)) throw err
+      return { result: redact(`relay takes no task now: ${message(err)}; fix it and send again.`) }
+    }
     const prior = effective(role, def)
     const backendBefore = prior.backend
     if (input.brief !== undefined) role.brief = input.brief
@@ -1528,7 +2480,8 @@ export const register: Register = (on, options) => {
       notes.push(`backend changed from ${backendBefore} to ${eff.backend}: the old session was dropped`)
     }
     // A session belongs to its folder (N23).
-    if (eff.isolation !== prior.isolation && role.sessionId) {
+    // werkbank does not use isolation, so its session stays (N55).
+    if (eff.isolation !== prior.isolation && role.sessionId && eff.backend !== 'werkbank') {
       role.sessionId = undefined
       role.sessionBackend = undefined
       role.sessionDir = undefined

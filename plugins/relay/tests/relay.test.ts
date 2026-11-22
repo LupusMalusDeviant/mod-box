@@ -4,6 +4,14 @@ import { fakeWorld } from './fakes.ts'
 
 const BASE = { maxBudgetUsd: 2, workerModel: 'claude-sonnet-5-5', workerEffort: 'medium' }
 
+// The system prompt of role "ingester" with owns wiki/sources/ as 0.3.0
+// (c270e77) built it, by its SHA-256 (N218).
+const PROMPT_SHA256 = 'd7567503f4aab7856b0f0174939c96a850838dbd74e8aa6a2ce0ab54746388d5'
+async function sha256(text: string): Promise<string> {
+  const bytes = new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text)))
+  return [...bytes].map(b => b.toString(16).padStart(2, '0')).join('')
+}
+
 describe('claude backend', () => {
   test('argv is the one 0.3.0 built; the next task resumes the session', { options: BASE }, async ($: any, on: any) => {
     const w = fakeWorld(on)
@@ -19,6 +27,11 @@ describe('claude backend', () => {
       '--session-id', sid, '--model', 'claude-sonnet-5-5', '--effort', 'medium', '--max-budget-usd', '2',
       '--disallowedTools', 'Bash(git push:*)',
     ])
+    // N218: the system prompt is pinned by a fixed checksum (that of 0.3.0 at
+    // c270e77), not by the helper that builds it
+    const prompt = first.argv[first.argv.indexOf('--append-system-prompt') + 1]!
+    expect(await sha256(prompt)).toBe(PROMPT_SHA256)
+    expect(prompt).toHaveLength(1618)
     expect(first.input).toBe('Ingest 3 links')
     expect(first.env).toMatchObject({ RELAY_WORKER: '1', RELAY_CWD: '/w', RELAY_OWNS: '["wiki/sources/"]' })
     expect(w.submitted[0]).toContain('[relay] ingester · run 1 finished (claude · 3 turns, $0.10)')
@@ -28,6 +41,13 @@ describe('claude backend', () => {
     await w.until(() => w.submitted.length === 2)
     const second = w.spawns[1]!.argv
     expect(second[second.indexOf('--resume') + 1]).toBe(sid)
+    // N218: the whole resumed argv, the prompt by its checksum
+    expect(second).toEqual([
+      'claude', '-p', '--output-format', 'json', '--permission-mode', 'acceptEdits',
+      '--append-system-prompt', prompt,
+      '--resume', sid, '--model', 'claude-sonnet-5-5', '--effort', 'medium', '--max-budget-usd', '2',
+      '--disallowedTools', 'Bash(git push:*)',
+    ])
     const packet = JSON.parse(w.files.get('.relay/runs/ingester/002.packet.json')!)
     expect(packet.backend).toBe('claude')
     expect(packet.usage).toEqual({ costUsd: 0.1, turns: 3 })

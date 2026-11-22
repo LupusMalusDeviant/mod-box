@@ -40,6 +40,7 @@ export function toProjectPath(repoPath: string, prefix: string): string {
 }
 
 export type Change = 'created' | 'modified' | 'deleted'
+const CHANGES: readonly unknown[] = ['created', 'modified', 'deleted']
 
 export type WriteCheck = {
   checked: boolean
@@ -107,7 +108,9 @@ export function parsePacket(text: string): Packet | undefined {
     : [text.slice(text.indexOf('{'), text.lastIndexOf('}') + 1)]
   for (const raw of candidates) {
     try {
-      return normalise(JSON.parse(raw))
+      // redacted in the worker's own field order, before the fields are
+      // put in relay's order: a key spread over fields stays hidden (N100)
+      return normalise(redactDeep(JSON.parse(raw) as unknown))
     } catch {
       // not JSON: fall through
     }
@@ -118,7 +121,8 @@ export function parsePacket(text: string): Packet | undefined {
 function normalise(value: unknown): Packet | undefined {
   if (typeof value !== 'object' || value === null) return undefined
   const v = value as Record<string, unknown>
-  const status = ['done', 'partial', 'blocked', 'failed'].includes(String(v.status))
+  // only a string from the list counts; ["done"] is no status (N73)
+  const status = typeof v.status === 'string' && ['done', 'partial', 'blocked', 'failed'].includes(v.status)
     ? (v.status as Packet['status'])
     : 'partial'
   const strings = (x: unknown) => (Array.isArray(x) ? x.map(String) : [])
@@ -134,7 +138,8 @@ function normalise(value: unknown): Packet | undefined {
     artifacts: Array.isArray(v.artifacts)
       ? v.artifacts
           .filter(a => a && typeof a.path === 'string')
-          .map(a => ({ path: a.path, change: a.change ?? 'modified', ...(a.note ? { note: String(a.note) } : {}) }))
+          // change is one of its three words, else modified (N215)
+          .map(a => ({ path: a.path, change: CHANGES.includes(a.change) ? (a.change as Change) : 'modified', ...(a.note ? { note: String(a.note) } : {}) }))
       : [],
     open_questions: [],
     needs_from_main: [],
@@ -271,6 +276,39 @@ export function isSamePath(a: string, b: string, opts: PathCase = {}): boolean {
   return norm(a) === norm(b)
 }
 
+// A dictionary without inherited entries: every name is a key like any
+// other, __proto__ and constructor included (N207, N209).
+export function dict<T>(entries?: Record<string, T>): Record<string, T> {
+  const d = Object.create(null) as Record<string, T>
+  if (entries) for (const k of Object.keys(entries)) Object.defineProperty(d, k, { value: entries[k], writable: true, enumerable: true, configurable: true })
+  return d
+}
+
+// The value a snapshot itself holds for a path, never an inherited one (N207).
+const ownEntry = (dirty: Record<string, string>, path: string): string | undefined =>
+  Object.prototype.hasOwnProperty.call(dirty, path) ? dirty[path] : undefined
+
+// A HEAD as a snapshot keeps it: empty (unborn) or a full Git object id of
+// 40 or 64 hex characters, so it never reads as an option or a ref name to
+// git (N217, N222).
+const isSnapshotHead = (h: unknown): h is string => typeof h === 'string' && (h === '' || /^(?:[0-9a-fA-F]{40}|[0-9a-fA-F]{64})$/.test(h))
+
+// A snapshot read back from its file, its file list as a dict (N207).
+// Undefined when any part of it is malformed: a list entry that is no text,
+// a HEAD that is neither empty nor an object id, a prefix that is no text (N217).
+export function restoreSnapshot(v: unknown): Snapshot | undefined {
+  const s = v as Partial<Snapshot> | null
+  if (!s || typeof s !== 'object' || !isSnapshotHead(s.head) || !s.dirty || typeof s.dirty !== 'object' || Array.isArray(s.dirty)) return undefined
+  if (s.prefix !== undefined && typeof s.prefix !== 'string') return undefined
+  const dirty = dict<string>()
+  for (const k of Object.keys(s.dirty)) {
+    const value = (s.dirty as Record<string, unknown>)[k]
+    if (typeof value !== 'string') return undefined
+    dirty[k] = value
+  }
+  return { head: s.head, dirty, ...(typeof s.prefix === 'string' ? { prefix: s.prefix } : {}) }
+}
+
 // What a run wrote, judged against what the role owns and what the roles
 // running beside it own.
 export function compareSnapshots(
@@ -283,8 +321,8 @@ export function compareSnapshots(
 ): WriteCheck {
   const byCommit = new Map(committed.map(c => [c.path, c.change]))
   const kind = (path: string): Change => {
-    const now = after.dirty[path]
-    const was = before.dirty[path]
+    const now = ownEntry(after.dirty, path)
+    const was = ownEntry(before.dirty, path)
     if (now === 'deleted') return 'deleted'
     if (now?.startsWith('new:') && !was?.startsWith('new:')) return 'created'
     if (now === undefined) {
@@ -297,8 +335,10 @@ export function compareSnapshots(
   const incomplete: string[] = []
   const paths = new Set<string>()
   for (const p of new Set([...Object.keys(before.dirty), ...Object.keys(after.dirty)])) {
-    if (before.dirty[p] === UNHASHED || after.dirty[p] === UNHASHED) incomplete.push(p)
-    else if (before.dirty[p] !== after.dirty[p]) paths.add(p)
+    const was = ownEntry(before.dirty, p)
+    const now = ownEntry(after.dirty, p)
+    if (was === UNHASHED || now === UNHASHED) incomplete.push(p)
+    else if (was !== now) paths.add(p)
   }
   for (const c of committed) paths.add(c.path)
   const changed = [...paths].sort().map(path => ({ path, change: kind(path) }))
@@ -315,14 +355,168 @@ export function compareSnapshots(
   return check
 }
 
+export const notChecked = (reason: string): WriteCheck => ({
+  checked: false,
+  reason,
+  changed: [],
+  outside: [],
+  unattributed: [],
+  byOtherRole: [],
+  incomplete: [reason],
+})
+
+// The write check of a run on the Werkbank servers (contract 0001, N39, N49):
+// the files its job changed, named from the repository's top, against `owns`.
+// POSIX paths, case-sensitive (the servers run Linux), a backslash is part of
+// a name; every path counts as modified (the Leitstand reports no kind); no
+// other roles share that branch. Without a known prefix or a sound file list
+// nothing counts as checked.
+export function remoteWriteCheck(
+  job: { changedFiles?: readonly string[]; isFileListMalformed?: boolean },
+  owns: readonly string[],
+  prefix: string | undefined,
+): WriteCheck {
+  if (job.isFileListMalformed) return notChecked('the werkbank job reported a malformed file list')
+  if (!job.changedFiles) return notChecked('the werkbank job reported no list of changed files')
+  if (prefix === undefined) return notChecked('project prefix unknown (git rev-parse --show-prefix failed); the files the werkbank job changed cannot be placed')
+  // Literal characters throughout: a backslash is part of a Linux name, and
+  // nothing is trimmed or rewritten (N60).
+  const depth = prefix.split('/').filter(Boolean).length
+  const toProject = (p: string) => (!prefix ? p : p.startsWith(prefix) ? p.slice(prefix.length) : `${'../'.repeat(depth)}${p}`)
+  const paths = [...new Set(job.changedFiles.map(toProject))].sort()
+  const changed = paths.map(path => ({ path, change: 'modified' as Change }))
+  const own = owns.map(o => o.replace(/^\.\//, '').replace(/\/+$/, '')).filter(Boolean)
+  const isEscape = (p: string) => p.startsWith('/') || p.split('/').includes('..')
+  const isOwned = (p: string) => !isEscape(p) && own.some(o => p === o || p.startsWith(`${o}/`))
+  const outside = owns.length ? paths.filter(p => !isOwned(p)) : paths.filter(isEscape)
+  return { checked: true, changed, outside, unattributed: [], byOtherRole: [] }
+}
+
+// live.log is written line by line, so a private key spanning lines would
+// slip past `redact` one line at a time. This filter drops every line from a
+// BEGIN … PRIVATE KEY line through its END line and marks the block once;
+// without an END it drops the rest of the run (contract 0001, N51).
+const KEY_MARKER = /-----(BEGIN|END) ([A-Z0-9 ]*)PRIVATE KEY-----/g
+export const REDACTED_KEY_LINE = '[redacted private key]'
+
+// A reading of the text with JSON escapes resolved (\uXXXX, \n, \" …), up to
+// three levels deep, and for each of its characters where it starts in the
+// original; map[decoded.length] is text.length (N94).
+const SIMPLE_ESCAPES: Record<string, string> = { n: '\n', r: '\r', t: '\t', b: '\b', f: '\f', '"': '"', '\\': '\\', '/': '/' }
+function decodeOnce(text: string): { decoded: string; map: number[] } {
+  let decoded = ''
+  const map: number[] = []
+  for (let i = 0; i < text.length; ) {
+    if (text[i] === '\\') {
+      const u = /^u([0-9a-fA-F]{4})/.exec(text.slice(i + 1, i + 6))
+      if (u) {
+        decoded += String.fromCharCode(parseInt(u[1]!, 16))
+        map.push(i)
+        i += 6
+        continue
+      }
+      const s = SIMPLE_ESCAPES[text[i + 1] ?? '']
+      if (s !== undefined) {
+        decoded += s
+        map.push(i)
+        i += 2
+        continue
+      }
+    }
+    decoded += text[i]
+    map.push(i)
+    i++
+  }
+  map.push(text.length)
+  return { decoded, map }
+}
+export function decodedView(text: string): { decoded: string; map: number[] } {
+  let view = { decoded: text, map: [...Array(text.length + 1).keys()] }
+  for (let level = 0; level < 3 && view.decoded.includes('\\'); level++) {
+    const next = decodeOnce(view.decoded)
+    if (next.decoded === view.decoded) break
+    view = { decoded: next.decoded, map: next.map.map(j => view.map[j]!) }
+  }
+  return view
+}
+
+// The text key markers are looked for in: read as redact() reads it, name
+// escapes written out first, then decoded, so the live filter sees every
+// marker redact() sees (N199).
+const markerText = (text: string) => decodedView(decodeNameEscapes(text)).decoded
+
+// The kind of key left open after the markers of `text` (read decoded),
+// starting from `openKind`; only an END of the same kind closes (N62, N70, N94).
+export function keyStateAfter(text: string, openKind: string | undefined): string | undefined {
+  // no marker can hide in a text without PRIVATE or an escape
+  if (!/PRIVATE|\\u/i.test(text)) return openKind
+  for (const m of markerText(text).matchAll(KEY_MARKER)) {
+    if (openKind === undefined) {
+      if (m[1] === 'BEGIN') openKind = m[2]
+    } else if (m[1] === 'END' && m[2] === openKind) openKind = undefined
+  }
+  return openKind
+}
+
+// Whether a BEGIN … PRIVATE KEY marker is in the text, read decoded (N101).
+export function hasKeyBegin(text: string): boolean {
+  if (!/PRIVATE|\\u/i.test(text)) return false
+  return /-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----/.test(markerText(text))
+}
+
+// The filter, and whether a key is open after the lines it saw (N101).
+export type KeyFilter = ((line: string) => string | undefined) & { readonly isOpen: boolean }
+
+export function privateKeyFilter(): KeyFilter {
+  // the kind of the open key (RSA, OPENSSH, EC, '' …); undefined: none open
+  let openKind: string | undefined
+  const filter = (line: string) => {
+    const wasInKey = openKind !== undefined
+    // every marker of the line, in order, also when escaped (N62, N70, N94)
+    openKind = keyStateAfter(line, openKind)
+    const isInKey = openKind !== undefined
+    // a line inside a key is dropped, whatever it ends with
+    if (wasInKey) return undefined
+    // a key opens and stays open: the line is marked, the rest dropped
+    if (isInKey) return REDACTED_KEY_LINE
+    // whole keys on one line are left to redact()
+    return line
+  }
+  Object.defineProperty(filter, 'isOpen', { get: () => openKind !== undefined })
+  return filter as KeyFilter
+}
+
+// Every string inside a JSON line, decoded (- → -); none for other
+// lines. The key filter reads them beside the raw line (N83).
+export function eventTexts(line: string): string[] {
+  const t = line.trim()
+  if (!t.startsWith('{') && !t.startsWith('[')) return []
+  let v: unknown
+  try {
+    v = JSON.parse(t)
+  } catch {
+    return []
+  }
+  const out: string[] = []
+  const walk = (x: unknown) => {
+    if (typeof x === 'string') out.push(x)
+    else if (Array.isArray(x)) x.forEach(walk)
+    else if (x && typeof x === 'object') Object.values(x).forEach(walk)
+  }
+  walk(v)
+  return out
+}
+
 // Folds a write check into the packet: writes outside `owns` turn done into
 // partial and land under risks; files the worker did not list are added; what
 // could not be checked is named.
-export function applyWriteCheck(p: Packet, check: WriteCheck): Packet {
+// A remote (werkbank) check compares paths literally: a backslash is a name
+// character on the server, not a separator (N60, N80).
+export function applyWriteCheck(p: Packet, check: WriteCheck, opts: { isLiteral?: boolean } = {}): Packet {
   p.write_check = check
   for (const gap of check.incomplete ?? []) p.risks.push(`write check incomplete: ${gap}`)
   if (!check.checked) return p
-  const listed = new Set(p.artifacts.map(a => a.path.replace(/\\/g, '/')))
+  const listed = new Set(p.artifacts.map(a => (opts.isLiteral ? a.path : a.path.replace(/\\/g, '/'))))
   const notMine = new Set([...check.unattributed, ...check.byOtherRole.map(b => b.path)])
   for (const c of check.changed) {
     if (!listed.has(c.path) && !notMine.has(c.path)) p.artifacts.push({ path: c.path, change: c.change, note: 'found by the write check' })
@@ -336,6 +530,9 @@ export function applyWriteCheck(p: Packet, check: WriteCheck): Packet {
   if (check.outside.length && p.status === 'done') p.status = 'partial'
   return p
 }
+
+// The last part of a path after / or \, line breaks in the path included (N75).
+export const baseName = (path: string) => path.replace(/^[\s\S]*[\\/]/, '')
 
 // relayDir stays inside the project (contract 0001, Nachtrag 1): worktrees,
 // run files and the queue live under it.
@@ -353,28 +550,303 @@ export function safeRelayDir(value: string): { dir: string; note?: string } {
 const SECRET = '[redacted]'
 
 // A field name that counts tokens rather than holding one (max_tokens,
-// input tokens, maxTokensPerRun): its numeric value stays readable.
-const isCounterName = (name: string) => /tokens|token[_-]?(?:count|limit|budget|usage|used)|max[_-]?tokens?/i.test(name)
+// input tokens, maxTokensPerRun): its numeric value stays readable. The
+// name is read in whole words; a credential word anywhere in it rules the
+// exception out, so access_tokenSecret is no counter (N200).
+const COUNTER_AFTER_TOKEN = new Set(['count', 'limit', 'budget', 'usage', 'used'])
+const CREDENTIAL_WORDS = new Set(['secret', 'password', 'passwd', 'key', 'apikey', 'credential', 'session', 'access', 'private', 'auth', 'bearer'])
+function isCounterName(name: string): boolean {
+  const words = name
+    .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
+    .split(/[\s_.-]+/)
+    .filter(Boolean)
+    .map(w => w.toLowerCase())
+  if (words.some(w => CREDENTIAL_WORDS.has(w))) return false
+  return words.some(
+    (w, i) =>
+      w === 'tokens' ||
+      (w === 'token' && COUNTER_AFTER_TOKEN.has(words[i + 1] ?? '')) ||
+      (w === 'max' && (words[i + 1] === 'token' || words[i + 1] === 'tokens')),
+  )
+}
 const isCount = (value: string) => /^[\d.,]+[kKmMbB]?$/.test(value)
 
 // key=value / key: value / "key": "value" for names that hold credentials.
 // The value is taken whole: double, single or escaped quotes with spaces and
 // escapes inside, else up to the next separator. Numbers are redacted too,
 // except the count of a counter name (contract 0001, Nachtrag 1, N18).
-const KEY_VALUE =
-  /\b([A-Za-z0-9_.-]*(?:api[_-]?key|apikey|secret|token|passwd|password|access[_-]?key|private[_-]?key|credential|session[_-]?key)[A-Za-z0-9_.-]*)(\\?["']?\s*[:=]\s*)(\\"(?:[^"\\]|\\[^"])*\\"|"(?:[^"\\\r\n]|\\.)*"|'(?:[^'\\\r\n]|\\.)*'|[^\s"'&,;\\]+)/gi
+const KEY_NAME =
+  String.raw`[A-Za-z0-9_.-]*(?:api[_-]?key|apikey|secret|token|passwd|password|access[_-]?key|private[_-]?key|credential|session[_-]?key|(?<![A-Za-z])key(?![A-Za-z]))[A-Za-z0-9_.-]*`
+// a quote around the name may be escaped, also as \u0022 (N166)
+const KEY_SEP = String.raw`(?:\\u0022|\\?["'])?\s*[:=]\s*`
+// name and separator, the value read by quotedValue (N156)
+const KEY_HEAD = new RegExp(String.raw`\b(${KEY_NAME})(${KEY_SEP})`, 'gi')
+// an unquoted value; quoted ones were replaced before (N156)
+// it ends before } ] ) too, so JSON around it stays whole (N187)
+const KEY_VALUE = new RegExp(String.raw`\b(${KEY_NAME})(${KEY_SEP})([^\s"'&,;\\}\])]+)`, 'gi')
+// `"Authorization": "x"`, `Authorization: "x"`, also once escaped, with \"
+// or \u0022 (N142, N149, N166)
+const AUTH_HEAD = /((?:\\u0022|\\?["'])?(?<![A-Za-z])(?:proxy-)?authorization(?:\\u0022|\\?["'])?\s*[:=]\s*)/gi
 
 function redactKeyValue(match: string, name: string, sep: string, value: string): string {
   if (isCounterName(name) && isCount(value)) return match
-  const quote = value.startsWith('\\"') ? '\\"' : value.startsWith('"') ? '"' : value.startsWith("'") ? "'" : ''
+  // after a quoted JSON name the value becomes a string quoted the same way,
+  // so the JSON stays valid (N187)
+  const quote = sep.startsWith('\\u0022') ? '\\u0022' : sep.startsWith('\\"') ? '\\"' : sep.startsWith('"') ? '"' : ''
   return `${name}${sep}${quote}${SECRET}${quote}`
+}
+
+// \uXXXX for a letter, digit, _ . or - is written as that character first,
+// also with more backslashes before it, so an escaped name is seen (N185)
+function decodeNameEscapes(text: string): string {
+  return text.replace(/\\+u00([2-7][0-9A-Fa-f])/g, (m, hex: string) => {
+    const c = String.fromCharCode(parseInt(hex, 16))
+    return /[A-Za-z0-9_.-]/.test(c) ? c : m
+  })
+}
+
+// Where a quoted value that starts at `at` ends, read character by character:
+// "…" and '…' with \ escaping the next character, and once-escaped JSON \"…\"
+// read as it would be after one decoding. Undefined when nothing quoted
+// starts there; isClosed false when it runs to the line or text end (N156).
+// The value itself is text[start, stop); its quotes stay as written, \u0022
+// too (N166).
+type Quoted = { start: number; stop: number; end: number; isClosed: boolean }
+export function quotedValue(text: string, at: number): Quoted | undefined {
+  const opener = text.startsWith('\\"', at) ? 2 : /^\\u0022/i.test(text.slice(at, at + 6)) ? 6 : 0
+  if (opener) {
+    const start = at + opener
+    const open = (stop: number): Quoted => ({ start, stop, end: stop, isClosed: false })
+    let isEscaped = false
+    for (let i = start; i < text.length; ) {
+      let c = text[i]!
+      let width = 1
+      if (c === '\\') {
+        const d = text[i + 1]
+        if (d === undefined) break
+        // an outer escape is read whole first, \uXXXX too (N160)
+        const hex = d === 'u' ? /^[0-9A-Fa-f]{4}/.exec(text.slice(i + 2, i + 6))?.[0] : undefined
+        if (hex) {
+          const code = String.fromCharCode(parseInt(hex, 16))
+          c = code === '\\' || code === '"' ? code : 'x'
+          width = 6
+        } else {
+          c = d === '\\' ? '\\' : d === '"' ? '"' : 'x'
+          width = 2
+        }
+      } else if (c === '"' || c === '\n' || c === '\r') {
+        // a plain quote or a line end ends the outer string: no closing here
+        return open(i)
+      }
+      if (isEscaped) isEscaped = false
+      else if (c === '\\') isEscaped = true
+      // the closing quote keeps its own width, \" or \u0022 (N166)
+      else if (c === '"') return { start, stop: i, end: i + width, isClosed: true }
+      i += width
+    }
+    return open(text.length)
+  }
+  const q = text[at]
+  if (q !== '"' && q !== "'") return undefined
+  const start = at + 1
+  for (let i = start; i < text.length; i++) {
+    const c = text[i]
+    if (c === '\\') {
+      i++
+      continue
+    }
+    if (c === q) return { start, stop: i, end: i + 1, isClosed: true }
+    if (c === '\n' || c === '\r') return { start, stop: i, end: i, isClosed: false }
+  }
+  return { start, stop: text.length, end: text.length, isClosed: false }
+}
+
+// The quote of once-escaped JSON written as a Unicode escape (backslash, u,
+// 0022), built here so this file needs no such escape in its own text.
+const UNICODE_QUOTE = `${String.fromCharCode(92)}u0022`
+const isUnicodeQuoteAt = (text: string, i: number) => text.slice(i, i + UNICODE_QUOTE.length).toLowerCase() === UNICODE_QUOTE
+
+// Reads a JSON list or object from `from` on, with `stack` the closers still
+// owed (innermost last), over line breaks too: `end` is just after the
+// bracket that closes the outermost one, undefined when the text ends first.
+// Strings inside are read by quotedValue at the level of the name's quote
+// `q`; on the escaped level both spellings of the quote count (N198, N214).
+// A closer that does not match the innermost opener is passed over (N214).
+function scanJson(text: string, from: number, q: string, stack: string): { end?: number; stack: string } {
+  const opensString = (i: number) => (q === '"' ? text[i] === '"' : text.startsWith('\\"', i) || isUnicodeQuoteAt(text, i))
+  for (let i = from; i < text.length; ) {
+    if (opensString(i)) {
+      const v = quotedValue(text, i)
+      if (!v?.isClosed) return { stack }
+      i = v.end
+      continue
+    }
+    const d = text[i]
+    if (d === '[') stack += ']'
+    else if (d === '{') stack += '}'
+    else if ((d === ']' || d === '}') && stack.endsWith(d)) {
+      stack = stack.slice(0, -1)
+      if (!stack) return { end: i + 1, stack: '' }
+    }
+    // at the plain level a backslash outside a string escapes nothing JSON
+    // knows; it is passed over with the next character
+    else if (d === '\\' && q === '"') {
+      i += 2
+      continue
+    }
+    i++
+  }
+  return { stack }
+}
+
+// Digest parameters: name=value or name="value", comma separated (N220).
+const DIGEST_PARAM = String.raw`[A-Za-z0-9_-]+\s*=\s*(?:"(?:[^"\\\r\n]|\\.)*"|[^\s,"'\\;}\])]+)`
+const DIGEST_PARAMS = String.raw`${DIGEST_PARAM}(?:\s*,\s*${DIGEST_PARAM})*`
+// An unquoted Authorization value: its scheme and the value after it (N212),
+// Digest with all its parameters, also a parameter list without the scheme
+// when the scheme came on an earlier line (N220).
+const AUTH_SCALAR = new RegExp(String.raw`^(?:digest\s+${DIGEST_PARAMS}|${DIGEST_PARAMS}|(?:(?:bearer|basic|token|digest)\s+)?[^\s,}\])"'\\;]+)`, 'i')
+// A line that holds only the scheme: the value comes later (N219).
+const AUTH_SCHEME_ONLY = /^(?:bearer|basic|token|digest)\s*$/i
+
+// Where an unquoted JSON value that starts at `at` ends: a list or object up
+// to its matching bracket (scanJson), else a scalar up to , } ] ) or space
+// (N192), for Authorization with its scheme (N212). Without a matching
+// bracket in the whole text, the value runs to the end of the text (N213).
+function jsonValueEnd(text: string, at: number, q: string, isAuth = false): number {
+  const c = text[at]
+  if (c !== '[' && c !== '{') {
+    const scalar = (isAuth ? AUTH_SCALAR : /^[^\s,}\])"'\\]+/).exec(text.slice(at))
+    return scalar ? at + scalar[0].length : at
+  }
+  const r = scanJson(text, at, q, '')
+  return r.end ?? text.length
+}
+
+// A credential value left open at the end of a text: a list or object with
+// the closers it still owes, or (isPending) a name and separator whose value
+// has not begun yet; with the quote level it is read at and whether the name
+// is Authorization. Undefined when none (N198, N204, N212).
+type OpenValue = { stack: string; q: string; isPending?: true; isAuth?: true }
+function openValueAfter(text: string): OpenValue | undefined {
+  const t = decodeNameEscapes(text)
+  let first: (OpenValue & { at: number }) | undefined
+  for (const head of [AUTH_HEAD, KEY_HEAD]) {
+    const auth = head === AUTH_HEAD ? { isAuth: true as const } : {}
+    head.lastIndex = 0
+    for (let m = head.exec(t); m; m = head.exec(t)) {
+      if (m[0].length === 0) head.lastIndex++
+      const at = m.index + m[0].length
+      const q = nameQuote(m[0])
+      if (q === undefined || (first && at >= first.at)) continue
+      // nothing after the separator: the value comes on a later line (N204)
+      if (!t.slice(at).trim()) {
+        first = { stack: '', q, isPending: true, ...auth, at }
+        continue
+      }
+      if (quotedValue(t, at) || (t[at] !== '[' && t[at] !== '{')) continue
+      const r = scanJson(t, at, q, '')
+      if (r.end === undefined) first = { stack: r.stack, q, ...auth, at }
+    }
+  }
+  if (!first) return undefined
+  const { at: _at, ...open } = first
+  return open
+}
+
+// For text read line by line (live.log): a credential list or object that a
+// line leaves open is replaced in the following lines too, up to its closing
+// bracket (N198); a credential name that ends a line has its value replaced
+// in the first line with content after it (N204), an Authorization value with
+// its scheme (N212). Returns the line as it may be passed on to redact().
+export function credentialValueCarry(): (line: string) => string {
+  let open: OpenValue | undefined
+  return (line: string) => {
+    let head = ''
+    let rest = line
+    if (open?.isPending) {
+      const i = line.search(/\S/)
+      // an empty line keeps the value pending
+      if (i < 0) return line
+      const { q, isAuth } = open
+      // only the scheme: it goes, the value stays pending (N219)
+      if (isAuth && AUTH_SCHEME_ONLY.test(line.slice(i))) return `${line.slice(0, i)}${SECRET}`
+      open = undefined
+      const v = quotedValue(line, i)
+      let end: number
+      if (v) end = v.isClosed ? v.end : line.length
+      else if (line[i] === '[' || line[i] === '{') {
+        const r = scanJson(line, i, q, '')
+        if (r.end === undefined) {
+          open = { stack: r.stack, q }
+          return `${line.slice(0, i)}${SECRET}`
+        }
+        end = r.end
+      } else end = jsonValueEnd(line, i, q, !!isAuth)
+      if (end > i) {
+        head = `${line.slice(0, i)}${SECRET}`
+        rest = line.slice(end)
+      }
+    } else if (open) {
+      const r = scanJson(line, 0, open.q, open.stack)
+      if (r.end === undefined) {
+        open = { stack: r.stack, q: open.q }
+        return SECRET
+      }
+      head = SECRET
+      rest = line.slice(r.end)
+      open = undefined
+    }
+    open = openValueAfter(rest)
+    return head + rest
+  }
+}
+
+// The quote that closed a JSON name before its separator, if any (N187, N192).
+function nameQuote(head: string): string | undefined {
+  const m = /(\\u0022|\\"|")\s*[:=]\s*$/i.exec(head)
+  return m ? m[1] : undefined
+}
+
+// Replaces the quoted value after each match of `head` (N156); after a quoted
+// JSON name an unquoted value goes whole too, as a string (N192), for
+// Authorization with its scheme (N212).
+function redactQuoted(text: string, head: RegExp, keep?: (name: string, value: string) => boolean, isAuth = false): string {
+  let out = ''
+  let last = 0
+  head.lastIndex = 0
+  for (let m = head.exec(text); m; m = head.exec(text)) {
+    const at = m.index + m[0].length
+    const v = at >= last ? quotedValue(text, at) : undefined
+    const q = !v && at >= last ? nameQuote(m[0]) : undefined
+    if (q !== undefined) {
+      const end = jsonValueEnd(text, at, q, isAuth)
+      if (end > at && !keep?.(m[1] ?? '', text.slice(at, end))) {
+        out += `${text.slice(last, at)}${q}${SECRET}${q}`
+        last = end
+        head.lastIndex = end
+        continue
+      }
+    }
+    if (!v || keep?.(m[1] ?? '', text.slice(at, v.end))) {
+      if (m[0].length === 0) head.lastIndex++
+      continue
+    }
+    // only the value goes; both quotes stay byte for byte (N166)
+    out += `${text.slice(last, v.start)}${SECRET}${text.slice(v.stop, v.end)}`
+    last = v.end
+    head.lastIndex = v.end
+  }
+  return out + text.slice(last)
 }
 
 // Credentials in text relay persists or delivers (live.log, run files,
 // packets, notices): replaced before they leave relay (contract 0001,
 // Nachtrag 1). Best effort by shape; it never makes text longer to read.
 const SECRET_PATTERNS: [RegExp, string | ((...args: string[]) => string)][] = [
-  [/-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----[\s\S]*?(?:-----END [A-Z0-9 ]*PRIVATE KEY-----|$)/g, `${SECRET} private key`],
+  // quoted Authorization values are replaced before, by quotedValue (N156)
+  // `Authorization: Digest username="u", nonce="n"`: every parameter (N220)
+  [new RegExp(String.raw`\b((?:proxy-)?authorization)(\s*[:=]\s*)(digest)\s+${DIGEST_PARAMS}`, 'gi'), `$1$2$3 ${SECRET}`],
   // `Authorization: Bearer x`, `Proxy-Authorization: Basic x`
   [/\b((?:proxy-)?authorization)(\s*[:=]\s*)(?:(bearer|basic|token|digest)\s+)?[^\s"'\\,;]+/gi, `$1$2$3 ${SECRET}`],
   [/\b(bearer|basic)\s+[A-Za-z0-9._~+/=-]{8,}/gi, `$1 ${SECRET}`],
@@ -393,20 +865,52 @@ const SECRET_PATTERNS: [RegExp, string | ((...args: string[]) => string)][] = [
   [/\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}/g, SECRET],
 ]
 
-export function redact(text: string): string {
+// A private key ends only at the END of its own kind, else at the end of the
+// text (N74). It is looked for in the decoded reading, whatever is escaped,
+// and cut from the original (N94).
+const PEM_BLOCK = /-----BEGIN ([A-Z0-9 ]*)PRIVATE KEY-----[\s\S]*?(?:-----END \1PRIVATE KEY-----|$)/g
+function redactKeys(text: string): string {
+  if (!/PRIVATE|\\u/i.test(text)) return text
+  const { decoded, map } = decodedView(text)
+  const spans = [...decoded.matchAll(PEM_BLOCK)].map(m => [map[m.index!]!, map[m.index! + m[0].length]!] as const)
   let out = text
+  for (const [from, to] of spans.reverse()) out = `${out.slice(0, from)}${SECRET} private key${out.slice(to)}`
+  return out
+}
+
+// Whether the redaction removes anything beyond writing escapes out (N195).
+export function hasCredential(text: string): boolean {
+  return redact(text) !== decodeNameEscapes(text)
+}
+
+export function redact(text: string): string {
+  let out = redactKeys(decodeNameEscapes(text))
+  // quoted values first, read with their escapes (N156)
+  out = redactQuoted(out, AUTH_HEAD, undefined, true)
+  out = redactQuoted(out, KEY_HEAD, (name, value) => isCounterName(name) && isCount(value))
   for (const [re, by] of SECRET_PATTERNS) out = typeof by === 'string' ? out.replace(re, by) : out.replace(re, by)
   return out
 }
 
-// Every string in a value, redacted (packets, usage, write checks).
+// Every string in a value, redacted (packets, usage, write checks). The
+// strings are read in order like one stream: a key opened in one and not
+// closed hides the next ones through the one with its END (N95).
 export function redactDeep<T>(value: T): T {
-  if (typeof value === 'string') return redact(value) as T
-  if (Array.isArray(value)) return value.map(v => redactDeep(v)) as T
-  if (value && typeof value === 'object') {
-    return Object.fromEntries(Object.entries(value as Record<string, unknown>).map(([k, v]) => [k, redactDeep(v)])) as T
+  let openKind: string | undefined
+  const walk = (v: unknown): unknown => {
+    if (typeof v === 'string') {
+      if (openKind !== undefined) {
+        openKind = keyStateAfter(v, openKind)
+        return REDACTED_KEY_LINE
+      }
+      openKind = keyStateAfter(v, undefined)
+      return redact(v)
+    }
+    if (Array.isArray(v)) return v.map(walk)
+    if (v && typeof v === 'object') return Object.fromEntries(Object.entries(v as Record<string, unknown>).map(([k, x]) => [k, walk(x)]))
+    return v
   }
-  return value
+  return walk(value) as T
 }
 
 // "a, b  c" or a list → ["a", "b", "c"]; tool rules with spaces stay whole

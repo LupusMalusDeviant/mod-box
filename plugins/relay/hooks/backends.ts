@@ -4,16 +4,31 @@
 
 import { redact } from './protocol.ts'
 
-export type BackendId = 'claude' | 'codex' | 'opencode'
+export type BackendId = 'claude' | 'codex' | 'opencode' | 'werkbank'
 
-export const BACKEND_IDS: readonly BackendId[] = ['claude', 'codex', 'opencode']
+export const BACKEND_IDS: readonly BackendId[] = ['claude', 'codex', 'opencode', 'werkbank']
 
 export type BackendSettings = {
   permissionMode: string
   maxBudgetUsd: number
   codexSandbox: 'workspace-write' | 'read-only'
   opencodeStandalone: boolean
-  tmpDir: string // absolute folder for opencode's task files
+  tmpDir: string // absolute folder for opencode's task files and werkbank's protocol file
+  // werkbank only (contract 0001, Nachtrag 2)
+  werkbankLeitstand?: string
+  werkbankTokenFile?: string // `~` already resolved
+  runTimeoutMin?: number // the worker's own run limit on the server
+  isWindows?: boolean // relay runs on Windows: path rules for the token file (N64)
+}
+
+// A failure while building the invocation: the run never starts.
+export class BuildError extends Error {
+  constructor(
+    message: string,
+    readonly kind: RunError['kind'],
+  ) {
+    super(message)
+  }
 }
 
 // What a run needs; relay fills it from the role, the roles file and the options.
@@ -42,6 +57,8 @@ export type Invocation = {
   env: Record<string, string>
   presetSessionId?: string
   tempFiles?: { path: string; content: string }[]
+  // the session id build really passed to the program (N67)
+  sessionArg?: string
 }
 
 export type Usage = {
@@ -55,21 +72,56 @@ export type Usage = {
 }
 
 export type RunError = {
-  kind: 'budget' | 'auth' | 'session-not-found' | 'model' | 'sandbox' | 'cli' | 'unknown'
+  kind: 'budget' | 'auth' | 'session-not-found' | 'model' | 'sandbox' | 'cli' | 'network' | 'repo' | 'unknown'
   message: string
+}
+
+// The verify command the Werkbank worker ran after the job.
+export type RemoteVerify = { command?: string; exitCode?: number; tests?: { total?: number; passed?: number; failed?: number } }
+
+// A job that ran on the Werkbank servers (contract 0001, N36).
+export type RemoteRun = {
+  jobId: string
+  state: string
+  branch: string
+  commits: string[]
+  // absent: the job reported no list (the write check says so)
+  changedFiles?: string[]
+  // the list held something other than non-empty strings (N49)
+  isFileListMalformed?: true
+  // the list was hidden after a key marker, but held files (N172)
+  hadChangedFiles?: true
+  verify?: RemoteVerify
+  // why the job did not end done (error.message), redacted and cut
+  reason?: string
+  // the kind of that error, mapped as in N35 (N65)
+  reasonKind?: RunError['kind']
+  // entries of `commits` that were no commit id; never shown (N66)
+  malformedCommits?: number
 }
 
 export type RunOutcome = {
   answer: string
   sessionId?: string
+  // the backend reported a session id relay does not keep (werkbank, N78)
+  isSessionRejected?: boolean
   usage: Usage
   error?: RunError
+  remote?: RemoteRun
 }
 
 export type ProcessResult = {
   stdout: string
   stderr: string
   exitCode?: number
+  // why there is no exit code (N61): the signal that ended the process, or
+  // the error that broke reading its output
+  signal?: string
+  streamError?: string
+  // a private key opened in the output is still open at its end (N114)
+  isKeyOpen?: boolean
+  // a private key marker was anywhere in the output (N120)
+  isKeySeen?: boolean
   isTimedOut: boolean
   isStoppedByLimit: boolean
 }
@@ -95,6 +147,8 @@ export const CHECKED_VERSIONS: Record<BackendId | 'ollama', string> = {
   claude: '2.1.310',
   codex: '0.166.0',
   opencode: '2.2.5',
+  // expected, not yet checked against the built program (contract 0001, N46)
+  werkbank: '0.1',
   ollama: '0.40.13',
 }
 
@@ -151,8 +205,8 @@ function addUsage(acc: Usage, add: Usage): Usage {
   }
 }
 
-function clean(u: Usage): Usage {
-  return Object.fromEntries(Object.entries(u).filter(([, v]) => v !== undefined)) as Usage
+function clean<T extends object>(u: T): T {
+  return Object.fromEntries(Object.entries(u).filter(([, v]) => v !== undefined)) as T
 }
 
 function jsonLines(text: string): Record<string, unknown>[] {
@@ -174,9 +228,33 @@ const obj = (v: unknown) => (v && typeof v === 'object' ? (v as Record<string, u
 const num = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? v : undefined)
 const str = (v: unknown) => (typeof v === 'string' ? v : undefined)
 
-function cliFailure(r: ProcessResult): RunError | undefined {
+// A nonzero exit (claude keeps exactly this, contract 0001, 3.1).
+function exitFailure(r: ProcessResult): RunError | undefined {
   if (r.exitCode === undefined || r.exitCode === 0 || r.isTimedOut || r.isStoppedByLimit) return undefined
   return { kind: 'cli', message: cut(r.stderr.trim() || `exit code ${r.exitCode}`) }
+}
+
+// codex, opencode, werkbank: a nonzero exit, or no exit code because a
+// signal ended the process or its output could not be read (N61).
+function cliFailure(r: ProcessResult): RunError | undefined {
+  if (r.isTimedOut || r.isStoppedByLimit) return undefined
+  if (r.exitCode !== undefined) return exitFailure(r)
+  if (r.signal) return { kind: 'cli', message: cut(`ended by signal ${r.signal}${r.stderr.trim() ? `: ${r.stderr.trim()}` : ''}`) }
+  if (r.streamError) return { kind: 'cli', message: cut(`reading the output failed: ${r.streamError}`) }
+  return undefined
+}
+
+// A signal or broken stream beside an error the CLI reported itself: kept
+// with it, the error keeps its kind (N85, N106).
+function processFailure(r: ProcessResult): string | undefined {
+  if (r.isTimedOut || r.isStoppedByLimit || r.exitCode !== undefined) return undefined
+  if (r.signal) return `ended by signal ${r.signal}`
+  if (r.streamError) return `reading the output failed: ${r.streamError}`
+  return undefined
+}
+function reported(message: string, r: ProcessResult): RunError {
+  const extra = processFailure(r)
+  return { kind: classifyError(message), message: extra ? `${cut(message)} · ${extra}` : cut(message) }
 }
 
 // ── claude ──────────────────────────────────────────────────────────────
@@ -210,7 +288,7 @@ const claude: Backend = {
     try {
       json = obj(JSON.parse(r.stdout))
     } catch {
-      return { answer: r.stdout, usage: {}, error: r.stdout.trim() ? undefined : cliFailure(r) }
+      return { answer: r.stdout, usage: {}, error: r.stdout.trim() ? undefined : exitFailure(r) }
     }
     const u = obj(json.usage)
     const usage = clean({
@@ -288,7 +366,7 @@ const codex: Backend = {
       else if (e.type === 'error') message = str(e.message) ?? 'error'
     }
     const error: RunError | undefined = message
-      ? { kind: classifyError(message), message: cut(message) }
+      ? reported(message, r)
       : // a nonzero exit is a failure even when an answer came first
         cliFailure(r)
     return { answer, sessionId, usage: clean(usage), error }
@@ -380,7 +458,7 @@ const opencode: Backend = {
     }
     const answer = texts.join('\n\n')
     const error: RunError | undefined = message
-      ? { kind: classifyError(message), message: cut(message) }
+      ? reported(message, r)
       : // a nonzero exit is a failure even when an answer came first
         cliFailure(r)
     return { answer, sessionId, usage: clean(usage), error }
@@ -400,13 +478,299 @@ function opencodeStep(e: Record<string, unknown>): Usage {
   })
 }
 
-export const BACKENDS: Record<BackendId, Backend> = { claude, codex, opencode }
+// ── werkbank (contract 0001, Nachtrag 2) ───────────────────────────────
+
+// The Leitstand takes a task of at most this many UTF-8 bytes.
+export const WERKBANK_MAX_TASK_BYTES = 16 * 1024
+
+// The job states of N37. Of these, the ones that end the run failed; the
+// others that are not done end it partial (commits may be on the branch).
+// A missing state or any other value ends it failed (N171).
+export const WERKBANK_STATES: readonly string[] = ['done', 'red', 'needs-approval', 'timed-out', 'limit', 'failed', 'cancelled']
+export const WERKBANK_FAILED_STATES: readonly string[] = ['failed', 'cancelled']
+
+const WERKBANK_ERRORS: Record<string, RunError['kind']> = {
+  auth: 'auth',
+  network: 'network',
+  repo: 'repo',
+  budget: 'budget',
+  limit: 'budget',
+  cli: 'cli',
+}
+
+// A literal http(s) URL with neither user, password, query nor fragment, and
+// nothing the redaction would touch (N50, N58).
+export function isLeitstandUrl(value: string): boolean {
+  if (/\s|[?#]/.test(value) || !/^https?:\/\//.test(value) || redact(value) !== value) return false
+  try {
+    const u = new URL(value)
+    return (u.protocol === 'http:' || u.protocol === 'https:') && !u.username && !u.password && !u.search && !u.hash && !!u.hostname
+  } catch {
+    return false
+  }
+}
+
+// An absolute token file path that means one file (N64): on Windows with a
+// drive or a UNC share, elsewhere from `/`.
+export function isTokenFilePath(path: string, isWindows: boolean): boolean {
+  if (path.startsWith('-')) return false
+  return isWindows ? /^([A-Za-z]:[\\/]|(\\\\|\/\/)[^\\/]+[\\/][^\\/]+)/.test(path) : path.startsWith('/')
+}
+
+// A value werkbank-relay could read as an option, a list entry the comma
+// join would split, or one that looks like a credential: refused before the
+// start (N32, N58). A credential is never echoed, only its option named.
+function werkbankValue(flag: string, what: string, v: string, isList: boolean) {
+  if (redact(v) !== v) throw new BuildError(`werkbank: a value for ${flag} looks like a credential; it is not passed on.`, 'cli')
+  if (v.startsWith('-')) throw new BuildError(`werkbank: ${what} "${v}" starts with "-" and could be read as an option.`, 'cli')
+  if (isList && v.includes(',')) throw new BuildError(`werkbank: ${what} "${v}" contains ",", which would split the list.`, 'cli')
+  return v
+}
+
+const werkbankList = (flag: string, what: string, list: readonly string[]) =>
+  list.length ? [flag, list.map(v => werkbankValue(flag, what, v, true)).join(',')] : []
+
+const COMMIT_ID = /^[0-9a-f]{7,64}$/i
+
+// A werkbank session id safe as an argument value and nothing the redaction
+// would touch: never stored from a reply, never sent on resume (N72).
+export const isSafeSession = (id: string) => isSafeId(id) && redact(id) === id
+
+// werkbankBin without anything the redaction would change: else neither a
+// run nor the version probe starts (N82).
+// Also over argument borders: the joined list, and no option whose name looks
+// like a credential, so `--token <value>` never passes (N122).
+// also key and names ending in _key, -key or .key, as in N142 (N153)
+const CREDENTIAL_OPTION = /^-{1,2}[^=\s]*(token|secret|password|passwd|auth|credential|bearer|cookie|apikey|api-key|api_key|(?<![A-Za-z])key(?![A-Za-z]))/i
+export const isWerkbankBinSafe = (bin: readonly string[]) =>
+  bin.every(p => redact(p) === p) && redact(bin.join(' ')) === bin.join(' ') && !bin.some(p => CREDENTIAL_OPTION.test(p.trim()))
+
+const werkbank: Backend = {
+  id: 'werkbank',
+  capabilities: { budgetUsd: false, presetSessionId: false, inProcessOwnsGuard: false, sandbox: false, usage: 'both', streamsEvents: true },
+  build(spec) {
+    const s = spec.settings
+    const leitstand = (s.werkbankLeitstand ?? '').trim()
+    // The value is never echoed: it may hold credentials (N50).
+    if (!isLeitstandUrl(leitstand)) {
+      throw new BuildError('werkbank: werkbankLeitstand must be an http:// or https:// URL without user, password, query or fragment.', 'cli')
+    }
+    const tokenFile = (s.werkbankTokenFile ?? '').trim()
+    if (!isTokenFilePath(tokenFile, !!s.isWindows)) {
+      throw new BuildError(
+        `werkbank: werkbankTokenFile must be an absolute path${s.isWindows ? ' with a drive or a UNC share' : ''} (a leading ~ needs USERPROFILE or HOME).`,
+        'cli',
+      )
+    }
+    // a path the redaction would change never reaches argv; its value is not named (N76)
+    if (redact(tokenFile) !== tokenFile) {
+      throw new BuildError('werkbank: werkbankTokenFile looks like it contains a credential; it is not passed on.', 'cli')
+    }
+    if (!isAbsolutePath(s.tmpDir)) throw new BuildError(`werkbank needs an absolute folder for the protocol file, got "${s.tmpDir}".`, 'cli')
+    const bytes = new TextEncoder().encode(spec.task).length
+    if (bytes > WERKBANK_MAX_TASK_BYTES) {
+      throw new BuildError(`werkbank: the task has ${bytes} bytes; the Leitstand takes at most ${WERKBANK_MAX_TASK_BYTES} (16 KiB). Shorten it or point to a file in the repo.`, 'cli')
+    }
+    // The protocol never goes into argv: it is a file at an absolute path (N31).
+    const path = `${s.tmpDir.replace(/[\\/]+$/, '')}/${spec.role}-${spec.run}.protocol.md`
+    const sessionId = !spec.isNew && spec.sessionId && isSafeSession(spec.sessionId) ? spec.sessionId : undefined
+    const timeoutMin = s.runTimeoutMin ?? 0
+    const argv = [
+      ...spec.bin,
+      'run',
+      '--leitstand',
+      leitstand,
+      '--token-file',
+      tokenFile,
+      '--role',
+      spec.role,
+      '--run',
+      String(spec.run),
+      '--cwd',
+      spec.cwd,
+      ...(sessionId ? ['--session', sessionId] : []),
+      ...(spec.model ? ['--model', werkbankValue('--model', 'model', spec.model, false)] : []),
+      ...(timeoutMin > 0 ? ['--timeout-min', String(timeoutMin)] : []),
+      ...werkbankList('--allowed-tools', 'allowed tool rule', spec.allowedTools),
+      ...werkbankList('--disallowed-tools', 'disallowed tool rule', spec.disallowedTools),
+      ...werkbankList('--owns', 'owned path', spec.owns),
+      '--protocol-file',
+      path,
+    ]
+    // No argument that looks like a credential reaches werkbank-relay; only
+    // its field is named (N82).
+    if (!isWerkbankBinSafe(spec.bin)) throw new BuildError('werkbank: werkbankBin looks like it contains a credential; it is not passed on.', 'cli')
+    for (let i = spec.bin.length + 1; i < argv.length; i++) {
+      const flag = argv[i - 1]!
+      if (flag.startsWith('--') && redact(argv[i]!) !== argv[i]) {
+        throw new BuildError(`werkbank: a value for ${flag} looks like a credential; it is not passed on.`, 'cli')
+      }
+    }
+    return { argv, input: spec.task, env: {}, tempFiles: [{ path, content: spec.protocol }], ...(sessionId ? { sessionArg: sessionId } : {}) }
+  },
+  parse(r) {
+    let json: Record<string, unknown> | undefined
+    try {
+      const v = JSON.parse(r.stdout.trim()) as unknown
+      if (v && typeof v === 'object' && !Array.isArray(v)) json = v as Record<string, unknown>
+    } catch {
+      json = undefined
+    }
+    if (!json) {
+      // A run relay stopped prints nothing; the timeout says enough.
+      if (r.isTimedOut) return { answer: '', usage: {} }
+      // a signal or a broken stream is named as such, not as stderr (N71)
+      const cause = r.exitCode === undefined && (r.signal || r.streamError) ? cliFailure(r) : undefined
+      return { answer: '', usage: {}, error: cause ?? { kind: 'cli', message: cut(r.stderr.trim() || 'werkbank-relay printed no JSON') } }
+    }
+    // werkbank-relay writes every field, the empty ones as null: a null
+    // counts as a missing field (N224, replaces N77)
+    for (const key of ['error', 'sessionId', 'commits', 'changedFiles']) {
+      if (json[key] === null) delete json[key]
+    }
+    const u = obj(json.usage)
+    const usage = clean({
+      costUsd: num(u.costUsd),
+      turns: num(u.turns),
+      inputTokens: num(u.inputTokens),
+      outputTokens: num(u.outputTokens),
+      model: str(u.model),
+    })
+    const e = json.error && typeof json.error === 'object' && !Array.isArray(json.error) ? obj(json.error) : undefined
+    // an error that is there but no object is a protocol failure (N69)
+    // a present key with anything but an object (N69); null is gone already (N224)
+    const isErrorMalformed = Object.prototype.hasOwnProperty.call(json, 'error') && !e
+    // only the table's own keys count, anything else is unknown (N69)
+    const errKind = str(e?.kind) ?? ''
+    const kind = e ? (Object.prototype.hasOwnProperty.call(WERKBANK_ERRORS, errKind) ? WERKBANK_ERRORS[errKind] : 'unknown') : undefined
+    const errText = e ? cut(str(e.message) || `werkbank error (${str(e.kind) ?? 'unknown'})`) : undefined
+    const sid = str(json.sessionId)
+    // free text of the server: one line, at most 120 characters (N176)
+    // nothing is trimmed: only exact values count as a state or the role's
+    // branch (N178)
+    // the ellipsis and a " (not exact)" mark count toward the 120 (N223)
+    const fit = (s: string, n: number) => {
+      const t = redact(s.replace(/\s+/g, ' '))
+      return t.length > n ? `${t.slice(0, n - 1)}…` : t
+    }
+    const oneLine = (s: string | undefined) => (s === undefined ? undefined : fit(s, 120))
+    // a whole number counts as the job id's text (N183); only spaces is no
+    // job id (N90)
+    const rawJobId = typeof json.jobId === 'number' && Number.isSafeInteger(json.jobId) && json.jobId >= 0 ? String(json.jobId) : str(json.jobId)
+    const jobId = rawJobId?.trim() ? oneLine(rawJobId) : undefined
+    // state and branch count only as the JSON gives them: a value the display
+    // form changes (redaction, written-out escapes, spaces, the cut) is marked,
+    // so it never equals a known state or the role's branch (N191)
+    const exact = (s: string | undefined) => {
+      const shown = oneLine(s)
+      if (shown === undefined || shown === s) return shown
+      const mark = ' (not exact)'
+      return `${fit(s!, 120 - mark.length)}${mark}`
+    }
+    const state = exact(str(json.state)) ?? 'unknown'
+    const strings = (v: unknown) => (Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : [])
+    let remote: RemoteRun | undefined
+    if (jobId) {
+      const v = json.verify && typeof json.verify === 'object' ? obj(json.verify) : undefined
+      const t = v ? obj(v.tests) : {}
+      // only real commit ids; the rest is counted, never shown (N66)
+      const rawCommits: unknown[] = Array.isArray(json.commits) ? json.commits : []
+      const commits = strings(rawCommits).filter(c => COMMIT_ID.test(c))
+      remote = {
+        jobId,
+        state,
+        branch: exact(str(json.branch)) ?? '',
+        commits,
+        ...(rawCommits.length > commits.length ? { malformedCommits: rawCommits.length - commits.length } : {}),
+        // A list with anything but non-empty strings is malformed, never a short list (N49);
+        // a name with a NUL, which no file can have, too (N202).
+        ...(json.changedFiles === undefined
+          ? {}
+          : Array.isArray(json.changedFiles) && json.changedFiles.every(x => typeof x === 'string' && x !== '' && !x.includes('\0'))
+            ? { changedFiles: json.changedFiles as string[] }
+            : { isFileListMalformed: true as const }),
+        ...(v
+          ? {
+              verify: clean<RemoteVerify>({
+                command: str(v.command),
+                exitCode: num(v.exitCode),
+                ...(v.tests && typeof v.tests === 'object' ? { tests: clean({ total: num(t.total), passed: num(t.passed), failed: num(t.failed) }) } : {}),
+              }),
+            }
+          : {}),
+        ...(errText ? { reason: errText } : {}),
+        ...(kind && errText ? { reasonKind: kind } : {}),
+      }
+    }
+    // A job that ended partial carries the JSON error as its reason in
+    // `remote`. Everything else keeps it as an error: the program's own
+    // failure, no jobId, a failed job, a done job with an error. A nonzero
+    // exit is always an error (N48); a done job needs a confirmed exit 0 (N61).
+    const answer = str(json.answer) ?? ''
+    // an unknown state is no partial one: its JSON error stays the run's (N171)
+    const isPartialState = !!remote && state !== 'done' && WERKBANK_STATES.includes(state) && !WERKBANK_FAILED_STATES.includes(state)
+    const jsonError: RunError | undefined = kind && errText && !isPartialState ? { kind, message: errText } : undefined
+    const fromJson = jsonError ?? (isErrorMalformed ? { kind: 'cli' as const, message: 'werkbank-relay sent a malformed error field' } : undefined)
+    // a signal or broken stream after a JSON error is kept beside it (N85)
+    const failure = processFailure(r)
+    let error: RunError | undefined = fromJson
+      ? { kind: fromJson.kind, message: failure ? `${fromJson.message} · ${failure}` : fromJson.message }
+      : cliFailure(r)
+    if (!error && remote && state === 'done' && r.exitCode !== 0 && !r.isTimedOut) {
+      error = { kind: 'cli', message: 'werkbank-relay ended without an exit code' }
+    }
+    if (!remote) {
+      // no jobId: always an error; with an answer the message says so (N65)
+      const missing = 'werkbank-relay reported no jobId'
+      error = error ? (answer.trim() ? { kind: error.kind, message: `${error.message} (${missing})` } : error) : { kind: 'cli', message: missing }
+    }
+    return {
+      answer,
+      ...(sid && isSafeSession(sid) ? { sessionId: sid } : {}),
+      // reported but not kept: the old session must not stay either (N78)
+      // a sent key with anything unusable, "" included, counts too (N91)
+      ...(Object.prototype.hasOwnProperty.call(json, 'sessionId') && !(sid && isSafeSession(sid)) ? { isSessionRejected: true } : {}),
+      usage,
+      ...(error ? { error } : {}),
+      ...(remote ? { remote } : {}),
+    }
+  },
+  versionArgv: bin => [...bin, '--version'],
+}
+
+// The stream a backend's live.log is read from: werkbank-relay reports its
+// progress on stderr, stdout only carries the final JSON (N43).
+export const liveStream = (id: BackendId): 'stdout' | 'stderr' => (id === 'werkbank' ? 'stderr' : 'stdout')
+
+// What a werkbank job adds to the packet (N37, N38, N40). Returns the risk
+// line naming why the job did not end done, or undefined.
+export function remoteVerifyLine(v: RemoteVerify): string {
+  const t = v.tests
+  const tests = t && t.total !== undefined ? `, tests ${t.passed ?? 0}/${t.total} passed, ${t.failed ?? 0} failed` : ''
+  return `verify: ${v.command ?? '(command not reported)'} → exit ${v.exitCode ?? '?'}${tests}`
+}
+
+export function remoteEndLine(r: RemoteRun): string | undefined {
+  if (r.state === 'done') return undefined
+  // red: the verify line first, then the error message (N54)
+  const why = [r.state === 'red' && r.verify ? remoteVerifyLine(r.verify) : '', r.reason ?? ''].filter(Boolean).join('; ')
+  // the kind of a reported error goes with it (N65)
+  const kind = r.reason && r.reasonKind ? ` (${r.reasonKind})` : ''
+  return `werkbank job ${r.jobId} ended ${r.state}${kind}${why ? `: ${why}` : ''}`
+}
+
+// failed or cancelled, or a state relay does not know (N171)
+export const isRemoteFailed = (r: RemoteRun) => WERKBANK_FAILED_STATES.includes(r.state) || !WERKBANK_STATES.includes(r.state)
+
+export const BACKENDS: Record<BackendId, Backend> = { claude, codex, opencode, werkbank }
 
 // ── shared helpers ──────────────────────────────────────────────────────
 
 // Which of a role's rules the backend cannot apply (shown in worker_status).
-export function ignoredRules(id: BackendId, eff: { effort: string; allowedTools: string[]; disallowedTools: string[] }): string[] {
+export function ignoredRules(id: BackendId, eff: { effort: string; allowedTools: string[]; disallowedTools: string[]; isolation?: string }): string[] {
   if (id === 'claude') return []
+  // werkbank passes model, tools and owns on; the worker has its own worktree (N33).
+  if (id === 'werkbank') return [...(eff.effort ? ['effort'] : []), ...(eff.isolation === 'worktree' ? ['isolation'] : [])]
   const out: string[] = []
   if (eff.allowedTools.length) out.push('allowedTools')
   if (id === 'codex' && eff.disallowedTools.length) out.push('disallowedTools')
@@ -460,6 +824,11 @@ export function ollamaArgv(bin: string[], model: string): string[] {
 
 // One readable live.log line per JSONL event; undefined for noise.
 export function liveLine(id: BackendId, line: string): string | undefined {
+  // werkbank-relay's stderr: one plain progress line per state change.
+  if (id === 'werkbank') {
+    const t = line.trim()
+    return t ? cut(t, 300) : undefined
+  }
   const [e] = jsonLines(line)
   if (!e) return undefined
   const type = String(e.type ?? '')

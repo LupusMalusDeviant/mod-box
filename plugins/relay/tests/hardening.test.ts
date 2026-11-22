@@ -221,10 +221,11 @@ describe('finding 8: a worktree must be the role\'s own', () => {
     const w = fakeWorld(on)
     if (!(await w.start($))) return
     w.links.set('.relay', '/elsewhere/.relay')
-    await w.send($, { role: 'coder', task: 't', isolation: 'worktree' })
-    expect(await w.until(() => w.submitted.length === 1)).toBe(true)
+    // the queue file under it is locked first, so the task is not taken (N197)
+    const r = await w.send($, { role: 'coder', task: 't', isolation: 'worktree' })
+    expect(JSON.stringify(r)).toContain('task not accepted')
+    expect(JSON.stringify(r)).toContain('outside the project')
     expect(w.spawns).toHaveLength(0)
-    expect(w.submitted[0]).toContain('outside the project')
   })
 
   test('a relayDir outside the project is replaced by .relay', { options: { relayDir: '../elsewhere' } }, async ($: any, on: any) => {
@@ -253,7 +254,7 @@ describe('finding 9: renames', () => {
     const w = fakeWorld(on)
     if (!(await w.start($))) return
     w.during(() => {
-      w.git.head = 'bbb'
+      w.git.head = 'b'.repeat(40)
       w.git.committed.push({ status: 'R100', from: 'docs/protected.md', path: 'src/protected.md' })
     })
     await w.send($, { role: 'a', task: 't', owns: ['src/'] })
@@ -355,12 +356,14 @@ describe('finding 13: interrupted jobs that cannot be reported', () => {
     w.io.failWrite = p => p.startsWith('.relay/runs/b/')
     await w.clock.set(10 * 60_000)
     if (!(await w.start($))) return
-    expect(await w.until(() => w.submitted.length === 1)).toBe(true)
+    // since N158 a role unknown everywhere is taken from its job and reported
+    expect(await w.until(() => w.submitted.length === 2)).toBe(true)
     await w.until(() => false, 20)
     expect(w.submitted[0]).toContain('[relay] a · run 1 interrupted')
-    expect(w.queueFile().jobs.map(j => `${j.id}:${j.state}`)).toEqual(['j_ghost:running', 'j_b:running'])
+    expect(w.submitted[1]).toContain('[relay] ghost · run 1 interrupted')
+    expect(w.queueFile().jobs.map(j => `${j.id}:${j.state}`)).toEqual(['j_b:running'])
     const status = await w.status($)
-    expect(status).toContain('interrupted ghost run 1 (claude), not reported yet · orphaned')
+    expect(status).not.toContain('orphaned')
     expect(status).toContain('interrupted b run 1 (claude), not reported yet · reporting failed')
   })
 })
